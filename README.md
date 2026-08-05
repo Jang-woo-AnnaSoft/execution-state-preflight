@@ -1,6 +1,3 @@
-# execution-state-preflight
-A verification skeleton that runs before an MCP tool call — five-tier provenance lookup, never generates values, and one remaining unknown means it records instead of executing.
-
 # From Inference to Provenance Lookup
 
 **Unknown is a normal state.**
@@ -13,11 +10,11 @@ A verification skeleton that runs before an MCP tool call — five-tier provenan
 
 | # | Source | Meaning |
 |---|--------|---------|
-| 1 | `user_answer` | Answered by the user after an `ask_user` |
-| 2 | `instruction` | Taken from a trusted segment, with a span |
-| 3 | `pre_set_data` | Settled earlier through a decision path |
-| 4 | `measured_data` | Observed from the environment |
-| 5 | `prior_state` | Inherited from a prior `executed` record |
+| 0 | `user_answer` | Answered by the user after an `ask_user` |
+| 1 | `instruction` | Taken from a trusted segment, with a span |
+| 2 | `pre_set_data` | Settled earlier through a decision path |
+| 3 | `measured_data` | Observed from the environment |
+| 4 | `prior_state` | Inherited from a prior `executed` record |
 
 The first hit wins — lower tiers are not consulted. If every tier is empty, the answer is `unknown`, never a guess.
 
@@ -66,4 +63,4 @@ Copyright © 2026 AnnaSoft Inc. (Republic of Korea)
 
 **Commercial Licensing** — A commercial license is required only for organizations with annual revenue of USD 1 billion or more that commercially deploy products or services based on this work. All other use is permitted free of charge.
 
-Contact: [hello@anna.software]
+Contact: hello@anna.software
