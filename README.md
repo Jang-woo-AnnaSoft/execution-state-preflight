@@ -1,6 +1,8 @@
 # From Inference to Provenance Lookup
 
 **Unknown is a normal state.**
+When an instruction is incomplete, an unknown isn't a system error or an exception. It is the logically valid output state. If unsure, ask. 'Never act on uncertainty' is universal common sense.
+
 - Arguments are never generated.
 - Only the provenance chain is looked up.
 - All five tiers are checked. If all are empty, the field is `unknown`.
