@@ -37,15 +37,10 @@ This layer doesn't block execution. It fills, with a source, the blanks that gue
   "action_key": "u_01:bank.transfer",
   "fields": [
     { "name": "to_account", "status": "unknown", "source": null },
-    { "name": "amount",  "value": 50000,  "status": "known", "source": "instruction" },
-    { "name": "balance", "value": 820000, "status": "known", "source": "measured_data" }
+    { "name": "amount", "value": 50000, "status": "known", "source": "instruction" }
   ],
-  "gate": {
-    "unknown_fields": [{ "name": "to_account" }],
-    "unverified_checklist": [{ "id": "chk_recipient" }]
-  },
-  "execution_decision": "ask_user",
-  "reason": "ask_user: unknown_fields=1, unverified_checklist=1"
+  "gate": { "unknown_fields": [{ "name": "to_account" }] },
+  "execution_decision": "ask_user"
 }
 ```
 
