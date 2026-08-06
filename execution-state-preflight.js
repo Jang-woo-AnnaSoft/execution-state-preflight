@@ -44,6 +44,9 @@
  * @property {boolean} [pending_at_trigger]
  *   // Marks "unknown is correct now, will be settled at trigger time". Only applyFieldPolicy sets it.
  *   // It excuses a field only at the at_instruction gate. At at_trigger, unknown is unmet without exception.
+ * @property {string} [comparison_key]
+ *   // A comparable projection of value, not the value. Staleness is equality on this key against the prior record.
+ *   // POLICY: what the buckets are belongs to the adopting system.
  * @property {string} [note]
  * @property {string} resolved_at
  *
@@ -190,6 +193,8 @@ async function lookupField(h, fieldName, ctx) {
   // Tier 0: user answer (injected on re-run after ask_user)
   // NOTE: filling userAnswers happens outside the skeleton.
   // BREAKS: put LLM parsing output here and the top tier becomes model output.
+  // NOTE: a user_answer has no expiry and outranks a later measurement.
+  // POLICY: invalidate on a change to what the value derived from, not on elapsed time.
   if (userAnswers && fieldName in userAnswers) {
     return fresh({ name: fieldName, value: userAnswers[fieldName], status: "known", source: "user_answer" });
   }
@@ -248,6 +253,8 @@ async function lookupField(h, fieldName, ctx) {
 //   (e.g. balance, current time). This mark is the only thing the gate excuses.
 //   The default implementation never sets it → without your own, every unknown becomes a question at instruction time.
 //   BREAKS: an over-asked answer freezes as user_answer (tier 0) and beats the measurement at trigger time.
+// CONTRACT (staleness): set comparison_key on every known record. The hook answers which bucket, never whether a change matters.
+//   BREAKS: leave it undefined and prior_state is inherited unconditionally.
 function applyFieldPolicy(record, ctx) {
   return record;
 }
@@ -606,6 +613,7 @@ const REQUIRED_HOOKS = [
 ];
 
 // Hooks that have a default implementation whose default is "do not verify". Unwired, the gate is weak.
+// BREAKS: without comparison_key, staleness is undetectable and every run re-asks. Config error — use strict.
 const UNSAFE_DEFAULT_HOOKS = ["applyFieldPolicy", "validateFieldSchema", "verifyUserChecklistItem"];
 
 const defaultHooks = {
