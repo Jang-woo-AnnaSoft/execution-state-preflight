@@ -1,8 +1,11 @@
 # From Inference to Provenance Lookup
 
+A validator can't tell an account number the user typed from one the model invented. Worse, a required field pressures the model to fill the blank.
+So this layer doesn't validate arguments. It looks up where each one came from.
+
 **Unknown is a normal state.**
 
-When an instruction is incomplete, an unknown isn't a system error or an exception. It is the logically valid output state. If unsure, ask. 'Never act on uncertainty' is universal common sense.
+When an instruction is incomplete, unknown isn't an error. It's the valid output. If even one remains: don't execute. Ask, and record.
 
 - Arguments are never generated.
 - Only the provenance chain is looked up.
@@ -20,6 +23,10 @@ When an instruction is incomplete, an unknown isn't a system error or an excepti
 | 4 | `prior_state` | Inherited from a prior `executed` record |
 
 The first hit wins — lower tiers are not consulted. If every tier is empty, the answer is `unknown`, never a guess.
+
+Same instruction, same sources, same arguments. The lookup is deterministic. What varies is whether it asks, not what it fills in.
+
+This layer doesn't block execution. It fills, with a source, the blanks that guessing used to fill. Only when no source has it does it ask, and the user's answer lets the call go through. Execution is still the goal.
 
 ## What a blocked call looks like
 
