@@ -47,6 +47,9 @@
  * @property {string} [comparison_key]
  *   // A comparable projection of value, not the value. Staleness is equality on this key against the prior record.
  *   // POLICY: what the buckets are belongs to the adopting system.
+ * @property {string} [comparison_key_version]
+ *   // Version of the classifier that produced comparison_key. A mismatch is not equality — it re-asks.
+ *   // BREAKS: omit it and changing the buckets silently makes stored keys incomparable to fresh ones.
  * @property {string} [note]
  * @property {string} resolved_at
  *
@@ -255,6 +258,7 @@ async function lookupField(h, fieldName, ctx) {
 //   BREAKS: an over-asked answer freezes as user_answer (tier 0) and beats the measurement at trigger time.
 // CONTRACT (staleness): set comparison_key on every known record. The hook answers which bucket, never whether a change matters.
 //   BREAKS: leave it undefined and prior_state is inherited unconditionally.
+//   Set comparison_key_version too. Compare version first: mismatch means the comparison is void, not passed.
 function applyFieldPolicy(record, ctx) {
   return record;
 }
