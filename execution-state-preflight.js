@@ -44,12 +44,8 @@
  * @property {boolean} [pending_at_trigger]
  *   // Marks "unknown is correct now, will be settled at trigger time". Only applyFieldPolicy sets it.
  *   // It excuses a field only at the at_instruction gate. At at_trigger, unknown is unmet without exception.
- * @property {string} [comparison_key]
- *   // A comparable projection of value, not the value. Staleness is equality on this key against the prior record.
- *   // POLICY: what the buckets are belongs to the adopting system.
- * @property {string} [comparison_key_version]
- *   // Version of the classifier that produced comparison_key. A mismatch is not equality — it re-asks.
- *   // BREAKS: omit it and changing the buckets silently makes stored keys incomparable to fresh ones.
+ *   // NOTE: no staleness slot. See [TIER 4 STALENESS] on applyFieldPolicy.
+ *   //   Pre-1.6 records may carry comparison_key fields; the skeleton neither writes nor reads them.
  * @property {string} [note]
  * @property {string} resolved_at
  *
@@ -62,10 +58,16 @@
  * @property {string} [note]
  *
  * @typedef {Object} GateResult
- * @property {"value_gate"|"tool_undetermined"} [kind]  // Omitted means value_gate (the original shape)
+ * @property {"value_gate"|"tool_undetermined"|"intent_undetermined"|"intent_undetermined_exhausted"} [kind]
+ *   // Omitted means value_gate (the original shape).
+ *   // intent_undetermined*: C1/C2 could not be settled. Carries user_message, never unknown_fields
+ *   //   (requiredFields is not even read yet at that point).
  * @property {{name: string, note: string|null}[]} [unknown_fields]        // Absent on tool_undetermined
  * @property {{id: string, description: string, note: string|null}[]} [unverified_checklist]
- * @property {string} [user_message]    // tool_undetermined only. Shown to the user verbatim.
+ * @property {string} [user_message]    // tool_undetermined / intent_undetermined*. Shown verbatim.
+ * @property {string} [intent_fingerprint]       // intent_undetermined* only. Digest of the trusted instruction
+ *   // text. Equal to the next call's = the user did not restate.
+ * @property {number|null} [next_intent_attempt] // Send back as input.intent_attempt. null = do not re-enter.
  * @property {Object} [_diag]           // Logs only. Never expose to the user (contains candidate_tool).
  *
  * @typedef {Object} ExecutionState
@@ -73,6 +75,12 @@
  * @property {"at_instruction"|"at_trigger"|null} phase
  *   // Records from both moments accumulate under the same action_key. This is the key that separates them.
  * @property {Object|null} fixed        // C1(When/Case) / C2(User Action Name) / C3(Tool Name)
+ *   // Plus c2_source: "instruction"|"pre_set_data"|null. Slots stay strings — hook signatures unchanged.
+ *
+ * @typedef {Object} FixedPreSet
+ * @property {PreSetEntry} [c2_user_action_name]  // C2 fallback. Separate input, not part of preSetData:
+ *   // tier 2 reads every key in preSetData, so a reserved key there would collide with a same-named field.
+ *   // BREAKS: a c1_when_case entry here is ignored. Only the C2 key is read. C1 comes from the utterance only.
  * @property {FieldRecord[]|null} fields  // null if no decision was made — distinct from [] ("computed, came out empty")
  * @property {string} advisory_notes    // Provider description — recorded only, not part of the gate
  * @property {UserChecklistItem[]} user_checklist
@@ -90,12 +98,57 @@
 // 1-1. Skeleton defenses — "hooks must not throw" is a contract, not a guarantee.
 const WHEN_CASES = ["immediate", "scheduled", "conditional", "recurring"];
 const UNKEYED_RECORD_KEY = "__preflight_unkeyed__";   // Storage key for records with no action_key
+// Retention for this bucket is NOT the same as for keyed buckets. See [UNKEYED BUCKET POLICY] in recordExecutionState.
 
 // User-facing text. Does not include the candidate Tool name.
 // BREAKS: naming it turns the question into an approval step (users pick what they are shown).
 // POLICY: with few Tools you may present a list. No default selection, no "recommended" marker.
 const MSG_TOOL_UNDETERMINED =
   "I could not determine which tool to use. Please restate what you want to do.";
+
+// Re-ask ceiling for an unsettled Fixed checklist. Two asks, then leave.
+// NOTE: this ceiling covers the Fixed checklist only. The tool_undetermined and value_gate
+//   re-ask ceilings remain the adopting system's job (they own an action_key; this path does not).
+const INTENT_ATTEMPT_LIMIT = 2;
+
+// C1 asks for the moment, C2 asks for the act. Neither names the candidates.
+// BREAKS: list the WHEN_CASES and the question becomes a menu — the same failure as naming the Tool.
+//   "when" is a request to restate, "now or later?" is a selection the user will just click through.
+const MSG_INTENT_UNDETERMINED = {
+  c1_when_case: "I could not tell when you want this done. Please say it again, including the timing.",
+  c2_user_action_name: "I could not tell what you want done. Please say it again.",
+  both: "I could not tell what you want done, or when. Please say it again.",
+};
+
+// Leaving message. The skeleton stops here; resolution moves to conversation outside this logic.
+const MSG_INTENT_EXHAUSTED =
+  "I still could not tell what you want done. Stopping here — let's sort it out in conversation.";
+
+// POLICY (intent_attempt lifecycle) — stateless skeleton, so the caller enforces these:
+//   1. Per REQUEST, judged by instruction change. Not elapsed time, not session (time is not an
+//      invalidation basis anywhere in this file — see tier 0).
+//   2. Carry-forward is the DEFAULT; reset needs an affirmative new-request signal.
+//      BREAKS: reset on any textual difference and "do it" → "do it now" reopens the loop.
+//   3. next_intent_attempt === null → re-entry only from a NEW utterance. Never auto-retry.
+//      Carry the counter unchanged through tool_reselected_by_user re-entry.
+//      BREAKS: re-call at 0 and the ceiling does not exist; zero it on tool re-entry and the two gates
+//      bounce a request between them forever.
+
+// Digest of the trusted portion of an instruction. One normalization for every caller.
+// NOTE: identity only — "same utterance", never "same meaning". A different digest is not evidence of
+//   a new request (rule 2).
+function intentFingerprint(instruction) {
+  const text = (Array.isArray(instruction) ? instruction : [])
+    .filter(seg => seg?.trust === "user")
+    .map(seg => String(seg?.text ?? ""))
+    .join("\u0000")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]+/gu, "");
+  let hash = 5381;
+  for (let i = 0; i < text.length; i++) hash = (((hash << 5) + hash) ^ text.charCodeAt(i)) >>> 0;
+  return `${text.length}-${hash.toString(36)}`;
+}
 
 async function safeHook(fn, args, onFail) {
   try {
@@ -112,12 +165,81 @@ function unidentifiedChecklistIndexes(userChecklist) {
 }
 
 // 2. Settling C1/C2/C3
-async function resolveFixedChecklist(h, instruction, mcpTool) {
-  return {
-    c1_when_case: await h.classifyWhenCase(instruction),
-    c2_user_action_name: await h.extractUserActionName(instruction),
-    c3_provider_action_name: mcpTool.name,
+// CONTRACT: returns { fixed, issues }. A hook failure never throws — the slot becomes an issue.
+//   BREAKS: return a bare `fixed` and every ambiguous utterance lands on the backstop "hold" (gate: null,
+//     no way back into conversation).
+// NOTE: an unsettled slot is null, never coerced to a WHEN_CASE or placeholder. Asking is not defaulting —
+//   that distinction is what keeps the "no fallback to immediate" rule intact.
+function usableActionName(v) {
+  return typeof v === "string" && v.trim() !== "";
+}
+
+// C2 fallback. Tier 2's acceptance conditions: wrapper shape plus trust "user".
+//   Stricter is defensible, looser is not — C2 feeds action_key, which sets prior_state's blast radius.
+//   BREAKS: accept a raw string and one unwrapped value redefines what action this is.
+function readC2Fallback(fixedPreSet) {
+  const entry = fixedPreSet?.c2_user_action_name;
+  if (!entry || typeof entry !== "object" || !("value" in entry) || entry.trust !== "user") return undefined;
+  return usableActionName(entry.value) ? entry.value : undefined;
+}
+
+async function resolveFixedChecklist(h, instruction, mcpTool, fixedPreSet) {
+  const issues = [];
+  const fail = slot => e => {
+    issues.push({ slot, code: "hook_error", detail: e?.message ?? String(e) });
+    return undefined;
   };
+
+  const c1 = await safeHook(h.classifyWhenCase, [instruction], fail("c1_when_case"));
+  const c1Failed = issues.some(i => i.slot === "c1_when_case");
+  // C1 enum check. Moved here from runPreflightInner so that "threw" and "returned garbage" share one path.
+  if (!c1Failed && !WHEN_CASES.includes(c1)) {
+    issues.push({ slot: "c1_when_case", code: "out_of_enum", detail: JSON.stringify(c1) });
+  }
+  const c1Ok = !issues.some(i => i.slot === "c1_when_case");
+
+  // C2: utterance first, pre-set second. Same order as field values, different reason — there instruction
+  //   wins as fresher intent; here the fallback must not OVERRIDE what was just said.
+  //   BREAKS: check the fallback first and a stored action name silently redirects a different request.
+  // NOTE: length caps and whole-input echoes remain the hook's post-processing job. An echo is a non-empty
+  //   string, passes usableActionName, and flows into action_key.
+  const fromInstruction = await safeHook(h.extractUserActionName, [instruction], () => undefined);
+  let c2 = null;
+  let c2_source = null;
+  if (usableActionName(fromInstruction)) {
+    c2 = fromInstruction;
+    c2_source = "instruction";
+  } else {
+    const fallback = readC2Fallback(fixedPreSet);
+    if (fallback !== undefined) {
+      c2 = fallback;
+      c2_source = "pre_set_data";
+    } else {
+      issues.push({ slot: "c2_user_action_name", code: "unresolved", detail: "instruction and pre-set both empty" });
+    }
+  }
+  // NOTE: a fallback that rescues a thrown hook records no exception text — the only trace is
+  //   c2_source === "pre_set_data". Watch that ratio: a rising share means the extractor is degrading
+  //   behind the fallback. Deliberate cost of not asking.
+
+  return {
+    fixed: {
+      c1_when_case: c1Ok ? c1 : null,
+      c2_user_action_name: c2,
+      c3_provider_action_name: mcpTool?.name ?? null,
+      // Consumed by buildActionKey and confirmToolNameMatchesIntent. Recorded either way.
+      c2_source,
+    },
+    issues,
+  };
+}
+
+// Pick the user-facing text without naming candidates.
+function intentMessage(issues) {
+  const c1 = issues.some(i => i.slot === "c1_when_case");
+  const c2 = issues.some(i => i.slot === "c2_user_action_name");
+  if (c1 && c2) return MSG_INTENT_UNDETERMINED.both;
+  return c1 ? MSG_INTENT_UNDETERMINED.c1_when_case : MSG_INTENT_UNDETERMINED.c2_user_action_name;
 }
 
 // [REQUIRED-OP] Returns one of WHEN_CASES.
@@ -135,6 +257,9 @@ function extractUserActionName(instruction) {
 
 // [REQUIRED-SAFETY] Match c2 against c3. Tool existence, availability, call permission, and schema freshness also belong here.
 // CONTRACT: do not throw. Return { approved, reason }. Silence is not approval.
+// POLICY (c2_source): the fallback path asks the user nothing, so this gate is the only remaining check
+//   on a fallback-sourced C2. Require an exact match when fixed.c2_source === "pre_set_data".
+//   Mismatch yields ask_user, which routes back to the utterance — the right place to recover.
 function confirmToolNameMatchesIntent(userActionName, mcpTool) {
   throw new Error("not implemented");
 }
@@ -235,6 +360,8 @@ async function lookupField(h, fieldName, ctx) {
   }
 
   // Tier 4: prior Execution State. Only executed records are baseline.
+  //   NOTE: "executed" is the ONLY condition checked here — not age, not staleness. applyFieldPolicy runs
+  //     after this and is the only place the inheritance can still be refused ([TIER 4 STALENESS]).
   //   source is overwritten with prior_state, but origin_source is inherited.
   //   BREAKS: overwrite origin_source and the first source is erased, opening a laundering path.
   //   NOTE: old-schema records have origin_source undefined. Handling belongs in applyFieldPolicy.
@@ -256,9 +383,17 @@ async function lookupField(h, fieldName, ctx) {
 //   (e.g. balance, current time). This mark is the only thing the gate excuses.
 //   The default implementation never sets it → without your own, every unknown becomes a question at instruction time.
 //   BREAKS: an over-asked answer freezes as user_answer (tier 0) and beats the measurement at trigger time.
-// CONTRACT (staleness): set comparison_key on every known record. The hook answers which bucket, never whether a change matters.
-//   BREAKS: leave it undefined and prior_state is inherited unconditionally.
-//   Set comparison_key_version too. Compare version first: mismatch means the comparison is void, not passed.
+// [TIER 4 STALENESS] — POLICY, not contract. A gap statement, not a feature.
+//   Tier 4 inherits an executed value unconditionally; nothing above notices if it is a year old.
+//   resolved_at cannot detect it either — resolveField stamps the LOOKUP, so inherited values read as fresh.
+//   This hook is the only place staleness can be caught, and its default catches nothing.
+//   A design here needs at minimum:
+//     - a comparable projection of value (a bucket, not the value), compared against the prior record
+//     - a version on that projection, compared FIRST — mismatch is void, not equal
+//     - a procedure answering "same bucket?", never "does this change matter?"
+//   BREAKS: skip it and a stale prior_state value satisfies the gate and gets executed.
+//   NOTE: comparison_key / comparison_key_version were removed from FieldRecord — a declared slot the
+//     skeleton never reads reads as a guarantee. Put any equivalent in record.note or your own type.
 function applyFieldPolicy(record, ctx) {
   return record;
 }
@@ -317,22 +452,68 @@ async function runPreflight(h, input) {
   }
 }
 
-async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, measured_data, priorExecutionState, agentPolicy, userChecklist, userAnswers, checklistAnswers }) {
+async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, fixedPreSet, measured_data, priorExecutionState, agentPolicy, userChecklist, userAnswers, checklistAnswers, intent_attempt }) {
   const checklist = userChecklist ?? [];
 
-  // Step 1: settle Fixed. Every failure holds without throwing.
-  //   BREAKS: move this later and subsequent returns are recorded without an action_key, severing the lineage.
-  const fixed = await resolveFixedChecklist(h, instruction, mcpTool);
+  // Asks already spent on the Fixed checklist. Absent or malformed = 0.
+  // NOTE: caller-supplied and the skeleton DOES read it, unlike input.tool_reselected_by_user.
+  //   Direction is why: a larger value only brings "hold" forward, never produces "execute". Not a bypass.
+  //   BREAKS: send 0 every time and the ask repeats forever. Storage cannot supply the count either —
+  //     these records have no action_key and pile under UNKEYED_RECORD_KEY, indistinguishable per attempt.
+  const attempt = Number.isInteger(intent_attempt) && intent_attempt >= 0 ? intent_attempt : 0;
 
-  // C1 enum check.
-  // BREAKS: remove this and an out-of-enum value gets swallowed as deferred by Step 1-1's `!== "immediate"`, waiting forever.
-  if (!WHEN_CASES.includes(fixed?.c1_when_case)) {
+  // Step 0: checklist id check. ABOVE every gate that talks to the user — a pure configuration defect,
+  //   independent of instruction and mcpTool. Asking first makes the user restate twice for a fault
+  //   present since the first call.
+  //   BREAKS: no id means no key to reattach the ask_user answer to.
+  //   NOTE: action_key/phase are null here (runs before Fixed). The trade for failing early: no lineage.
+  const unidentified = unidentifiedChecklistIndexes(checklist);
+  if (unidentified.length > 0) {
     return {
-      fixed, action_key: null, phase: null, fields: null, advisory_notes: "", user_checklist: checklist,
+      fixed: null, action_key: null, phase: null, fields: null, advisory_notes: "", user_checklist: checklist,
       unknown_count: null, unverified_checklist_count: null,
-      gate: null,
+      gate: null,   // Not a question. There is nothing for the user to answer
       execution_decision: "hold",
-      reason: `invalid c1_when_case: ${JSON.stringify(fixed?.c1_when_case)} (allowed: ${WHEN_CASES.join(" | ")})`,
+      reason: `checklist item without id at index: ${unidentified.join(", ")}`,
+      timestamp: h.now(),
+    };
+  }
+
+  // Step 1: settle Fixed. Hook failures do not throw — they come back as issues.
+  //   BREAKS: move this later and subsequent returns are recorded without an action_key, severing the lineage.
+  //   fixedPreSet is passed separately from preSetData on purpose — see the FixedPreSet typedef.
+  const { fixed, issues: fixedIssues } = await resolveFixedChecklist(h, instruction, mcpTool, fixedPreSet);
+
+  // Step 1-a: intent gate. C1 and C2 share one ceiling — same remedy (restate), so separate counters would
+  //   allow INTENT_ATTEMPT_LIMIT asks per slot.
+  // BREAKS: drop this and an out-of-enum C1 is swallowed as deferred by Step 1-1's `!== "immediate"`.
+  if (fixedIssues.length > 0) {
+    const exhausted = attempt >= INTENT_ATTEMPT_LIMIT;
+    return {
+      fixed,                    // Recorded with nulls in the unsettled slots. Never a substituted value
+      action_key: null,         // buildActionKey needs C2 — no lineage. Lands under UNKEYED_RECORD_KEY
+      phase: null,              // C1 undecided means phase is undecided. Not defaulted
+      fields: null,             // No decision made. Distinct from []
+      advisory_notes: "",
+      user_checklist: checklist,
+      unknown_count: null,
+      unverified_checklist_count: null,
+      gate: {
+        // A hold that carries a gate. Distinct from the backstop's gate: null, which has no way back.
+        kind: exhausted ? "intent_undetermined_exhausted" : "intent_undetermined",
+        user_message: exhausted ? MSG_INTENT_EXHAUSTED : intentMessage(fixedIssues),
+        // Equal to the next call's → +1. Unequal is NOT permission to reset (rule 2).
+        intent_fingerprint: intentFingerprint(instruction),
+        // null encodes rule 3: no value to auto-retry with.
+        next_intent_attempt: exhausted ? null : attempt + 1,
+        _diag: { issues: fixedIssues, attempt, limit: INTENT_ATTEMPT_LIMIT },   // Logs only — carries hook error text
+      },
+      // ask_user re-entry: raise intent_attempt and call again with the new instruction. Not userAnswers —
+      //   C1/C2 are not required fields and have no key to attach an answer to.
+      // exhausted: leave the skeleton; resolve in conversation. Re-entry is a NEW request at attempt 0.
+      //   POLICY: resetting the counter every turn restores the loop this ceiling exists to stop.
+      execution_decision: exhausted ? "hold" : "ask_user",
+      reason: `${exhausted ? "hold" : "ask_user"}: fixed undetermined (${fixedIssues.map(i => `${i.slot}:${i.code}`).join(", ")}) attempt=${attempt}/${INTENT_ATTEMPT_LIMIT}`,
       timestamp: h.now(),
     };
   }
@@ -342,20 +523,6 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   const phase = fixed.c1_when_case === "immediate" ? "at_trigger" : "at_instruction";
 
   const action_key = await h.buildActionKey(userId, fixed);
-
-  // Checklist id check. The skeleton does not assign arbitrary ids.
-  //   BREAKS: let an item through without an id and there is no key to reattach the ask_user answer to.
-  const unidentified = unidentifiedChecklistIndexes(checklist);
-  if (unidentified.length > 0) {
-    return {
-      fixed, action_key, phase, fields: null, advisory_notes: "", user_checklist: checklist,
-      unknown_count: null, unverified_checklist_count: null,
-      gate: null,
-      execution_decision: "hold",
-      reason: `checklist item without id at index: ${unidentified.join(", ")}`,
-      timestamp: h.now(),
-    };
-  }
 
   // Step 1-0: Tool determination gate. Must sit above getRequiredFields/getAdvisoryNotes.
   //   BREAKS: move it lower and an undetermined Tool's required/description ride into the gate.
@@ -525,6 +692,10 @@ async function runPreflightAndRecord(h, input) {
 
 // [REQUIRED-OP] CONTRACT: key design = the blast radius of prior_state. Treat it as an opaque string.
 //   `${userId}:${c3}` reuses broadly / `${userId}:${c3}:${intent}` groups like intents / unique per run (most conservative)
+// POLICY (c2_source): a fallback-sourced C2 was never confirmed against anything said in this request.
+//   Narrow its blast radius — per-run key for "pre_set_data", shared key for "instruction".
+//   BREAKS: treat both alike and a stale pre-set name inherits the baseline of a request never made.
+//   Signature unchanged: existing implementations keep working, they just stop distinguishing the two.
 function buildActionKey(userId, fixed) {
   throw new Error("not implemented");
 }
@@ -533,7 +704,8 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.4",
+    schema_version: "1.6",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   Readers must not assume fixed slots are strings, nor that c2_source exists on older records
     action_key,
     phase: executionState.phase ?? null,   // Instruction-time and trigger-time records accumulate under the same key
     fixed: executionState.fixed,
@@ -553,6 +725,30 @@ async function recordExecutionState(h, executionState) {
   //   Deferred records and deferred_input.userAnswers also sit in plaintext from instruction time until trigger.
   // CONTRACT: records accumulate under the same key. Append-only, or at minimum preserve executed separately.
   //   BREAKS: with last-write-wins, a preflight record overwrites the executed baseline.
+  //
+  // ── [UNKEYED BUCKET POLICY] — UNKEYED_RECORD_KEY only ────────────────────────────────────────
+  // Why it may differ: append-only protects the executed baseline. This bucket holds none and is never
+  //   read by getPriorExecutionState (tier 4 looks up by action_key) — write-only audit material.
+  //   BREAKS: apply this retention to a keyed bucket and you delete the baseline tier 4 needs.
+  //
+  // Who lands here (all return before action_key exists):
+  //   config   — checklist item without id (Step 0)
+  //   intent   — fixed undetermined: both the ask_user and the exhausted hold (Step 1-a)
+  //   internal — runPreflight backstop
+  //
+  // POLICY (retention) — the adapter implements this; the skeleton only writes:
+  //   config, intent → 14 days. Tuning material, short useful life.
+  //   internal       → 90 days, or forward to error tracking and keep out of here. Bugs, not user behavior.
+  //   gate._diag     → strip after 7 days, keep the rest. Raw hook exception text, already never-expose.
+  //   capacity       → cap and evict oldest-first, on top of expiry. The intent gate writes up to
+  //                    INTENT_ATTEMPT_LIMIT + 1 records per request and a bad client repeats without bound.
+  //
+  // POLICY (do NOT store): the raw instruction, even for debugging. gate.intent_fingerprint is already
+  //   here and repeated failures on one utterance show up by comparing fingerprints — the actual signal.
+  //   Reading the utterance is an exceptional investigation; put it behind a separate approval path.
+  //   BREAKS: store it and every ambiguous utterance accumulates in plaintext in the bucket with the
+  //     weakest retention and no masking hook.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
   await h.storage.persist(action_key ?? UNKEYED_RECORD_KEY, record);
   return record;
 }
@@ -566,11 +762,19 @@ async function getPriorExecutionState(h, actionKey) {
 }
 
 // Storage port — persist/load are a pair. The "only executed is baseline" invariant spans both.
+//   NOTE: the port takes an opaque key — the adapter branches on UNKEYED_RECORD_KEY itself to apply the
+//     retention above. No class label is written; derive it from execution_decision + gate.kind:
+//     config = gate null & hold / intent = gate.kind intent_undetermined* / internal = gate null &
+//     reason starting "preflight error:".
 //   NOTE: the port contract carries no integrity requirement. Append-only, access control, and masking belong in the adapter.
 
 // 6. Execution — call the actual MCP Tool only when the gate is satisfied (execute)
 // CONTRACT: pass only a record returned by recordExecutionState.
 // NOTE: no re-fetch from storage, no integrity check. Hand it a hand-built object and the gate is bypassed.
+// NOTE: nothing here checks that mcpTool is the tool the gate judged — compare mcpTool.name against
+//   executionState.fixed.c3_provider_action_name upstream. Not an integrity concern but an MCP-management
+//   one: where the agent binds a request to a server and tool, and how long that binding survives
+//   re-entry (tool_reselected_by_user) and the deferred wait.
 // POLICY: if decision and execution cross a trust boundary, signing/TTL/nonce belong to the adopting system.
 async function executeIfReady(h, executionState, mcpTool, callMcpTool) {
   if (executionState.execution_decision !== "execute") {
@@ -617,7 +821,8 @@ const REQUIRED_HOOKS = [
 ];
 
 // Hooks that have a default implementation whose default is "do not verify". Unwired, the gate is weak.
-// BREAKS: without comparison_key, staleness is undetectable and every run re-asks. Config error — use strict.
+// BREAKS: with the default applyFieldPolicy, tier 4 staleness is undetectable ([TIER 4 STALENESS]).
+//   A config error, not a safe default. Use strict, or accept unconditional inheritance knowingly.
 const UNSAFE_DEFAULT_HOOKS = ["applyFieldPolicy", "validateFieldSchema", "verifyUserChecklistItem"];
 
 const defaultHooks = {
@@ -668,7 +873,7 @@ function createPreflight({ hooks = {}, storage, clock, strict = false } = {}) {
   };
 }
 
-module.exports = { createPreflight, defaultHooks };
+module.exports = { createPreflight, defaultHooks, intentFingerprint };
 
 
 /* ============================================================================
@@ -676,15 +881,26 @@ module.exports = { createPreflight, defaultHooks };
  *
  * Instruction (array of trust-labeled segments)
  *      ▼
+ * Step 0. checklist id check ────────► "hold" (config defect — before any question is asked)
+ *      ▼
  * Step 1. resolveFixedChecklist
  *      │ └─ Extract C1 (When/Case), C2 (User Action Name); C3 = mcpTool.name
- *      ├─ [C1 outside WHEN_CASES] ───────► "hold" (early exit)
+ *      │    C2: instruction → fixedPreSet fallback (the fallback must not override the utterance)
+ *      │    C1: no fallback. It sets phase and irreversibility — utterance only
+ *      │    Hook throw / C1 out of enum / C2 empty → an issue. Unsettled slots stay null, never substituted
  *      ▼
- * Step 1-a. buildActionKey(userId, fixed) → action_key
+ * Step 1-a. intent gate  [issues > 0]
+ *      ├─ [attempt <  2] ────────────────► "ask_user" (kind: intent_undetermined)
+ *      │                                    └─ next_intent_attempt = attempt+1; re-call with it
+ *      └─ [attempt >= 2] ────────────────► "hold"     (kind: intent_undetermined_exhausted)
+ *                                           └─ next_intent_attempt = null. No auto re-entry; resolve in
+ *                                              conversation. Carry-forward is default, reset needs a
+ *                                              new-request signal (see POLICY).
+ *      ▼
+ * Step 1-b. buildActionKey(userId, fixed) → action_key
  *      │ └─ Both the record key and the prior_state lookup key. It sets the blast radius.
- *      ├─ [checklist item has no id] ────► "hold" (early exit)
  *      ▼
- * Step 1-0. confirmToolNameMatchesIntent
+ * Step 1-c. confirmToolNameMatchesIntent
  *      ├─ [approved !== true] ───────────► "ask_user" (kind: tool_undetermined)
  *      ▼
  * Step 1-1. phase = (c1 === "immediate") ? at_trigger : at_instruction
@@ -723,8 +939,10 @@ module.exports = { createPreflight, defaultHooks };
  * - Design:     intent and context are judged by fixed, tool-independent questions (guarding against unrequested execution)
  * - Data:       lookup, not generation. All empty means unknown
  * - Input:      only inputs carrying a trust label can produce known (both instruction and pre-set data)
+ *               same for the C2 fallback: wrapper plus trust "user", never a raw string
  *               values from the instruction must name their coordinates via a span within a segment; unnamed means rejected
  * - Inheritance: the first source is never erased by any path
+ *               tier 4 inherits on "executed" alone; refusing a stale one is the adopting system's
  * - Timing:     values at instruction time, conditions at trigger time. Only values that cannot be asked for now get pending_at_trigger
  * - Decision:   if even one unknown remains, do not execute — record instead
  * - Execution:  reference only recorded state. A hook failure is not a pass; it is unmet
