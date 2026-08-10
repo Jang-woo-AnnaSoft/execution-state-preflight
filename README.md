@@ -46,7 +46,7 @@ This layer doesn't block execution. It fills, with a source, the blanks that gue
 
 Records accumulate under one `action_key`: `ask_user` → `execute` → `executed`. Only `executed` becomes the baseline for tier 4 on the next run.
 
-## Files
+## Code (the skeleton)
 
 - **[execution-state-preflight.js](./execution-state-preflight.js)** — the skeleton. the header comment explains how the rest is organized.
 
