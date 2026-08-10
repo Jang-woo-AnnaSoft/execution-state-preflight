@@ -48,8 +48,7 @@ Records accumulate under one `action_key`: `ask_user` → `execute` → `execute
 
 ## Files
 
-- **[execution-state-preflight.js](./execution-state-preflight.js)** — the skeleton. Read it from the top; the header comment explains how the rest is organized.
-- **[`lookupField`](./execution-state-preflight.js#L180-L242)** — the core. If you read one function, read this one.
+- **[execution-state-preflight.js](./execution-state-preflight.js)** — the skeleton. the header comment explains how the rest is organized.
 
 ## Status
 
