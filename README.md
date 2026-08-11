@@ -2,11 +2,25 @@
 
 A verification layer that runs before an MCP tool call.
 
-It stands on two gates. The first asks whether this is even the right tool. The second asks where each argument value came from. Neither one produces a value or a justification — both only look things up, and either one can stop the call.
+Three checklists say what has to be true before a call goes out. Two gates enforce them. Neither gate produces a value or a justification — both only look things up, and either one can stop the call.
 
 This is not a wall in front of your agent. It fills, with a stated source, the blanks that guessing used to fill. Execution is still the goal.
 
 **Status:** a specification, not a library. `createPreflight` refuses to build without six injected hooks. See [What you have to implement](#what-you-have-to-implement).
+
+---
+
+## The three checklists
+
+The rules an action needs split by who defines them. This split is the whole design — everything below is machinery for enforcing it.
+
+**Fixed checklist** — which tool are we picking, and are the execution conditions met (when/case)? Tool-independent, and identical for every execution. In the record these are `c1_when_case`, `c2_user_action_name`, `c3_provider_action_name`.
+
+**Provider checklist** — required fields, type and format, pre-execution checks, prohibited conditions, extra confirmation conditions. Changes per tool. Splits again on enforceability: `inputSchema.required` can be gated, while `description` is prose and can't be, so it's recorded as advisory and passed to the model as context.
+
+**User checklist** — user intent, current context, execution limits, pre-execution checks, preferences. Changes with the user's environment rather than with the tool. Each item needs a stable `id`; without one there's no key to reattach an answer to, and the run holds.
+
+The fixed checklist is what Gate 1 asks. The provider and user checklists are what Gate 2 asks.
 
 ---
 
@@ -15,18 +29,21 @@ This is not a wall in front of your agent. It fills, with a stated source, the b
 ```
 instruction (trust-labeled segments)
    │
-   ├─ Gate 1  is this the right tool?        → tool_undetermined → ask_user
+   ├─ Gate 1   Fixed checklist                  → tool_undetermined → ask_user
+   │           is this the right tool? when does it run?
    │
-   ├─ Gate 2  where did each value come from? → unknown_fields   → ask_user
+   ├─ Gate 2   Provider + User checklists       → unknown_fields    → ask_user
+   │           where did each value come from?     unverified_checklist
+   │           are the user's conditions verified?
    │
-   └─ both clear                              → execute → executed
+   └─ both clear                                → execute → executed
 ```
 
 Gate 1 sits above everything the provider supplies. Move it lower and an undetermined tool's `required` fields and `description` ride into the gate with it — you'd be validating arguments for a call that shouldn't happen at all.
 
 ---
 
-## Gate 1 — tool determination
+## Gate 1 — the fixed checklist
 
 Tool selection accuracy is never going to hit 100%. Wrong picks are inevitable, so the first job is a structure where a wrong pick doesn't reach execution.
 
@@ -71,11 +88,15 @@ Four things in that record are deliberate:
 
 If you have few enough tools to present a list, present it flat. No default selection, no "recommended" marker.
 
+The other half of the fixed checklist is `c1_when_case`, which decides the phase: `immediate` runs the rest now, anything else defers it to trigger time. An out-of-enum value holds rather than falling through to immediate — see [Values now, conditions at trigger time](#values-now-conditions-at-trigger-time).
+
 ---
 
-## Gate 2 — provenance lookup
+## Gate 2 — the provider and user checklists
 
 Everything below is reached only after the tool is determined.
+
+### Where each value came from
 
 A validator can't tell an account number the user typed from one the model invented. Worse, a required field is pressure on the model to produce something. So this layer doesn't validate arguments — it looks up where each one came from.
 
@@ -90,6 +111,12 @@ A validator can't tell an account number the user typed from one the model inven
 This is a lookup order, not a ranking by trustworthiness. If an earlier tier has the answer, the value is already decided; if it doesn't, you go down one. All five get checked. All five empty means `unknown`.
 
 Given an incomplete instruction, `unknown` is not an error. It's the correct output.
+
+### Whether the user's conditions hold
+
+The user checklist is verified in the same run, right before execution, and anything the hook didn't actively confirm comes back `unverified`. The default hook confirms nothing — it doesn't trust the incoming status either, so an item arriving pre-marked `verified` still fails.
+
+The gate clears only when both counts are zero.
 
 ```json
 {
@@ -133,6 +160,8 @@ Given an incomplete instruction, `unknown` is not an error. It's the correct out
 }
 ```
 
+`advisory_notes` carries the provider's `description`. It's recorded and handed to the model, and it is not part of the gate — natural language can't be enforced, so pretending otherwise would put an unverifiable condition in a verifying position.
+
 Three properties hold across the chain:
 
 **Values are read, never produced.** Whether a condition holds is answered by observation, not by the model's reasoning.
@@ -140,8 +169,6 @@ Three properties hold across the chain:
 **Provenance is not self-reported.** A pre-execution step queries the defined source and fills the value in. Leave it to self-reporting and invented values get a source attached too. The model must not manufacture the grounds for its own execution.
 
 **The first source is never erased.** Tier 4 overwrites `source` with `prior_state` but inherits `origin_source`. Overwrite both and you've opened a laundering path: ask once, execute once, and from then on any value can claim a clean lineage.
-
-Note `advisory_notes` in the record. The provider's `description` is natural language, so it can't be enforced — it's recorded and passed to the model as context, and it is not part of the gate. Only `inputSchema.required` gates.
 
 Records accumulate under one `action_key`: `ask_user` → `execute` → `executed`. Only `executed` becomes a baseline for tier 4 on the next run.
 
@@ -236,21 +263,9 @@ What you carry forward is a choice. Intent should be preserved (instruction, che
 
 ---
 
-## The three checklists
-
-The rules an action needs split by who defines them.
-
-**Fixed** — which tool, and are the execution conditions met (when/case). Applies to every execution.
-
-**Provider** — required fields, type and format, pre-execution checks, prohibited conditions, extra confirmation conditions. Changes per tool. Splits again on enforceability: `required` gates, `description` is advisory.
-
-**User** — user intent, current context, execution limits, pre-execution checks, preferences. Changes with the user's environment.
-
----
-
 ## Adapting it
 
-Not every deployment needs all of it. Immediate execution only, a single tool, no user checklist — take the part that matches. If the agent and the tool have the same owner, the per-tool list goes in the slot where the MCP input schema would be.
+Not every deployment needs all three checklists. Immediate execution only, a single tool, no user conditions to check — take the part that matches. If the agent and the tool have the same owner, the per-tool list goes in the slot where the MCP input schema would be.
 
 ---
 
@@ -260,7 +275,7 @@ Forms had five things in place: judging the condition, picking the form, enterin
 
 MCP's input schema defines the shape of the values a tool needs. It doesn't say why a value is needed, who asked for the execution, or whether the execution is allowed right now. That's not an MCP problem — it shows up anywhere natural language turns into execution. MCP is just easy to point at, because the boundary is written down as a protocol. When one owner has both sides, the boundary is invisible and the rules end up scattered across prompts and code.
 
-Getting to two gates meant working through eight problems:
+Getting to three checklists and two gates meant working through eight problems:
 
 1. Separating execution from verification — and separating who verifies (system / provider / user)
 2. Verifying conditions, not just values
@@ -288,3 +303,4 @@ Copyright © 2026 AnnaSoft Inc. (Republic of Korea)
 A commercial license is required only for organizations with annual revenue of USD 1 billion or more that commercially deploy products or services based on this work. All other use, including modification and redistribution, is permitted free of charge.
 
 Contact: hello@anna.software
+
