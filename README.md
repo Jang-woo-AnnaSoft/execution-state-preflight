@@ -263,9 +263,12 @@ What you carry forward is a choice. Intent should be preserved (instruction, che
 
 ---
 
-## Adapting it
+## Composition
 
-Not every deployment needs all three checklists. Immediate execution only, a single tool, no user conditions to check — take the part that matches. If the agent and the tool have the same owner, the per-tool list goes in the slot where the MCP input schema would be.
+Not every deployment needs all three checklists. Immediate execution only, a single tool, no user conditions to check — take the part that matches. If the agent and the tool have the same owner, the per-tool list goes in the slot where the MCP input
+schema would be.
+
+The two gates split cleanly — they share only `fixed`, `action_key`, and `phase`, and their hooks don't overlap. Turning either one into a general-purpose module for LangGraph or similar is welcome.
 
 ---
 
