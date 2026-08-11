@@ -6,7 +6,7 @@ Three checklists say what has to be true before a call goes out. Two gates enfor
 
 This is not a wall in front of your agent. It fills, with a stated source, the blanks that guessing used to fill. Execution is still the goal.
 
-**Status:** a specification, not a library. `createPreflight` refuses to build without six injected hooks. See [What you have to implement](#what-you-have-to-implement).
+**Status:** a specification, not a library. `createPreflight` refuses to build without six injected hooks. See [execution-state-preflight]([#what-you-have-to-implement](https://github.com/Jang-woo-AnnaSoft/execution-state-preflight/blob/main/execution-state-preflight.js)).
 
 ---
 
