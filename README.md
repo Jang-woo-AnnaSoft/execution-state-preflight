@@ -4,14 +4,16 @@ Forms had five things in place: judging the condition, picking the form, enterin
 
 When input moved from forms to natural language, the blanks and the judgment got handed to the LLM. Some of those safeguards didn't come along.
 
-MCP's input schema can define the shape of the values a tool needs in order to run. It doesn't automatically tell you why a value is needed, who asked for the execution (the user, or the model), or whether this execution is allowed right now.
+MCP's input schema can define the shape of the values a tool needs in order to run. It doesn't automatically tell you **why a value is needed, who asked for the execution (the user, or the model), or whether this execution is allowed right now**.
 
 This isn't specific to MCP. Anywhere natural language turns into execution, the same gap shows up. MCP is just easy to talk about because the boundary is written down as a protocol. When the same owner has both the agent and the tool, the boundary is invisible, and the rules end up scattered across prompts and code, stated nowhere in particular.
+
+## Chedklist
 
 LLMs were trained by filling in blanks.
 Now that we've moved from the age of conversation to the age of action, we tell them not to fill in blanks.
 
-But nobody has handed them a list of what they aren't allowed to infer. Nobody has told them how to fill a blank without inferring.
+But nobody has handed them **a list of what they aren't allowed to infer**. Nobody has told them how to fill a blank without inferring.
 
 So the list comes first. Then correct values. Then somewhere to get correct values from. The rules an action needs split into three kinds: conditions the system defines, conditions the tool provider defines, and conditions that have to be confirmed with the user.
 
@@ -60,13 +62,13 @@ Which leaves the next problem. **How do you find the correct value?**
 
 This order isn't a ranking by trustworthiness. It's a lookup order. If an earlier source has the answer, that value is already decided; if it doesn't, you go down one. Values are not generated. They're read from a defined source. Whether a condition holds is answered by observation, not by the model's reasoning. If a value isn't found in any defined source, it's unknown. If the execution needs it, ask the user.
 
-The source isn't something the model declares about itself either. A pre-execution step queries the defined source directly and fills the value in. Leave it to self-reporting and invented values get provenance attached too. The model must not manufacture the grounds for its own execution. Those grounds have to come from defined sources and from the results of pre-execution checks. And whatever it ran on should be recorded, so it can be verified and audited.
+The source isn't something the model declares about itself either. A pre-execution step queries the defined source directly and fills the value in. Leave it to self-reporting and invented values get provenance attached too. **The model must not manufacture the grounds for its own execution**. Those grounds have to come from defined sources and from the results of pre-execution checks. And whatever it ran on should be recorded, so it can be verified and audited.
 
 This layer doesn't block execution. It fills, with a source, the blanks that guessing used to fill. Only when no source has it does it ask, and the user's answer lets the call go through. Execution is still the goal.
 
 The point is that you're not only validating whether the tool's inputs are well-formed. Before execution you should be able to say why this is running, under what conditions it's allowed, and where each value came from.
 
-Tool selection accuracy is never going to hit 100%. Wrong picks are inevitable, so the first job is a structure where a wrong pick doesn't reach execution.
+> **Tool selection accuracy is never going to hit 100%. Wrong picks are inevitable, so the first job is a structure where a wrong pick doesn't reach execution.**
 
 ## What a blocked call looks like
 
