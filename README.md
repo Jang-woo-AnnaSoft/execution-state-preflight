@@ -10,6 +10,21 @@ This is not a wall in front of your agent. It fills, with a stated source, the b
 
 ---
 
+## Eight problems
+
+Getting to three checklists and two gates meant working through eight of them.
+
+1. Separating execution from verification — and separating who verifies (system / provider / user)
+2. Verifying conditions, not just values
+3. The system deciding what counts as unknown, not the model
+4. Human involvement guaranteed by the structure rather than by good intentions
+5. Per-field provenance records, as raw material for auditing and for assigning responsibility
+6. Rules becoming data attached to the tool instead of code, so they change without a deploy
+7. Failures having names — an *instruction gap* (the user's instruction was incomplete) and an *action definition gap* (the model reached for the wrong tool, or for one that doesn't exist yet)
+8. What can't run now being held rather than discarded
+
+---
+   
 ## The three checklists
 
 The rules an action needs split by who defines them. This split is the whole design — everything below is machinery for enforcing it.
@@ -277,17 +292,6 @@ The two gates split cleanly — they share only `fixed`, `action_key`, and `phas
 Forms had five things in place: judging the condition, picking the form, entering the values, knowing where each value came from, and validating required fields. When input moved to natural language, the blanks and the judgment went to the model. Some of those safeguards didn't come along.
 
 MCP's input schema defines the shape of the values a tool needs. It doesn't say why a value is needed, who asked for the execution, or whether the execution is allowed right now. That's not an MCP problem — it shows up anywhere natural language turns into execution. MCP is just easy to point at, because the boundary is written down as a protocol. When one owner has both sides, the boundary is invisible and the rules end up scattered across prompts and code.
-
-Getting to three checklists and two gates meant working through eight problems:
-
-1. Separating execution from verification — and separating who verifies (system / provider / user)
-2. Verifying conditions, not just values
-3. The system deciding what counts as unknown, not the model
-4. Human involvement guaranteed by the structure rather than by good intentions
-5. Per-field provenance records, as raw material for auditing and for assigning responsibility
-6. Rules becoming data attached to the tool instead of code, so they change without a deploy
-7. Failures having names — instruction gap, action definition gap
-8. What can't run now being held rather than discarded
 
 The longer version of the argument is in [If unsure, ask. Never guess. — AI Agent Pre-Execution Checklist](https://discuss.huggingface.co/t/if-unsure-ask-never-guess-ai-agent-pre-execution-checklist/176632).
 
