@@ -8,7 +8,7 @@ MCP's input schema can define the shape of the values a tool needs in order to r
 
 This isn't specific to MCP. Anywhere natural language turns into execution, the same gap shows up. MCP is just easy to talk about because the boundary is written down as a protocol. When the same owner has both the agent and the tool, the boundary is invisible, and the rules end up scattered across prompts and code, stated nowhere in particular.
 
-## Chedklist
+## Checklist
 
 LLMs were trained by filling in blanks.
 Now that we've moved from the age of conversation to the age of action, we tell them not to fill in blanks.
@@ -107,6 +107,19 @@ The user checklist can also carry how each condition gets checked. If tool provi
 This code is the reference implementation of
 [**If unsure, ask. Never guess. — AI Agent Pre-Execution Checklist**](https://discuss.huggingface.co/t/if-unsure-ask-never-guess-ai-agent-pre-execution-checklist/176632).
 
+This structure is aiming at one thing: fewer wrong executions.
+
+Getting that one thing took working through eight separate problems.
+
+1. Separating execution from verification — and separating who verifies (system / provider / user)
+2. Verifying conditions, not just values
+3. The system decides what counts as unknown, not the model
+4. Human involvement is guaranteed by the structure, not by good intentions
+5. Per-field provenance records — the raw material for auditing and for assigning responsibility
+6. Rules become data attached to the tool instead of code (change them without a deploy)
+7. Failures get names (instruction gap / action definition gap)
+8. What can't run now isn't discarded; it's held
+   
 ---
 
 ## Ownership & License
