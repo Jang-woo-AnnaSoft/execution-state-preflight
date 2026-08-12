@@ -306,12 +306,20 @@ function confirmToolNameMatchesIntent(userActionName, mcpTool) {
 //   Choose how it blocks: answerable by the user → unknown in the value gate. Not answerable
 //   ("insufficient balance") → hold; asking cannot resolve it and re-asking only repeats.
 //   BREAKS: let it open and an upstream schema edit — an always-true condition — is a fail-open switch.
+// NOTE: how mcpTool was obtained is outside this skeleton — the caller hands it in, and whether the
+//   schema was fetched, cached, or never arrived is not visible here.
+//   What IS visible is the shape: a missing inputSchema and required: [] are not the same object.
+//   The first is an incomplete tool; the second is a tool that declares it takes no arguments.
+//   BREAKS: collapse both to [] and "we never got the schema" becomes indistinguishable from
+//     "this tool takes no arguments" — and an empty checklist is an unconditional pass.
 function getRequiredFields(mcpTool) {
   // Only required is gated. properties flows into ctx.fieldSchemas and is used for format validation.
   // NOTE: this schema is provider self-reported. An empty required means zero fields and unconditional pass.
+  //   That is correct ONLY when the emptiness was declared. See the null return below.
   // POLICY: trusted provider lists, schema fingerprint pinning, and rug pull detection belong to the adopting system.
   //   Do not blanket-hold — tools with no arguments (list-style) legitimately exist.
-  return mcpTool.inputSchema?.required ?? [];
+  if (!mcpTool?.inputSchema) return null;   // undetermined, not zero fields. Never iterate this as a list.
+  return mcpTool.inputSchema.required ?? [];
 }
 
 function getAdvisoryNotes(mcpTool) {
