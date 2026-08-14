@@ -280,16 +280,6 @@ If the same team owns the agent and the tools, the per-tool checklist goes where
 
 ---
 
-## 9. Order of explanation
+## Why this framing
 
-| Order | Topic | Question it answers |
-|---|---|---|
-| 1 | Premise (section 1) | Why is this needed |
-| 2 | Checklists | What gets checked |
-| 3 | Provenance chain | How is unknown determined |
-| 4 | Three gates | When does it stop |
-| 5 | Recording and separation | How is it enforced |
-| 6 | Direction of authority (developers only) | Why do hooks only reject |
-| 7 | Effects and costs (section 7) | So what changes |
-
-For decision-makers the order is better reversed. Start with the two tables in section 7, the incidents it blocks and the fact that causes currently can't be located, and explain the structure after. "This makes you safer" invites argument. "Right now, when something goes wrong, you can't find out why" doesn't.
+This design doesn't claim to make anything safe. It claims something narrower: right now, when an agent does the wrong thing, there is no way to find out why. Every argument above is downstream of that.
