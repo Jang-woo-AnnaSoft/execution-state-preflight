@@ -15,7 +15,7 @@
  * Not everything has to be in place.
  * Gates 1 and 2 are unnecessary depending on the situation, and are better replaced by the prompt.
  * Asking the user is now handled by built-in functionality.
- * Everything else is there to explain the structure; lookupField and checkArgs alone are enough. (37 lines)
+ * The rest is for structural explanation purposes, so you may move it to the prompt. The only actually useful part is `lookupField`
  * ============================================================================
  */
 
