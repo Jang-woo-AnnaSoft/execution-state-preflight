@@ -3,28 +3,19 @@
  * [Execution State Preflight Architecture] — a verification skeleton that runs
  * before an MCP Tool call.
  *
- * Premise: Tool selection accuracy never reaches 100%. The remainder contains
- * transfers, deletions, and sends. Accuracy and containment are sequential, not
- * alternative — containment does not become unnecessary as accuracy improves.
+ * Premise: Tool selection accuracy never reaches 100%. 
  * This skeleton does not improve selection. It keeps a wrong one out of execution.
  *
  * Two places are [CORE].
  *   lookupField — walks five sources, never generates a value, unknown when empty.
- *     Self-contained and deterministic: same input, same record.
- *   Step 1-0 Tool gate — the one judgment this skeleton cannot make itself. The
- *     verdict is delegated to a hook; placement, fail-closed default, ceiling, and
- *     record are not.
- * Everything else exists so that neither can be bypassed.
- * This file is a specification. Layer boundaries are not prescribed.
- * Background, decision path, and principles are in the [APPENDIX] at the bottom.
+ *   Step 1-0 Tool gate — the one judgment this skeleton cannot make itself. 
+ * The Background, decision path, and principles are in the [APPENDIX] at the bottom.
  *
- * Hook grades = [REQUIRED-OP]     absent → cannot run
- *               [REQUIRED-SAFETY] runs, but verification is disabled
- *               [OPTIONAL]        default is safe
- * Prefixes = "CONTRACT:" what the hook must honor
- *            "POLICY:"   what the adopting system decides
- *            "NOTE:"     what the skeleton does not do
- *            "BREAKS:"   what happens if you remove or change this
+ * Apply it only to irreversible actions.
+ * Not everything has to be in place.
+ * Gates 1 and 2 are unnecessary depending on the situation, and are better replaced by the prompt.
+ * Asking the user is now handled by built-in functionality.
+ * Everything else is there to explain the structure; lookupField and checkArgs alone are enough. (37 lines)
  * ============================================================================
  */
 
@@ -1013,45 +1004,8 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  * Feedback: only executed records become the baseline for tier 4 (prior_state) on the next run.
  * Exception: a throw at any step is caught by runPreflight's backstop as "hold".
  *
- * ── [CALLER CONTRACT] for whoever calls runPreflight ─────────────────────────────────────────
- * Decide execution by an allow condition:
- *     if (executionState.execution_decision !== "execute") return;   // correct
- *     if (result.unknown_count > 0) { ... }                          // wrong
- *   BREAKS: used as a block condition, null > 0 === false lets the not-yet-computed state through.
- *
- * [ask_user re-entry] The answer to tool_undetermined is not userAnswers — replace mcpTool and call again.
- *   Re-running the hook on the reselected Tool loops the question forever, so the adopting system sets a
- *   flag in the input. The skeleton does not read it (it would become a bypass switch). Only the name is
- *   fixed: input.tool_reselected_by_user.
- *
- * [Re-ask ceiling] The intent and Tool gates carry their own ceilings (INTENT_ATTEMPT_LIMIT,
- *   TOOL_ATTEMPT_LIMIT); the caller only carries the counters forward. The value_gate has none — when the
- *   same field is asked repeatedly under one action_key, hold after a ceiling of your own.
- *
- * ── [UNKEYED BUCKET POLICY] for whoever writes the storage adapter ───────────────────────────
- * UNKEYED_RECORD_KEY only. Retention here may differ from keyed buckets: append-only exists to protect the
- *   executed baseline, and this bucket holds none — getPriorExecutionState never reads it (tier 4 looks up
- *   by action_key). Write-only audit material.
- *   BREAKS: apply this retention to a keyed bucket and you delete the baseline tier 4 needs.
- *
- * Who lands here (all return before action_key exists):
- *   config   — checklist item without id (Step 0)
- *   intent   — fixed undetermined: both the ask_user and the exhausted hold (Step 1-a)
- *   internal — runPreflight backstop
- *   No class label is written; derive it from execution_decision + gate.kind (see the storage port note).
- *
- * POLICY (retention) — the adapter implements this; the skeleton only writes:
- *   config, intent → 14 days. Tuning material, short useful life.
- *   internal       → 90 days, or forward to error tracking and keep out of here. Bugs, not user behavior.
- *   gate._diag     → strip after 7 days, keep the rest. Raw hook exception text, already never-expose.
- *                    fields[]._diag_note is the same class but sits in KEYED buckets — same schedule.
- *   capacity       → cap and evict oldest-first, on top of expiry. The intent gate writes up to
- *                    INTENT_ATTEMPT_LIMIT + 1 records per request and a bad client repeats without bound.
- *
- * POLICY (do NOT store): the raw instruction, even for debugging. gate.intent_fingerprint is already there
- *   and repeated failures on one utterance show up by comparing fingerprints — the actual signal. Reading
- *   the utterance is an exceptional investigation; put it behind a separate approval path.
- *   BREAKS: stored, every ambiguous utterance accumulates in plaintext — weakest retention, no masking hook.
+ * POLICY (do NOT store): the raw instruction.
+ *   BREAKS: stored, every ambiguous utterance accumulates in plaintext. 
  *
  * Background: turning forms into natural language erased the provenance of values, so there is no
  *       way to decide when to ask. This resembles a validator (Pydantic), except that questions about
