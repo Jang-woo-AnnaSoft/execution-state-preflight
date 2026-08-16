@@ -1,3 +1,9 @@
+ Apply it only to irreversible actions.
+ Not everything has to be in place.
+ Gates 1 and 2 are unnecessary depending on the situation, and are better replaced by the prompt.
+ Asking the user is now handled by built-in functionality.
+ The rest is for structural explanation purposes, so you may move it to the prompt. The only actually useful part is `lookupField`
+
 # execution-state-preflight
 
 A verification layer that runs before an MCP tool call.
