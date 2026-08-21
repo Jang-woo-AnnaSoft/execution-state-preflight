@@ -1,79 +1,16 @@
-# Pre-Execution Validation Gate: Design Notes
+# Pre-Execution Validation Gate: Implementation Notes
 
-## 1. Premise
+These are implementation notes. The argument itself — why the list has to sit outside the model, and what changes when it does — is in [*Who Fills In the Form*](./who-fills-in-the-form.md). Read that first. What follows assumes it and describes the structure needed to build the thing.
 
-### What we lost moving from forms to natural language
-
-A form had five things built into it:
-
-1. Deciding whether the conditions were met
-2. Picking the form
-3. Entering the values
-4. Confirming where each value came from
-5. Validating the required fields
-
-Once input became natural language, the blanks and the judgment calls were handed to the LLM, and some of those safeguards disappeared along the way. They didn't stop being necessary. They moved somewhere nobody can see them.
-
-An MCP input schema defines the shape of the values an execution needs. It doesn't tell you why those values are needed, who asked for the execution (the user, or the model filling something in), or whether this execution is allowed right now.
-
-This isn't specific to MCP either. The same problem shows up anywhere language turns into execution. MCP just makes it easy to talk about, because the boundary is exposed as a protocol. When the same team owns both the agent and the tools, the boundary is invisible, and the rules end up scattered across prompts and code without being written down anywhere.
-
-### Nobody gave the model a list
-
-An LLM learns by filling in blanks. Now that we've moved from the conversation era to the action era, we're telling it to stop filling in blanks.
-
-But we still haven't handed it a list of what it must not infer. We also haven't shown it how to fill a blank without inferring.
-
-So the list comes first. Then the correct answer. Then where to go looking for that answer.
-
-### And this doesn't get solved by performance
-
-> **A model can't tell you what it failed to check.**
-> That's a structural gap rather than a performance one, so it doesn't close as models improve.
-
-You can ask about confidence in something that's there. You can't ask about awareness of something that isn't. Experienced surgeons still run checklists for the same reason: you can't remember what you skipped.
-
-> **Tool selection is never going to be 100% accurate. Mis-selection is inevitable, so the first job is a structure where it can't reach execution.**
-
-Those two sentences are why everything else exists. They're also the answer to "won't this be unnecessary once models get better?"
+> **A note on vocabulary.** This document keeps the terms from the reference skeleton: *gate*, *hook*, and the labels `C1` / `C2` / `C3`. The essay avoids them, because they belong to one particular implementation rather than to the argument. `C1` is the timing and circumstance, `C2` is what the user calls the action, `C3` is which tool. A *gate* here is simply one of the places where a question gets asked before execution.
 
 ---
 
-## 2. Summary
-
-1. A model can't tell you what it failed to check. Structural, not performance.
-2. So the list of things to check lives **outside** the model. Settle what the action is first, then fill the values and conditions that action requires.
-3. Each slot gets filled by whoever can actually answer it.
-4. An unfilled slot is unknown, and nothing runs while an unknown remains.
-5. The decision is recorded, and execution reads only that record.
-
-Line one is the premise. The other four are the structure.
-
----
-
-## 3. What "outside" means
-
-Two layers, and both are needed.
-
-**The list sits outside the model's context.** Write it into the prompt and the model is still the one reading it and judging itself. The list has to live in code to be a data structure rather than an instruction.
-
-**The decision sits outside the model's output.** You never ask whether it checked everything. The decision is `filter(f => f.status === "unknown").length`. It comes from the system counting its own state, not from parsing an answer.
-
-> **Move the list outside and the decision stops being inference and becomes arithmetic. Counting doesn't hallucinate.**
-
-Inference gives different answers to the same input, shifts when you swap models, and can't explain itself. Counting reproduces, doesn't care which model you're on, and the empty slot is the explanation.
-
-This doesn't cut the model out. It still finds values, classifies when the action should happen, and extracts what the user is trying to do. The difference is that it has to return not just the value but which segment and which span it came from. It points at a location instead of producing a value.
-
-> **The model proposes candidates. The counting happens outside.**
-
----
-
-## 4. Structure
+## 1. Structure
 
 ### 1. The checklists
 
-The rules an action needs split three ways: conditions the system defines, conditions the tool provider defines, and conditions that have to be confirmed with the user. The split follows who can actually answer (section 5).
+The rules an action needs split three ways: conditions the system defines, conditions the tool provider defines, and conditions that have to be confirmed with the user. The split follows who can actually answer (section 2).
 
 **Fixed checklist**, needed for every execution:
 
@@ -155,7 +92,7 @@ Blocks get recorded too. A log holding only successful executions lies to you: t
 
 ---
 
-## 5. Who answers, and in which direction
+## 2. Who answers, and in which direction
 
 There are three checklists because there are three parties who can answer.
 
@@ -177,7 +114,7 @@ Conditions split the same way. Ones a question can resolve (confirm the recipien
 
 ---
 
-## 6. Expected objections
+## 3. Expected objections
 
 **"Why not put the checklist in the prompt and take JSON back?"**
 Because the model is still the one deciding a slot is empty. If it reports everything filled, the system has no way to check. Being able to say what it didn't look at is exactly the thing it can't do, and that was the starting point. Move the list outside and it holds regardless of what the model claims. Empty is empty whether or not it says otherwise.
@@ -186,21 +123,21 @@ Because the model is still the one deciding a slot is empty. If it reports every
 Accuracy and containment are sequential, not substitutes. The higher the accuracy, the less people supervise, so the odds of the remaining errors slipping through go up rather than down.
 
 **"What if someone just doesn't call it?"**
-Fair. See section 8. It's outside the boundary of this design, and saying so first is better than being asked.
+Fair. See section 5. It's outside the boundary of this design, and saying so first is better than being asked.
 
 **"Why not write it all in the description?"**
 A description is free text and self-reported. The model is the one reading it, so it may or may not be followed, and there's no way to check whether it was. Half of this proposal is taking that same content, structuring it, and putting it where the schema goes.
 
 ---
 
-## 7. Effects
+## 4. Effects
 
 ### Incidents it blocks
 
 | Incident | Today | With the gate |
 |---|---|---|
 | An argument that was never stated gets invented and executed | No mechanism to stop it | A value with no source can't become an argument |
-| A list request executes as a delete | Argument validation doesn't catch it | Stopped at the tool gate |
+| A list request executes as a delete | Argument validation doesn't catch it | Narrowed, not eliminated. An invented tool can't be picked and a tool that can't produce the requested change is filtered out, but picking the wrong one among several that could all do it still gets through (section 5) |
 | An instruction planted in an email or document executes | A filter has to recognize the phrasing | Values from untrusted paths aren't eligible as arguments |
 | A scheduled job triggers with missing arguments | Nobody is there to ask at trigger time | Scheduling is refused if values aren't settled at instruction time |
 | A scheduled job runs against stale conditions | The pre-checked value is reused as-is | Conditions are only checked at trigger time |
@@ -245,9 +182,9 @@ All of these have answers, and each answer points directly at what to fix. It al
 
 If you're going to make the argument, make this part too.
 
-**Latency and cost go up.** Every field adds an extraction call. Caching and batching need their own design.
+**Latency is not the cost people expect.** Slots do not depend on one another, so lookups run in parallel and are memory comparisons rather than extra inference calls. The round trips spent asking about blanks one at a time collapse into one. What does cost something is extraction: if every field is resolved by its own model call, caching and batching need their own design.
 
-**Questions go up.** Things that used to get filled in silently now reach the user. Re-ask limits and learned mappings have to ship alongside.
+**Questions surface rather than multiply.** Things that used to get filled in silently now reach the user. The count does not necessarily rise — treating the whole conversation as the instruction means values mentioned earlier are looked up rather than asked for again — but they become visible, and re-ask limits and learned mappings still have to ship alongside.
 
 **It puts demands on tool providers.** Plenty of servers don't declare their schemas carefully, and that's outside your control.
 
@@ -263,7 +200,7 @@ If the same team owns the agent and the tools, the per-tool checklist goes where
 
 ---
 
-## 8. Boundaries and limits
+## 5. Boundaries and limits
 
 ### Not covered by this design
 
@@ -282,4 +219,5 @@ If the same team owns the agent and the tools, the per-tool checklist goes where
 
 ## Why this framing
 
-This design doesn't claim to make anything safe. It claims something narrower: right now, when an agent does the wrong thing, there is no way to find out why. Every argument above is downstream of that.
+This design doesn't claim to make anything safe. It claims something narrower: right now, when an agent does the wrong thing, there is no way to find out why. Everything above is downstream of that, and the case for it is made in [*Who Fills In the Form*](./who-fills-in-the-form.md).
+
