@@ -1,9 +1,3 @@
- Apply it only to irreversible actions.
- Not everything has to be in place.
- Gates 1 and 2 are unnecessary depending on the situation, and are better replaced by the prompt.
- Asking the user is now handled by built-in functionality.
- The rest is for structural explanation purposes, so you may move it to the prompt. The only actually useful part is `lookupField`
-
 # execution-state-preflight
 
 A verification layer that runs before an MCP tool call.
@@ -13,6 +7,10 @@ Three checklists say what has to be true before a call goes out. Two gates enfor
 This is not a wall in front of your agent. It fills, with a stated source, the blanks that guessing used to fill. Execution is still the goal.
 
 **Status:** a specification, not a library. `createPreflight` refuses to build without six injected hooks. See ([execution-state-preflight](https://github.com/Jang-woo-AnnaSoft/execution-state-preflight/blob/main/execution-state-preflight.js)).
+
+**Start here.** [*Who Fills In the Form*](./who-fills-in-the-form.md) is the argument — why the list of what to check has to sit outside the model, and what changes when it does. [design.md](./design.md) is the implementation notes: the structure, the hook contracts, and what this does and does not cover. This README describes the reference skeleton itself.
+
+Read in that order if you are deciding whether this is worth doing. Start here if you already are.
 
 ---
 
@@ -278,7 +276,7 @@ What you carry forward is a choice. Intent should be preserved (instruction, che
 - **No masking.** `fields[].value` is persisted verbatim — account numbers, amounts, recipients, tokens. Deferred records sit in plaintext from instruction time until trigger. Masking, access control, and append-only enforcement belong in your storage adapter.
 - **No integrity check on the state it's handed.** `executeIfReady` reads the object you give it. Hand it a hand-built one and the gate is bypassed. If decision and execution cross a trust boundary, sign it.
 - **No retry.** A throw from the tool call doesn't mean nothing happened on the provider side. For payments, use an idempotency key and confirm by measurement.
-- **No per-tool risk weighting.** `delete_all_records` and `list_records` pass the same gate.
+- **No per-tool risk weighting.** `delete_all_records` and `list_records` pass the same gate. Tool selection itself sits outside this structure: an invented tool can't be picked, but picking the wrong one among several that could all do the job still gets through.
 - **No locking.** Concurrent preflight and execution on the same `action_key` is the caller's problem.
 - **Flat arguments assumed.** Field name equals argument key. Nested schemas and key-mapping tools need an adapter.
 
@@ -286,8 +284,11 @@ What you carry forward is a choice. Intent should be preserved (instruction, che
 
 ## Composition
 
-Not every deployment needs all three checklists. Immediate execution only, a single tool, no user conditions to check — take the part that matches. If the agent and the tool have the same owner, the per-tool list goes in the slot where the MCP input
-schema would be.
+Apply this only to irreversible actions. Not everything has to be in place.
+
+Not every deployment needs all three checklists. Immediate execution only, a single tool, no user conditions to check — take the part that matches. If the agent and the tool have the same owner, the per-tool list goes in the slot where the MCP input schema would be.
+
+Gate 1 is often better handled as a principle given to the model than as code here — see the essay on what can live as a principle and what has to live in code. Asking the user is handled by built-in functionality in most agent frameworks now. Much of the rest of this file exists to make the structure explicit; the part that actually has to be code is `lookupField`.
 
 The two gates split cleanly — they share only `fixed`, `action_key`, and `phase`, and their hooks don't overlap. Turning either one into a general-purpose module for LangGraph or similar is welcome.
 
@@ -295,11 +296,9 @@ The two gates split cleanly — they share only `fixed`, `action_key`, and `phas
 
 ## Why this exists
 
-Forms had five things in place: judging the condition, picking the form, entering the values, knowing where each value came from, and validating required fields. When input moved to natural language, the blanks and the judgment went to the model. Some of those safeguards didn't come along.
-
 MCP's input schema defines the shape of the values a tool needs. It doesn't say why a value is needed, who asked for the execution, or whether the execution is allowed right now. That's not an MCP problem — it shows up anywhere natural language turns into execution. MCP is just easy to point at, because the boundary is written down as a protocol. When one owner has both sides, the boundary is invisible and the rules end up scattered across prompts and code.
 
-The longer version of the argument is in [If unsure, ask. Never guess. — AI Agent Pre-Execution Checklist](https://discuss.huggingface.co/t/if-unsure-ask-never-guess-ai-agent-pre-execution-checklist/176632).
+The argument is in [*Who Fills In the Form*](./who-fills-in-the-form.md). An earlier version was posted [here](https://discuss.huggingface.co/t/if-unsure-ask-never-guess-ai-agent-pre-execution-checklist/176632).
 
 ---
 
@@ -318,4 +317,5 @@ Copyright © 2026 AnnaSoft Inc. (Republic of Korea)
 2. Model Architecture & Native Integration - Direct application or internalization of these architectural principles (Inference Control and Lookup-Based Verification, such as slot-based state control mechanisms) within model weights, neural layers, or training/inference pipelines by organizations with annual gross revenue of USD 1 billion or more requires prior written agreement with AnnaSoft Inc. All other organizations may use these principles free of charge.
 
 Contact: hello@anna.software
+
 
