@@ -45,7 +45,7 @@
  * @property {boolean} [pending_at_trigger]
  *   // Marks "unknown is correct now, will be settled at trigger time". Only applyFieldPolicy sets it.
  *   // It excuses a field only at the at_instruction gate. At at_trigger, unknown is unmet without exception.
- *   // NOTE: no staleness slot. See [TIER 4 STALENESS] on applyFieldPolicy.
+ *   // NOTE: no staleness slot. Tier 4 is refused by default in applyFieldPolicy instead.
  * @property {boolean} [lookup_failed]  // A tier 1/3 hook threw. Set by lookupField only. See [LOOKUP HOOK FAILURE]
  * @property {string} [_diag_note]      // Hook exception text. Logs only — never copied into note
  * @property {string} [note]
@@ -426,7 +426,7 @@ async function lookupField(h, fieldName, ctx) {
 
   // Tier 4: prior Execution State.
   //   NOTE: "executed" is the ONLY condition checked here — not age, not staleness. applyFieldPolicy runs
-  //     after this and is the only place the inheritance can still be refused ([TIER 4 STALENESS]).
+  //     after this and is where the inheritance is refused by default.
   //   source is overwritten with prior_state, but origin_source is inherited.
   //   BREAKS: overwrite origin_source and the first source is erased, opening a laundering path.
   //   NOTE: old-schema records have origin_source undefined. Handling belongs in applyFieldPolicy.
@@ -441,26 +441,14 @@ async function lookupField(h, fieldName, ctx) {
   return { name: fieldName, value: undefined, status: "unknown", source: null, origin_source: null };
 }
 
-// [REQUIRED-SAFETY] The default implementation passes everything through. Coercion and domain rules only.
-// CONTRACT: do not throw. To block: { ...record, value: undefined, status: "unknown", source: null, note }
-//   No falling back to a lower tier. record.source lets you express per-source policies.
-// CONTRACT (phase): if an at_instruction unknown will be settled at trigger time, set pending_at_trigger: true
-//   (e.g. balance, current time). This mark is the only thing the gate excuses.
-//   The default implementation never sets it → without your own, every unknown becomes a question at instruction time.
-//   BREAKS: an over-asked answer freezes as tier 0 and beats the measurement at trigger time.
-// [TIER 4 STALENESS] — POLICY, not contract. A gap statement, not a feature.
-//   Tier 4 inherits an executed value unconditionally; nothing above notices if it is a year old.
-//   resolved_at cannot detect it either — resolveField stamps the LOOKUP, so inherited values read as fresh.
-//   This hook is the only place staleness can be caught, and its default catches nothing.
-//   A design here needs at minimum:
-//     - a comparable projection of value (a bucket, not the value), compared against the prior record
-//     - a version on that projection, compared FIRST — mismatch is void, not equal
-//     - a procedure answering "same bucket?", never "does this change matter?"
-//   BREAKS: skip it and a stale prior_state value satisfies the gate and gets executed.
-//   NOTE: comparison_key / comparison_key_version were removed from FieldRecord — a declared slot the
-//     skeleton never reads reads as a guarantee. Put any equivalent in record.note or your own type.
+// [REQUIRED-SAFETY] Blocks tier 4 by default (inherited values read as fresh — staleness is undetectable
+//   here), passes everything else through. Carry-forward is opt-in.
+// CONTRACT: do not throw. To block: { ...record, value: undefined, status: "unknown", source: null }.
+//   No falling back to a lower tier. Set pending_at_trigger: true for an at_instruction unknown that
+//   settles at trigger time — the only thing the gate excuses, and the default never sets it.
 function applyFieldPolicy(record, ctx) {
-  return record;
+  if (record.source !== "prior_state") return record;
+  return { ...record, value: undefined, status: "unknown", source: null };
 }
 
 // [REQUIRED-SAFETY] The default implementation checks nothing. Unwired, there is no format validation (including type).
@@ -897,8 +885,7 @@ const REQUIRED_HOOKS = [
 ];
 
 // Hooks that have a default implementation whose default is "do not verify". Unwired, the gate is weak.
-// BREAKS: the default applyFieldPolicy makes tier 4 staleness undetectable ([TIER 4 STALENESS]).
-//   A config error, not a safe default. Use strict, or accept unconditional inheritance knowingly.
+// NOTE: applyFieldPolicy's default refuses tier 4, but still validates nothing. It stays on this list for that.
 const UNSAFE_DEFAULT_HOOKS = ["applyFieldPolicy", "validateFieldSchema", "verifyUserChecklistItem"];
 
 const defaultHooks = {
@@ -1025,7 +1012,7 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *               same for the C2 fallback: wrapper plus trust "user", never a raw string
  *               values from the instruction must name their coordinates via a span within a segment; unnamed means rejected
  * - Inheritance: the first source is never erased by any path
- *               tier 4 inherits on "executed" alone; refusing a stale one is the adopting system's
+ *               tier 4 inherits on "executed" alone; the default refuses it, allowing it is the adopting system's
  * - Timing:     values at instruction time, conditions at trigger time. Only values that cannot be asked for now get pending_at_trigger
  * - Decision:   if even one unknown remains, do not execute — record instead
  * - Execution:  reference only recorded state. A hook failure is not a pass; it is unmet
