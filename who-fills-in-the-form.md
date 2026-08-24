@@ -226,4 +226,4 @@ The black box does not open completely. Why that tool was chosen is still not vi
 
 Asking is something models already do well. Keeping the model from deciding what to ask — that is the one thing that needs to move outside. And the missing parts of the list still have to be filled in.
 
-Reasoning is a strength in conversation, but it becomes a problem in execution. So instead of asking 'did you actually run it,' we should take the authority to decide input away from the model and leave it only with computation, which means running the tool on input that has already been settled. **This isn't a technique for improving accuracy — it's a condition for execution to be valid at all.**
+Reasoning is a strength in conversation, but it becomes a problem in execution. So instead of asking "Did you actually run it?" and only analyzing the outcome, the model needs to have its authority to decide input values taken away, leaving it with computation only. **This isn't a technique for improving accuracy — it's a condition for execution to be valid at all.**
