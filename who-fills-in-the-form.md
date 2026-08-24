@@ -222,4 +222,8 @@ Today, when an agent executes incorrectly, the only question available is "why d
 
 The black box does not open completely. Why that tool was chosen is still not visible. What becomes visible is what went into the decision and what came out. Since what you usually need to know after an incident is not the model's internal state but where a value came from, even that much answers part of the question.
 
-**Asking is something models already do well. Keeping the model from deciding what to ask — that is the one thing that needs to move outside. And the missing parts of the list still have to be filled in.**
+---
+
+Asking is something models already do well. Keeping the model from deciding what to ask — that is the one thing that needs to move outside. And the missing parts of the list still have to be filled in.
+
+Reasoning is a strength in conversation, but it becomes a problem in execution. So instead of asking 'did you actually run it,' we should take the authority to decide input away from the model and leave it only with computation, which means running the tool on input that has already been settled. **This isn't a technique for improving accuracy — it's a condition for execution to be valid at all.**
