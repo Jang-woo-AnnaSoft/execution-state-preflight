@@ -38,7 +38,7 @@ Two terms are defined up front. A **slot** is one line item that has to be confi
 
 Make the goal of the computation the list of unknowns, not the decision of whether to execute. Whether to execute follows from the length of that list; it is not the goal itself. Correcting a wrong answer also becomes a matter of filling one slot.
 
-If the goal is execution, an ordering emerges between slots. If the goal is the list, the slots no longer relate to one another. Adding a step sounds like it would be slower, but it is the opposite: lookups run in parallel, they are memory comparisons rather than extra inference calls, and the round trips spent asking about blanks one at a time collapse into one.
+If the goal is execution, an ordering emerges between slots. If the goal is the list, slots stop waiting on one another except where one is the input to another — a balance cannot be checked before the account number is settled. Adding a step sounds like it would be slower, but it is the opposite: lookups at the same depth run in parallel, they are memory comparisons rather than extra inference calls, and round trips scale with that depth rather than with the number of blanks.
 
 If the goal is the list, the verdict is separated from execution. If execution accepts only a recorded verdict as its basis, there is no path that runs without one.
 
