@@ -61,11 +61,20 @@
  *
  * @typedef {Object} GateResult
  * @property {"value_gate"|"tool_undetermined"|"tool_undetermined_exhausted"
- *           |"intent_undetermined"|"intent_undetermined_exhausted"} [kind]
+ *           |"intent_undetermined"|"intent_undetermined_exhausted"
+ *           |"schema_unsupported"|"branch_unresolved"|"branch_conflict"|"payload_invalid"
+ *           |"action_key_failed"} [kind]
  *   // Omitted means value_gate (the original shape).
  *   // intent_undetermined*: C1/C2 could not be settled. Carries user_message, never unknown_fields
  *   //   (requiredFields is not even read yet at that point).
- * @property {{name: string, note: string|null}[]} [unknown_fields]        // Absent on tool_undetermined
+ *   // schema_unsupported: the slot list could not be materialized. hold.
+ *   // branch_unresolved / branch_conflict: grounded state selects no branch / more than one.
+ *   //   Carries user_message + branch_options, never unknown_fields (no slot list exists yet).
+ *   // payload_invalid: every slot settled, complete object still fails inputSchema. hold.
+ *   // action_key_failed: buildActionKey threw. hold, no lineage, lands under UNKEYED_RECORD_KEY.
+ * @property {{name: string, note: string|null}[]} [unknown_fields]        // Absent on tool_undetermined / branch_* / schema_unsupported
+ * @property {string[][]} [branch_options]   // branch_* only. The alternative required sets, for rendering
+ * @property {string} [payload_violation]    // payload_invalid only. Reason text from validatePayload
  * @property {{id: string, description: string, note: string|null}[]} [unverified_checklist]
  * @property {string} [user_message]    // tool_undetermined / intent_undetermined*. Shown verbatim.
  * @property {string} [intent_fingerprint]       // intent_undetermined* only. Digest of the trusted instruction
@@ -87,10 +96,17 @@
  * @property {Object|null} fixed        // C1(When/Case) / C2(User Action Name) / C3(Tool Name)
  *   // Plus c2_source: "instruction"|"pre_set_data"|null, and c3_match: { approved, reason }.
  *   // c3_match is the Tool judgment as decided on this run. Not inherited — fixed is rebuilt every run.
- * @property {FieldRecord[]|null} fields  // null if no decision was made — distinct from [] ("computed, came out empty")
+ * @property {FieldRecord[]|null} fields  // The materialized SLOTS — what blocks execution.
+ *   // null if no decision was made — distinct from [] ("computed, came out empty")
+ * @property {FieldRecord[]|null} [extra_fields]
+ *   // Looked up through the same chain but outside the slot set: optional arguments, and values that
+ *   // grounded a branch. Never counted by the gate; eligible for call_arguments when known.
+ * @property {Object|null} [call_arguments]
+ *   // The exact object executeIfReady sends, assembled from settled values only. null on deferred/hold.
  * @property {string} advisory_notes    // Provider description — recorded only, not part of the gate
  * @property {UserChecklistItem[]} user_checklist
- * @property {number|null} unknown_count  // null if no decision was made — distinct from 0 (all known)
+ * @property {number|null} unknown_count  // Over fields (slots) only. extra_fields are never counted.
+ *   // null if no decision was made — distinct from 0 (all known)
  * @property {number|null} unverified_checklist_count
  * @property {GateResult|null} gate     // The authoritative decision. Consumers read this, not reason.
  * @property {"execute"|"ask_user"|"hold"|"deferred"|"executed"|"failed"} execution_decision
@@ -122,6 +138,12 @@ const MSG_TOOL_EXHAUSTED =
 // NOTE: the value_gate ceiling remains the adopting system's — see [Re-ask ceiling] in APPENDIX.
 const INTENT_ATTEMPT_LIMIT = 2;
 const TOOL_ATTEMPT_LIMIT = 2;
+
+// Named after the act, never after the schema. Branch options travel in gate.branch_options for rendering.
+const MSG_BRANCH_UNRESOLVED =
+  "I could not tell which details to use for this. Please tell me which identifying information you have.";
+const MSG_BRANCH_CONFLICT =
+  "You gave me more than one way to identify this, and they do not go together. Please pick one.";
 
 // C1 asks for the moment, C2 asks for the act. Neither names the candidates.
 // BREAKS: listing the WHEN_CASES makes it a menu — "now or later?" is a click-through, not a restatement.
@@ -303,6 +325,8 @@ function confirmToolNameMatchesIntent(userActionName, mcpTool) {
 //   The first is an incomplete tool; the second is a tool that declares it takes no arguments.
 //   BREAKS: collapse both to [] and "we never got the schema" becomes indistinguishable from
 //     "this tool takes no arguments" — and an empty checklist is an unconditional pass.
+// [SUPERSEDED] The flat-schema helper. runPreflight reads materializeSlots instead.
+//   BREAKS: an override here is ignored by the gate. createPreflight refuses that combination.
 function getRequiredFields(mcpTool) {
   // Only required is gated. properties flows into ctx.fieldSchemas and is used for format validation.
   // NOTE: this schema is provider self-reported. An empty required means zero fields and unconditional pass.
@@ -311,6 +335,112 @@ function getRequiredFields(mcpTool) {
   //   Do not blanket-hold — tools with no arguments (list-style) legitimately exist.
   if (!mcpTool?.inputSchema) return null;   // undetermined, not zero fields. Never iterate this as a list.
   return mcpTool.inputSchema.required ?? [];
+}
+
+// ────────────────────────────────────────────────────────────────
+// [SLOT MATERIALIZATION]
+// Root `required` is not the slot list under JSON Schema 2020-12. The list is materialized from
+// schema + what is already grounded. Supported shapes only; anything else holds.
+//   root `required`                       → those fields
+//   root `oneOf` of pure `required` forms → branch selected from grounded names
+// ────────────────────────────────────────────────────────────────
+
+// Constructs that change what is mandatory. Unsupported means hold, not ignore.
+const UNSUPPORTED_SCHEMA_KEYWORDS = [
+  "anyOf", "allOf", "if", "then", "else", "not", "$ref",
+  "dependentRequired", "dependentSchemas", "patternProperties",
+];
+
+// Keywords that constrain nothing. Present in real schemas, so a branch carrying them is still usable.
+const BRANCH_ANNOTATION_KEYWORDS = new Set(["title", "description", "$comment", "default", "examples"]);
+
+// A branch is usable only if it constrains nothing but `required`. Annotations pass; anything that adds
+//   a constraint (properties, additionalProperties, nested oneOf ...) holds, because materializeSlots
+//   does not read it and validatePayload may be unwired.
+function readRequiredOnlyBranch(branch) {
+  if (!branch || typeof branch !== "object" || Array.isArray(branch)) return null;
+  const keys = Object.keys(branch);
+  if (!keys.includes("required")) return null;
+  if (!keys.every(k => k === "required" || BRANCH_ANNOTATION_KEYWORDS.has(k))) return null;
+  const req = branch.required;
+  if (!Array.isArray(req) || req.length === 0) return null;
+  if (!req.every(n => typeof n === "string" && n !== "")) return null;
+  return req;
+}
+
+// CONTRACT: { status: "unsupported", detail } | { status: "flat"|"branched", base, branches }
+function readSchemaShape(inputSchema) {
+  if (!inputSchema || typeof inputSchema !== "object") return { status: "unsupported", detail: "inputSchema missing" };
+  const offending = UNSUPPORTED_SCHEMA_KEYWORDS.filter(k => k in inputSchema);
+  if (offending.length) return { status: "unsupported", detail: `unsupported keyword: ${offending.join(", ")}` };
+
+  const base = Array.isArray(inputSchema.required) ? inputSchema.required.slice() : [];
+  if (!("oneOf" in inputSchema)) return { status: "flat", base, branches: null };
+
+  if (!Array.isArray(inputSchema.oneOf) || inputSchema.oneOf.length === 0) {
+    return { status: "unsupported", detail: "oneOf is not a non-empty array" };
+  }
+  const branches = inputSchema.oneOf.map(readRequiredOnlyBranch);
+  if (branches.some(b => b === null)) {
+    return { status: "unsupported", detail: "oneOf branch is not a pure required form" };
+  }
+  return { status: "branched", base, branches };
+}
+
+// [REQUIRED-OP] Names the lookup chain may try. A superset of the slot list: branch selection needs
+//   grounded values before the list exists, and optional arguments have to be recoverable.
+// POLICY: cost lives here — one tier 1/3 lookup per candidate. Narrow it freely; never widen it past
+//   what the schema declares.
+function getCandidateSlots(mcpTool) {
+  const schema = mcpTool?.inputSchema;
+  const shape = readSchemaShape(schema);
+  if (shape.status === "unsupported") return null;   // undetermined, not zero fields. Never iterate this as a list.
+  const names = new Set([
+    ...Object.keys(schema.properties ?? {}),
+    ...shape.base,
+    ...(shape.branches ?? []).flat(),
+  ]);
+  return [...names];
+}
+
+// [REQUIRED-SAFETY] The slot set that must be settled for this invocation.
+// CONTRACT: do not throw.
+//   { status: "resolved", required: string[], branch: number|null }
+//   { status: "branch_unresolved", options: string[][] }                      ask
+//   { status: "branch_conflict",   options: string[][], matched: number[] }   ask
+//   { status: "unsupported", detail }                                         hold
+// NOTE: groundedFieldNames carries only names that came back known from lookupField.
+//   BREAKS: a model-proposed candidate in here decides which branch is mandatory.
+function materializeSlots(mcpTool, groundedFieldNames) {
+  const shape = readSchemaShape(mcpTool?.inputSchema);
+  if (shape.status === "unsupported") return { status: "unsupported", detail: shape.detail };
+  if (shape.status === "flat") return { status: "resolved", required: shape.base, branch: null };
+
+  const grounded = new Set(groundedFieldNames ?? []);
+  const options = shape.branches;
+  const complete = [];
+  const partial = [];
+  options.forEach((req, idx) => {
+    const hits = req.filter(n => grounded.has(n)).length;
+    if (hits === req.length) complete.push(idx);
+    else if (hits > 0) partial.push(idx);
+  });
+
+  // oneOf means exactly one.
+  if (complete.length > 1) return { status: "branch_conflict", options, matched: complete };
+  const pick = complete.length === 1 ? complete[0] : (partial.length === 1 ? partial[0] : null);
+  // Nothing grounded, or several branches half-grounded. Do not pick one to produce a flat unknown list.
+  if (pick === null) return { status: "branch_unresolved", options };
+
+  const required = [...new Set([...shape.base, ...options[pick]])];
+  return { status: "resolved", required, branch: pick };
+}
+
+// [REQUIRED-SAFETY] Slot resolved is not the same fact as schema valid. The default checks nothing —
+//   wire AJV (2020-12) here.
+// CONTRACT: null if the complete argument object satisfies inputSchema, a reason string if not. Do not throw.
+function validatePayload(args, inputSchema, ctx) {
+  return null;
 }
 
 function getAdvisoryNotes(mcpTool) {
@@ -584,7 +714,26 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   //   Carrying trigger context in the input so it lands on immediate is the adopting system's job.
   const phase = fixed.c1_when_case === "immediate" ? "at_trigger" : "at_instruction";
 
-  const action_key = await h.buildActionKey(userId, fixed);
+  // A key cannot be invented. On failure: action_key null, hold, and the record lands under
+  //   UNKEYED_RECORD_KEY — the same fallback the fixedIssues path uses.
+  //   BREAKS: unwrapped, a throw reaches the backstop as gate: null, which has no way back.
+  let keyFailure = null;
+  const action_key = await safeHook(h.buildActionKey, [userId, fixed],
+    e => { keyFailure = e?.message ?? String(e); return null; });
+  if (keyFailure !== null) {
+    return {
+      fixed, action_key: null, phase,
+      fields: null, extra_fields: null,
+      advisory_notes: "",
+      user_checklist: checklist,
+      unknown_count: null, unverified_checklist_count: null,
+      call_arguments: null,
+      gate: { kind: "action_key_failed", _diag: { detail: keyFailure } },
+      execution_decision: "hold",
+      reason: "hold: action_key could not be built",
+      timestamp: h.now(),
+    };
+  }
 
   // [CORE] Step 1-0: Tool determination gate. Must sit above getRequiredFields/getAdvisoryNotes.
   //   The verdict is the hook's; everything around it is not. Reaching lookupField at all depends on this.
@@ -646,17 +795,101 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   // [CALLER CONTRACT] / [ask_user re-entry] / [Re-ask ceiling] — see APPENDIX.
 
   // Step 2: Provider Checklist — separate enforceable from advisory
-  const requiredFields = await h.getRequiredFields(mcpTool);
   const advisoryNotes = await h.getAdvisoryNotes(mcpTool);
 
-  // Step 3: per-field lookup chain → Known/Unknown records (enforceable only). Common to both phases.
-  //   BREAKS: skip it for non-immediate work and a missing value surfaces at trigger time, with nobody to ask.
   const ctx = { userAnswers, checklistAnswers, instruction, preSetData, measured_data, priorExecutionState, agentPolicy,
                 phase,   // The basis for applyFieldPolicy's per-phase judgment
                 fieldSchemas: mcpTool?.inputSchema?.properties ?? {} };
+
+  // Step 2-a: candidate slots. The superset the lookup may try, not the slot list.
+  let candidateFailure = null;
+  const candidates = await safeHook(h.getCandidateSlots, [mcpTool],
+    e => { candidateFailure = e?.message ?? String(e); return null; });
+  if (!Array.isArray(candidates)) {
+    // An unreadable schema is not a tool with no arguments.
+    return {
+      fixed, action_key, phase,
+      fields: null, extra_fields: null,
+      advisory_notes: advisoryNotes,
+      user_checklist: checklist,
+      unknown_count: null, unverified_checklist_count: null,
+      call_arguments: null,
+      gate: {
+        kind: "schema_unsupported",
+        _diag: { detail: candidateFailure ?? "getCandidateSlots returned no list" },
+      },
+      execution_decision: "hold",
+      reason: "hold: tool input schema undetermined or unsupported",
+      timestamp: h.now(),
+    };
+  }
+
+  // Step 3: per-field lookup chain → Known/Unknown records. Common to both phases.
+  //   BREAKS: skip it for non-immediate work and a missing value surfaces at trigger time, with nobody to ask.
   // Sequential on purpose: parallel fires one LLM/measurement call per field at once (rate limits, cost).
-  const fields = [];
-  for (const fieldName of requiredFields) fields.push(await resolveField(h, fieldName, ctx));
+  const resolvedAll = [];
+  for (const fieldName of candidates) resolvedAll.push(await resolveField(h, fieldName, ctx));
+
+  // Step 3-0: materialize the slot list. Only names that came back known are handed over.
+  const groundedNames = resolvedAll.filter(f => f.status === "known").map(f => f.name);
+  const slotSet = await safeHook(h.materializeSlots, [mcpTool, groundedNames],
+    e => ({ status: "unsupported", detail: `materializeSlots hook failed: ${e?.message ?? String(e)}` }));
+
+  if (!slotSet || slotSet.status === "unsupported") {
+    return {
+      fixed, action_key, phase,
+      fields: null,                 // No slot decision was made. Distinct from []
+      extra_fields: resolvedAll,
+      advisory_notes: advisoryNotes,
+      user_checklist: checklist,
+      unknown_count: null, unverified_checklist_count: null,
+      call_arguments: null,
+      gate: {
+        kind: "schema_unsupported",
+        _diag: { detail: slotSet?.detail ?? "materializeSlots returned no status",
+                 lookup_failures: lookupFailures(resolvedAll) },
+      },
+      execution_decision: "hold",
+      reason: `hold: slot list could not be materialized (${slotSet?.detail ?? "no status"})`,
+      timestamp: h.now(),
+    };
+  }
+
+  if (slotSet.status === "branch_unresolved" || slotSet.status === "branch_conflict") {
+    // NOTE: no ceiling here, same as the value gate. See [Re-ask ceiling] in APPENDIX.
+    const conflict = slotSet.status === "branch_conflict";
+    return {
+      fixed, action_key, phase,
+      fields: null,
+      extra_fields: resolvedAll,
+      advisory_notes: advisoryNotes,
+      user_checklist: checklist,
+      unknown_count: null,          // No slot list to count against
+      unverified_checklist_count: null,
+      call_arguments: null,
+      gate: {
+        kind: conflict ? "branch_conflict" : "branch_unresolved",
+        user_message: conflict ? MSG_BRANCH_CONFLICT : MSG_BRANCH_UNRESOLVED,
+        branch_options: slotSet.options,   // For rendering
+        _diag: { grounded: groundedNames, matched: slotSet.matched ?? null,
+                 lookup_failures: lookupFailures(resolvedAll) },
+      },
+      execution_decision: "ask_user",
+      reason: `ask_user: ${slotSet.status} (grounded=${groundedNames.length})`,
+      timestamp: h.now(),
+    };
+  }
+
+  // Step 3-1: partition. fields = what blocks, extra_fields = looked up but not gating.
+  //   BREAKS: merge the two and an absent optional argument blocks execution.
+  const byName = new Map(resolvedAll.map(f => [f.name, f]));
+  const slotNames = new Set(slotSet.required);
+  // A slot outside the candidate set was never looked up. Unknown, never assumed absent.
+  const fields = slotSet.required.map(name => byName.get(name) ?? {
+    name, value: undefined, status: "unknown", source: null, origin_source: null,
+    pending_at_trigger: false, note: "slot was not in the candidate set", resolved_at: h.now(),
+  });
+  const extra_fields = resolvedAll.filter(f => !slotNames.has(f.name));
 
   // Step 3-a: non-immediate branch — values now, conditions at trigger time.
   // CONTRACT: the scheduler must re-run runPreflight with deferred_input at trigger time.
@@ -671,11 +904,12 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       // Block the scheduling itself (fail-closed). This is the last moment the user is present.
       // POLICY: can be changed to "schedule anyway, flagged unresolved" — a choice that accepts failure at trigger time.
       return {
-        fixed, action_key, phase, fields,
+        fixed, action_key, phase, fields, extra_fields,
         advisory_notes: advisoryNotes,
         user_checklist: checklist,        // Raw input. Not verified at this phase
         unknown_count: unknownNow.length, // Total (including pending). gate is authoritative for what blocks
         unverified_checklist_count: null, // No decision made. Not 0
+        call_arguments: null,             // Assembled at trigger time only
         gate: {
           unknown_fields: blocking.map(f => ({ name: f.name, note: f.note ?? null })),
           unverified_checklist: [],       // Not performed. Not "all verified" (see count: null above)
@@ -688,11 +922,12 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     }
 
     return {
-      fixed, action_key, phase, fields,   // Actual decision results. For comparison at trigger time
+      fixed, action_key, phase, fields, extra_fields,   // Actual decision results. For comparison at trigger time
       advisory_notes: advisoryNotes,
       user_checklist: checklist,          // Carried unverified, as things to confirm at trigger time
       unknown_count: unknownNow.length,   // Only pending remains. May not be 0
       unverified_checklist_count: null,
+      call_arguments: null,               // Re-assembled at trigger time
       gate: null,                         // The gate stands only at trigger time
       execution_decision: "deferred",
       reason: `deferred: c1_when_case is "${fixed.c1_when_case}" — awaiting trigger (pending_at_trigger=${pendingCount})`,
@@ -720,25 +955,49 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   const unverifiedItems = finalUserChecklist.filter(i => i.status !== "verified");
   const unverified_checklist_count = unverifiedItems.length;
 
-  // Step 6: gate decision. gate is authoritative, reason is a derived rendering.
+  // Step 6: assemble the call from settled values. Slots are what must be settled, arguments are what
+  //   gets sent — an optional value the user stated belongs only in the second set.
+  // NOTE: assumes "field name = argument key, flat object". Nested schemas are unsupported upstream.
+  const call_arguments = Object.fromEntries(
+    [...fields, ...extra_fields].filter(f => f.status === "known").map(f => [f.name, f.value])
+  );
+
+  // Step 6-a: gate decision. gate is authoritative, reason is a derived rendering.
   // NOTE: no per-Tool risk branching. delete_all_records and list_records pass the same gate.
   // NOTE: ctx.agentPolicy is read nowhere. Consume it or remove it.
   const gate = {
     unknown_fields: unknownFields.map(f => ({ name: f.name, note: f.note ?? null })),
     unverified_checklist: unverifiedItems.map(i => ({ id: i.id, description: i.description, note: i.note ?? null })),
-    _diag: { lookup_failures: lookupFailures(fields) },
+    _diag: { lookup_failures: lookupFailures([...fields, ...extra_fields]), slot_branch: slotSet.branch ?? null },
   };
-  const execution_decision =
-    gate.unknown_fields.length === 0 && gate.unverified_checklist.length === 0 ? "execute" : "ask_user";
+  const valueGateClean = gate.unknown_fields.length === 0 && gate.unverified_checklist.length === 0;
+
+  // Step 6-b: whole-object validation. Run only on an otherwise clean gate — with unknowns outstanding
+  //   the object is knowingly incomplete and the violation says nothing.
+  const payloadOut = valueGateClean
+    ? await safeHook(h.validatePayload, [call_arguments, mcpTool?.inputSchema, ctx],
+        e => `payload validation hook failed: ${e?.message ?? String(e)}`)
+    : null;
+  const payload_violation = typeof payloadOut === "string" ? payloadOut : null;
+  if (payload_violation) {
+    // Not a question. Every slot is settled and the object is still illegal.
+    gate.kind = "payload_invalid";
+    gate.payload_violation = payload_violation;
+  }
+
+  const execution_decision = !valueGateClean ? "ask_user" : (payload_violation ? "hold" : "execute");
 
   return {
-    fixed, action_key, phase, fields,
+    fixed, action_key, phase, fields, extra_fields,
     advisory_notes: advisoryNotes,   // Recorded only. Not part of the gate
     user_checklist: finalUserChecklist,
     unknown_count, unverified_checklist_count,
+    call_arguments,                  // The exact object executeIfReady sends
     gate,
     execution_decision,
-    reason: await h.formatReason(execution_decision, gate),
+    reason: payload_violation
+      ? `hold: payload invalid — ${payload_violation}`
+      : await h.formatReason(execution_decision, gate),
     timestamp: h.now(),
   };
 }
@@ -849,8 +1108,11 @@ async function executeIfReady(h, executionState, mcpTool, callMcpTool) {
   }
 
   // NOTE: there is no re-confirmation point right before execution. Judge staleness from fields[].resolved_at.
-  // NOTE: assumes "field name = argument key, flat object". Breaks on nested schemas and key-mapping Tools.
-  const args = Object.fromEntries(executionState.fields.map(f => [f.name, f.value]));
+  // The payload is read from the record, never rebuilt here.
+  //   BREAKS: reassembling from fields[] drops every optional argument and re-derives an object the gate
+  //     never validated. No recorded payload means held.
+  const args = executionState.call_arguments;
+  if (!args || typeof args !== "object" || Array.isArray(args)) return { status: "held", executionState };
 
   // Do not retry. Even when this throws, the provider side may have executed.
   // POLICY: for payments and transfers, use an idempotency key and confirm by measurement before any retry.
@@ -886,12 +1148,14 @@ const REQUIRED_HOOKS = [
 
 // Hooks that have a default implementation whose default is "do not verify". Unwired, the gate is weak.
 // NOTE: applyFieldPolicy's default refuses tier 4, but still validates nothing. It stays on this list for that.
-const UNSAFE_DEFAULT_HOOKS = ["applyFieldPolicy", "validateFieldSchema", "verifyUserChecklistItem"];
+// NOTE: unwired, validatePayload lets a value that fills its slot while violating the schema through.
+const UNSAFE_DEFAULT_HOOKS = ["applyFieldPolicy", "validateFieldSchema", "verifyUserChecklistItem", "validatePayload"];
 
 const defaultHooks = {
   classifyWhenCase, extractUserActionName, confirmToolNameMatchesIntent,
-  getRequiredFields, getAdvisoryNotes, extractFromInstruction, measureFromEnvironment,
-  applyFieldPolicy, validateFieldSchema, verifyUserChecklistItem,
+  getRequiredFields, getCandidateSlots, materializeSlots, getAdvisoryNotes,
+  extractFromInstruction, measureFromEnvironment,
+  applyFieldPolicy, validateFieldSchema, validatePayload, verifyUserChecklistItem,
   formatReason, buildDeferredInput, buildActionKey,
 };
 
@@ -917,6 +1181,14 @@ function createPreflight({ hooks = {}, storage, clock, strict = false } = {}) {
   }
   if (clock !== undefined && typeof clock !== "function") {
     throw new Error("createPreflight: clock must be a function (returning an ISO string)");
+  }
+
+  // Migration guard. An override left on getRequiredFields would be ignored by the gate.
+  if (typeof hooks.getRequiredFields === "function" && typeof hooks.materializeSlots !== "function") {
+    throw new Error(
+      "createPreflight: getRequiredFields no longer feeds the gate. Move that logic into " +
+      "materializeSlots(mcpTool, groundedFieldNames), and widen getCandidateSlots if it probed extra names."
+    );
   }
 
   const unsafeDefaults = UNSAFE_DEFAULT_HOOKS.filter(n => typeof hooks[n] !== "function");
@@ -961,6 +1233,7 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *                                              new-request signal (see POLICY).
  *      ▼
  * Step 1-b. buildActionKey(userId, fixed) → action_key
+ *      └─ throws ────────────────────────► "hold" (kind: action_key_failed)
  *      │ └─ Both the record key and the prior_state lookup key. It sets the blast radius.
  *      ▼
  * Step 1-c. confirmToolNameMatchesIntent
@@ -971,10 +1244,18 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *      ▼
  * Step 1-1. phase = (c1 === "immediate") ? at_trigger : at_instruction
  *      ▼
- * Step 2-3. getRequiredFields → resolveField per field      ← common to both phases
+ * Step 2-a. getCandidateSlots → the superset the lookup may try (declared properties ∪ every branch's required)
+ *      └─ not a list ────────────────────► "hold" (kind: schema_unsupported)
+ *      ▼
+ * Step 2-3. resolveField per candidate                      ← common to both phases
  *      │ └─ lookupField walks five tiers → all empty means "unknown"
  *      │    a tier 1/3 hook that THROWS settles unknown on the spot — no lower tier, no applyFieldPolicy
  *      │    (known then goes applyFieldPolicy → validateFieldSchema; a violation demotes to unknown)
+ *      ▼
+ * Step 3-0. materializeSlots(mcpTool, groundedNames)  ← grounded = came back known, nothing else
+ *      ├─ unsupported ──────────────────► "hold"     (kind: schema_unsupported)
+ *      ├─ branch_unresolved / conflict ─► "ask_user" (carries branch_options, no unknown_fields)
+ *      └─ resolved → fields = the slot set, extra_fields = everything else that was looked up
  *      ▼
  * Step 3-a. [at_instruction] values now, conditions at trigger
  *      │ └─ blocking = unknowns not marked pending_at_trigger
@@ -984,9 +1265,11 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  * Step 4. verifyUserChecklistItem (at_trigger only — conditions must be judged now)
  *      │ └─ anything other than status === "verified" becomes "unverified"
  *      ▼
- * Step 5-6. gate tally
- *      ├─ [unknown 0 AND unverified 0] ──► "execute" ─► executeIfReady ─► record "executed"
- *      └─ [otherwise] ───────────────────► "ask_user"
+ * Step 5-6. gate tally → assemble call_arguments (fields ∪ extra_fields, known only) → validatePayload
+ *      ├─ [unknown 0 AND unverified 0, payload valid] ──► "execute" ─► executeIfReady ─► record "executed"
+ *      ├─ [unknown 0 AND unverified 0, payload invalid] ► "hold"     (kind: payload_invalid)
+ *      └─ [otherwise] ──────────────────────────────────► "ask_user"
+ *      NOTE: executeIfReady sends call_arguments verbatim. It never rebuilds the payload.
  *
  * Feedback: only executed records become the baseline for tier 4 (prior_state) on the next run.
  * Exception: a throw at any step is caught by runPreflight's backstop as "hold".
@@ -1008,6 +1291,10 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  * - Position:   sits in front of a validator (Pydantic)
  * - Design:     intent and context are judged by fixed, tool-independent questions (guarding against unrequested execution)
  * - Data:       lookup, not generation. All empty means unknown
+ * - Slots:      materialized from schema + already-grounded state. Root required[] is one case of that, not the rule
+ * - Payload:    slots are what must be settled, arguments are what gets sent. Four separate facts:
+ *               where values may come from / what must be settled / whether it was settled from a
+ *               permitted source / whether the whole object is legal
  * - Input:      only inputs carrying a trust label can produce known (both instruction and pre-set data)
  *               same for the C2 fallback: wrapper plus trust "user", never a raw string
  *               values from the instruction must name their coordinates via a span within a segment; unnamed means rejected
