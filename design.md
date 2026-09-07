@@ -1,44 +1,41 @@
-# Pre-Execution Validation Gate: Implementation Notes
+# Pre-Execution Validation: Implementation Notes
 
-These are implementation notes. The argument itself — why the list has to sit outside the model, and what changes when it does — is in [*Who Fills In the Form*](./who-fills-in-the-form.md). Read that first. What follows assumes it and describes the structure needed to build the thing.
+These are implementation notes. The argument — why the checklist has to sit outside the model — is in the specification. What follows assumes it and describes only the structure needed to build the thing.
 
-> **A note on vocabulary.** This document keeps the terms from the reference skeleton: *gate*, *hook*, and the labels `C1` / `C2` / `C3`. The essay avoids them, because they belong to one particular implementation rather than to the argument. `C1` is the timing and circumstance, `C2` is what the user calls the action, `C3` is which tool. A *gate* here is simply one of the places where a question gets asked before execution.
+The model still extracts values, converses, and matches tool candidates. One thing is taken away: certifying that the state it filled is complete enough to execute.
 
 ---
 
-## 1. Structure
+## 1. Two axes
 
-### 1. The checklists
+Two questions get confused with each other. **Who defines the obligation** decides which checklist an item belongs to. **What can resolve it** decides where the value comes from. They cross. A provider declares that the balance must be sufficient; a system measurement resolves whether it is. A user declares a spending limit; current state decides whether this execution satisfies it.
 
-The rules an action needs split three ways: conditions the system defines, conditions the tool provider defines, and conditions that have to be confirmed with the user. The split follows who can actually answer (section 2).
+---
 
-**Fixed checklist**, needed for every execution:
+## 2. The checklists — who defines
 
-- Which tool? (C3)
-- Are the execution conditions met, the When/Case? (C1)
-- What does the user call this action? (C2)
+**Fixed checklist**, defined by the adopting system, applied to every call:
 
-**Provider checklist**, varying by tool:
+- Which tool is this action, and does that tool actually produce the requested state change
+- When does it run — immediately, or on a condition or event
+- What the user calls the action, and what state change they want
 
-- Required fields
-- Type and format
-- Pre-execution checks
-- Prohibited conditions
-- Conditions requiring extra confirmation
+This settles the execution unit. Until it is settled you do not know which other checklists to load, so it comes first.
 
-**User checklist**, varying by user context and preference:
+**Provider checklist**, defined by the tool provider, varying per tool:
 
-- Intent
-- Current context
-- Execution limits
-- Pre-execution checks
-- Preferences
+- Required fields, type and format
+- Pre-execution checks and prohibited conditions
+- Conditions requiring explicit confirmation
 
-An `input schema` covers the first two lines of the provider checklist. Everything else is either written into the description as free text or written down nowhere at all. Every case where the arguments are all present and correctly typed but the execution still shouldn't happen (insufficient balance, missing permission, recipient doesn't exist) lands in that gap.
+An input schema covers the first line. The rest is prose in the description, or written down nowhere. Every case where the arguments are present and correctly typed but execution still should not happen — insufficient balance, missing permission, recipient does not exist — lands in that space.
 
-The user checklist can also carry **how** each condition gets confirmed. If tool providers declared that confirmation method in the input schema, the natural-language rules currently sitting in descriptions would become structured pre-execution conditions.
+**User checklist**, defined by the user, varying with context rather than with the tool: intent and permitted range within the settled execution unit, execution limits, exceptions, preferences.
 
-### 2. Provenance chain
+
+---
+
+## 3. The sources — what resolves
 
 Each slot is looked up in a fixed order, never generated.
 
@@ -48,176 +45,95 @@ user_answer → instruction → pre_set_data → measured_data → prior_state
 
 | Source | What it is |
 |---|---|
-| `user_answer` | An answer given in response to a question this turn |
-| `instruction` | The user's utterance |
-| `pre_set_data` | Values configured in advance |
-| `measured_data` | Observed values |
-| `prior_state` | Values settled by a previous execution |
+| `user_answer` | An answer already collected for this execution unit |
+| `instruction` | A trusted segment of the user's utterance, with coordinates |
+| `pre_set_data` | Values the user approved and stored in advance |
+| `measured_data` | State read from a system API at that moment |
+| `prior_state` | Values inherited from a previous execution whose record says `executed` |
 
-**This is search order, not a trust ranking.** If an earlier source has the answer, the value is already settled; you only move down when it doesn't.
+**This is lookup order, not a trust ranking.** If an earlier source has the answer, the value is settled; you move down only when it does not. Reaching the end with nothing means `UNKNOWN`.
 
-Three things follow.
-
-**Values are looked up, not produced.** Whether a condition holds is answered by observation, not by the model reasoning about it.
-
-**The model doesn't report the source.** The pre-execution stage queries the defined sources itself. Leave the reporting to the model and invented values get a provenance label too.
-
-> **The model must not manufacture the grounds for an execution. Those come from defined sources and from pre-execution checks.**
-
-**Empty at the end of the chain means `unknown`.** Not a declaration, just what's left over once the search finishes. It holds even though nobody said "I don't know." If the value is needed, ask the user.
-
-Whatever the execution was based on gets recorded so it can be verified and audited (piece 4).
-
-### 3. Three gates
-
-Intent, then tool, then execution. A lower gate doesn't run until the one above clears.
-
-| Gate | Checks | On failure |
-|---|---|---|
-| Intent | When (C1), what (C2) | "Say that again" |
-| Tool | Is this action really this tool? (C3) | "Confirm which operation" |
-| Execution | Are all values and conditions filled? | Ask for the empty slots |
-
-Intent and tool stay separate because they carry their own re-ask limits and because what you say to the user differs. Different question, different gate.
-
-The tool gate sits above the execution gate for two reasons. Until the tool is settled you don't know which values are required. And the two failures aren't the same size: a wrong value sends the intended action to the wrong target, while a wrong tool produces an action that was never in the intent at all. A request to list something turning into a delete is not something argument validation catches.
-
-### 4. Recorded decisions
-
-The gate result is stored, and execution reads that record and nothing else.
-
-The first three pieces are rules. This one is enforcement. When the decision and the execution live in the same flow, the decision is an `if` somebody can skip. When execution only reads a stored decision, no path exists that runs without one.
-
-Blocks get recorded too. A log holding only successful executions lies to you: two rejections followed by a success reads as a first-try success.
+Values are read, never produced: whether a condition holds is answered by observation. And provenance is not self-reported — the pre-execution step queries the source itself, because if the model reports it, invented values get a source label too.
 
 ---
 
-## 2. Who answers, and in which direction
+## 4. Three states
 
-There are three checklists because there are three parties who can answer.
+| State | Meaning |
+|---|---|
+| `KNOWN` | A source was found, or an approval completed |
+| `NULL` | The lookup ran and confirmed there is nothing there |
+| `UNKNOWN` | The lookup has not finished |
 
-| Party | Can answer | Power at the gate |
-|---|---|---|
-| **User** | What and when, plus the values | The only one who can produce a `known` |
-| **Provider** (tool server) | What is required | **Can require, cannot permit** |
-| **System** (adopting org) | The decision | **Can reject, cannot generate** |
+`NULL` exists so that "there is nothing" is a normal thing to write down. Forbid it and the only available move is to invent something.
 
-> Only the user can create a value. The tool server can require but never authorize. The system can reject but never fill in.
-
-That single line is why every hook only rejects or downgrades.
-
-The provider is self-reporting, so it doesn't get pass authority. If an empty `required` means unconditional pass, our safety depends on something someone else can edit. And giving the enforcer the power to generate turns the enforcement layer into a new source of errors.
-
-**Don't ask someone who can't answer.** The user isn't in a position to answer C3. Ask anyway and you'll get an answer with nothing behind it, and the moment they answer, responsibility has shifted to them. So when the tool is unsettled, we ask them to restate the action instead of asking which tool.
-
-Conditions split the same way. Ones a question can resolve (confirm the recipient) become questions; ones it can't (insufficient balance) become a stop. Skip that distinction and you trap the user in a loop they can't get out of.
+**These three distinguish whether the check happened, not whether the requirement is satisfied.** A `NULL` required argument does not permit execution — a separate judgment, and not this layer's.
 
 ---
 
-## 3. Expected objections
+## 5. Unresolved is not the same as ask the user
 
-**"Why not put the checklist in the prompt and take JSON back?"**
-Because the model is still the one deciding a slot is empty. If it reports everything filled, the system has no way to check. Being able to say what it didn't look at is exactly the thing it can't do, and that was the starting point. Move the list outside and it holds regardless of what the model claims. Empty is empty whether or not it says otherwise.
+`UNKNOWN` routes by who can resolve it.
 
-**"Won't this be unnecessary once models get better?"**
-Accuracy and containment are sequential, not substitutes. The higher the accuracy, the less people supervise, so the odds of the remaining errors slipping through go up rather than down.
+| Route | When |
+|---|---|
+| **Ask** | The user can answer |
+| **Measure** | Only the system can answer. Do not re-ask |
+| **Hold** | The lookup ran, the condition is settled, and it prohibits execution. No longer unresolved |
+| **Repair the definition** | The condition was never declared, or the middleware cannot interpret it. No user answer fixes this |
 
-**"What if someone just doesn't call it?"**
-Fair. See section 5. It's outside the boundary of this design, and saying so first is better than being asked.
-
-**"Why not write it all in the description?"**
-A description is free text and self-reported. The model is the one reading it, so it may or may not be followed, and there's no way to check whether it was. Half of this proposal is taking that same content, structuring it, and putting it where the schema goes.
-
----
-
-## 4. Effects
-
-### Incidents it blocks
-
-| Incident | Today | With the gate |
-|---|---|---|
-| An argument that was never stated gets invented and executed | No mechanism to stop it | A value with no source can't become an argument |
-| A list request executes as a delete | Argument validation doesn't catch it | Narrowed, not eliminated. An invented tool can't be picked and a tool that can't produce the requested change is filtered out, but picking the wrong one among several that could all do it still gets through (section 5) |
-| An instruction planted in an email or document executes | A filter has to recognize the phrasing | Values from untrusted paths aren't eligible as arguments |
-| A scheduled job triggers with missing arguments | Nobody is there to ask at trigger time | Scheduling is refused if values aren't settled at instruction time |
-| A scheduled job runs against stale conditions | The pre-checked value is reused as-is | Conditions are only checked at trigger time |
-| The user is trapped in a question they can't answer | Endless re-asking | Re-ask limits, and a stop where a question won't help |
-
-Prompt injection defense works by cutting the path rather than detecting the phrasing, which matters because it behaves the same against wording nobody has seen yet.
-
-### What changes operationally
-
-When an agent executes the wrong thing today, there's one question available: why did the model do that. There's no answer. If you can't locate the cause you don't know what to fix, and swapping in a better model becomes the only move.
-
-Split the decision across recorded points and the question changes.
-
-| Failure | Today | With the gate |
-|---|---|---|
-| Wrong tool executed | Blame the model | Did the tool check approve it, and on what basis |
-| Wrong argument | Blame the model | Which source produced the value, and where did it originate |
-| Executed when it shouldn't have | Blame the model | Did condition validation pass it, or did it not run |
-| Endless re-asking | Blame the model | Which source came back empty, or did a hook throw |
-
-All of these have answers, and each answer points directly at what to fix. It also means you can measure whether a change helped.
-
-### Other effects
-
-**Model-agnostic.** No probability thresholds to tune, so gate behavior survives a model swap.
-
-**Failures land somewhere harmless.** A hook that throws produces `unknown`, not a pass. Silence from a hook isn't approval either. Bugs stop things instead of misfiring them.
-
-**Audit requirements come for free.** Approval points, rejection reasons, the original source of each value, retention windows. In finance and public sector work these are requirements on their own.
-
-**Blast radius is explicit.** How far a settled value gets reused shows up in code. Normally nobody decides this and it quietly leaks wider than anyone assumed.
-
-**Human confirmation doesn't become a rubber stamp.** The question is "what is this value" rather than "should I run this?" Show someone a candidate and ask them to approve it, and you've built a click-through, not a check.
-
-**Rules become data rather than code.** The checklist attaches to the tool. Changing a rule doesn't need a deploy. Today the same rule is scattered across prompt and code, so step one is finding where it lives.
-
-**Defects get names.** A slot empty because the user never said it (instruction gap) is distinguishable from one empty because the tool definition is thin (action definition gap). The first goes back as a question, the second goes back to the tool provider. Without names, both collapse into "the model didn't understand."
-
-**Things that can't run yet aren't thrown away.** A condition that hasn't arrived is deferred, not failed. Values are settled up front and only the conditions are checked at trigger time, so scheduled and delayed execution fall out of the same structure instead of needing their own.
-
-### Costs
-
-If you're going to make the argument, make this part too.
-
-**Latency is not the cost people expect.** Slots do not depend on one another, so lookups run in parallel and are memory comparisons rather than extra inference calls. The round trips spent asking about blanks one at a time collapse into one. What does cost something is extraction: if every field is resolved by its own model call, caching and batching need their own design.
-
-**Questions surface rather than multiply.** Things that used to get filled in silently now reach the user. The count does not necessarily rise — treating the whole conversation as the instruction means values mentioned earlier are looked up rather than asked for again — but they become visible, and re-ask limits and learned mappings still have to ship alongside.
-
-**It puts demands on tool providers.** Plenty of servers don't declare their schemas carefully, and that's outside your control.
-
-**Demos get less impressive.** The "it just handles everything" impression fades. In practice this is the biggest source of resistance.
-
-### Where to apply it
-
-Applying this everywhere is neither realistic nor necessary. Gate the irreversible actions: transfers, deletions, sends, publishes. Let reads through.
-
-Scale the structure down to fit as well. No When/Case if everything is immediate. No tool gate if there's one tool. Plenty of domains need no user checklist at all. This isn't all-or-nothing.
-
-If the same team owns the agent and the tools, the per-tool checklist goes where the input schema goes. The boundary isn't exposed as a protocol there, but the point where language turns into execution is the same one.
+The last two differ. Insufficient balance is a finished check; a condition the provider never declared is a missing one. Collapsing both into "cannot resolve" loses the distinction that says where the work goes. Skip the routing entirely and the user is trapped in a loop over questions they cannot answer.
 
 ---
 
-## 5. Boundaries and limits
+## 6. Counting
 
-### Not covered by this design
+Count `UNKNOWN`. Nothing else.
 
-**The runtime (caller) layer.** Whoever picks the tool up front, carries the counters, and agrees not to route around the gate. This layer doesn't answer anything; it runs the structure, which makes it a different kind of participant from the three above (3+1). Compliance here isn't enforced from inside this design and stays a contract. It belongs to code review, CI, and architectural convention.
+```
+Unknown Count == 0  →  the check is complete
+```
 
-**Forged decisions.** Separating decision from execution blocks execution without a decision. It doesn't block execution on a fabricated one. Raising that to enforcement means signing decisions, with TTL and nonce.
+`KNOWN` and `NULL` are finished lookups and do not enter the count. The count measures verification, not fulfillment.
 
-**Tool selection itself.** Selection happens elsewhere; this framework only checks it. Which is why it can't distinguish "chose wrong" from "hasn't decided yet" and asks instead.
-
-### Next
-
-1. **A reversibility axis.** Right now `list_records` and `delete_all_records` clear the same gate. The asymmetric cost of mis-selection is a premise of this design, but the gate is still uniform. Reads pass, deletes confirm. Without this axis, the objection that it puts needless friction on reads is a fair one.
-2. **Signed decisions.** Turning the contract into enforcement.
+Counting requires a settled list, so an error in deciding that list is not detectable by counting. Section 9 says where that lands.
 
 ---
 
-## Why this framing
+## 7. The decision record
 
-This design doesn't claim to make anything safe. It claims something narrower: right now, when an agent does the wrong thing, there is no way to find out why. Everything above is downstream of that, and the case for it is made in [*Who Fills In the Form*](./who-fills-in-the-form.md).
+The result of the check is stored. Execution reads that record and nothing else.
 
+Everything above is rules; this is what makes them hold. When decision and execution live in the same flow, the decision is an `if` somebody can skip. When execution only reads a stored decision, no path exists that runs without one.
+
+The record holds the verdict and stops there — each slot's state, the source that produced it, and the route an `UNKNOWN` took. Whether to proceed is the executing party's own decision, written to its own record.
+
+Blocked runs get recorded too. A log holding only successful executions lies: two rejections followed by a success reads as a first-try success.
+
+When the action is not immediate, the run splits into two phases under one key. Values are resolved at instruction time, while the user is still present — that is the last moment you can ask. Conditions are checked at trigger time, because a condition verified earlier would be stale by the time the call fires. Intent carries forward (instruction, checklists, answers), reality is re-fetched (schema, pre-set data, policy), and measurements are never carried.
+
+---
+
+## 8. What goes where
+
+| Where | What goes there |
+|---|---|
+| **Checklist** | Anything a defining party owns. Changes without a deploy |
+| **Principle** (prompt) | Anything whose violation the code can detect. Reduces how often the check fails; does not decide execution |
+| **Code** | The same procedure whoever defined the item: look up, compare, count, record. Adding items does not change it |
+
+If a violation is not observable from outside, it cannot live in the prompt. Making it a slot gives it a source and a state, which is what makes it observable at all.
+
+---
+
+## 9. Boundaries
+
+**Tool selection.** Selection happens before this layer and is only checked here. Whether the action really is this tool is judged from the description, which is prose — mitigation by prompt, not verification by code. A wrong pick among several tools that could all do the job still gets through.
+
+**Forged records.** Separating decision from execution blocks execution without a decision, not execution on a fabricated one. Raising that to enforcement means signing decisions, with TTL and nonce.
+
+**The calling layer.** Whoever picks up the tool, carries the counters, and agrees not to route around the check. It answers nothing; it runs the structure. Compliance here is a contract, enforced by code review and convention.
+
+**Reversibility.** The check is uniform, so a read and a delete clear it the same way. Scope it to irreversible actions instead — transfers, deletions, sends, publishes. For reversible work, checking the outcome and correcting it is the cheaper control.
+
+Scale the structure down as well. No timing slot if everything is immediate, no tool confirmation if there is one tool. If the same team owns the agent and the tools, the per-tool checklist goes where the input schema goes.
