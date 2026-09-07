@@ -2,13 +2,15 @@
 
 A verification layer that runs before an MCP tool call.
 
-Three checklists say what has to be true before a call goes out. Two gates enforce them. Neither gate produces a value or a justification — both only look things up, and either one can stop the call.
+Three checklists say what has to be true before a call goes out. Two gates check them and write a verdict. Neither gate produces a value or a justification, and neither one executes or blocks — they look things up and record what they found. Execution reads that record and nothing else.
 
 This is not a wall in front of your agent. It fills, with a stated source, the blanks that guessing used to fill. Execution is still the goal.
 
-**Status:** a specification, not a library. `createPreflight` refuses to build without six injected hooks. See ([execution-state-preflight](https://github.com/Jang-woo-AnnaSoft/execution-state-preflight/blob/main/execution-state-preflight.js)).
+**Status:** a specification, not a library. `createPreflight` refuses to build without six injected hooks.
 
-**Start here.** [*Who Fills In the Form*](./who-fills-in-the-form.md) is the argument — why the list of what to check has to sit outside the model, and what changes when it does. [design.md](./design.md) is the implementation notes: the structure, the hook contracts, and what this does and does not cover. This README describes the reference skeleton itself.
+The code here is a skeleton meant to show the structure, not something to adopt as-is. What actually has to be code in your system is `lookupField` and the shape of the decision record. Everything else — the agent loop, how you ask the user, storage — you write to fit what you already have. Take the parts that match and leave the rest.
+
+**Start here.** [*Who Fills In the Form*](./who-fills-in-the-form.md) is the argument — why the list of what to check has to sit outside the model, and what changes when it does. [design.md](./design.md) is the short version of the structure: the two axes, the checklists, the source order, the three states, and where the boundaries are. This README describes the reference skeleton itself — the hook contracts, the record shape, and what this does and does not cover.
 
 Read in that order if you are deciding whether this is worth doing. Start here if you already are.
 
@@ -16,22 +18,23 @@ Read in that order if you are deciding whether this is worth doing. Start here i
 
 ## Eight problems
 
-Getting to three checklists and two gates meant working through eight of them.
+Getting to three checklists and two gates meant working through seven of them.
 
-1. Separating execution from verification — and separating who verifies (system / provider / user)
-2. Verifying conditions, not just values
-3. The system deciding what counts as unknown, not the model
-4. Human involvement guaranteed by the structure rather than by good intentions
-5. Per-field provenance records, as raw material for auditing and for assigning responsibility
-6. Rules becoming data attached to the tool instead of code, so they change without a deploy
-7. Failures having names — an *instruction gap* (the user's instruction was incomplete) and an *action definition gap* (the model reached for the wrong tool, or for one that doesn't exist yet)
-8. What can't run now being held rather than discarded
+1. Inference accuracy not being the thing that grants execution authority
+2. The first draft moving to the model, which turns human review into a click-through
+3. Neither re-asking nor after-the-fact exclusion working, because the model is the one deciding what to ask
+4. Conditions having nowhere to be written down, so they are never declared
+5. Three kinds of unstated input — value, condition, intent — reaching execution undefined
+6. No record of the verdict, so causes can't be told apart afterwards
+7. Rules scattered across prompt and code, so changing one needs a deploy
 
 ---
    
 ## The three checklists
 
 The rules an action needs split by who defines them. This split is the whole design — everything below is machinery for enforcing it.
+
+Who defines an item and what can resolve it are different questions. A provider declares that the balance must be sufficient; a system measurement resolves whether it is. The checklists below are the first axis; [where each value came from](#where-each-value-came-from) is the second.
 
 **Fixed checklist** — which tool are we picking, and are the execution conditions met (when/case)? Tool-independent, and identical for every execution. In the record these are `c1_when_case`, `c2_user_action_name`, `c3_provider_action_name`.
 
@@ -58,6 +61,8 @@ instruction (trust-labeled segments)
    └─ both clear                                → execute → executed
 ```
 
+Both gates end at a record. Neither calls the tool and neither aborts anything — `execution_decision` is a verdict written to state, and `executeIfReady` is a separate step that reads it. A run with no record has no grounds to proceed on.
+
 Gate 1 sits above everything the provider supplies. Move it lower and an undetermined tool's `required` fields and `description` ride into the gate with it — you'd be validating arguments for a call that shouldn't happen at all.
 
 ---
@@ -67,6 +72,8 @@ Gate 1 sits above everything the provider supplies. Move it lower and an undeter
 Tool selection accuracy is never going to hit 100%. Wrong picks are inevitable, so the first job is a structure where a wrong pick doesn't reach execution.
 
 `confirmToolNameMatchesIntent` compares what the user called the action (`c2`) against the tool that was selected (`c3`). Anything other than an explicit `{ approved: true }` stops here — a hook that returns `undefined`, throws, or omits the field is not approving. Silence is not approval.
+
+**This hook is model-based judgment, not code verification.** Whether an action really is this tool is decided from the tool's description, which is prose. The hook can be wired to an LLM, a name-matching rule, or a lookup table, but none of those is a deterministic check, and a wrong pick among several tools that could all do the job still gets through. Treat Gate 1 as mitigation belonging on the principle side rather than as something the code proves — the specification puts tool selection under residual risk for exactly this reason. Gate 2 is where deterministic counting happens.
 
 ```json
 {
@@ -127,7 +134,7 @@ A validator can't tell an account number the user typed from one the model inven
 | 3 | `measured_data` | observed from the environment |
 | 4 | `prior_state` | inherited from a prior `executed` record |
 
-This is a lookup order, not a ranking by trustworthiness. If an earlier tier has the answer, the value is already decided; if it doesn't, you go down one. All five get checked. All five empty means `unknown`.
+This is a lookup order, not a ranking by trustworthiness. If an earlier source has the answer, the value is already decided; if it doesn't, you go down one. All five get checked. All five empty means `unknown`.
 
 Given an incomplete instruction, `unknown` is not an error. It's the correct output.
 
@@ -179,7 +186,11 @@ The gate clears only when both counts are zero.
 }
 ```
 
+The skeleton keeps two counters, `unknown_count` for fields and `unverified_checklist_count` for the user checklist, because the two need different questions put to the user. The specification names a single `unknown_count`; it is the sum of these two. Splitting the arrays is fine, counting them twice is not.
+
 `advisory_notes` carries the provider's `description`. It's recorded and handed to the model, and it is not part of the gate — natural language can't be enforced, so pretending otherwise would put an unverifiable condition in a verifying position.
+
+The labels the specification proposes for descriptions (`[Required]`, `[Verify]`, `[Notice]`) are an authoring convention, not what this skeleton does today. If they ever become normative, the parsing contract joins the gate: a trusted declaring party, fixed syntax, deterministic parsing, and a parse failure that lands on `unknown` rather than passing through.
 
 Three properties hold across the chain:
 
@@ -187,9 +198,9 @@ Three properties hold across the chain:
 
 **Provenance is not self-reported.** A pre-execution step queries the defined source and fills the value in. Leave it to self-reporting and invented values get a source attached too. The model must not manufacture the grounds for its own execution.
 
-**The first source is never erased.** Tier 4 overwrites `source` with `prior_state` but inherits `origin_source`. Overwrite both and you've opened a laundering path: ask once, execute once, and from then on any value can claim a clean lineage.
+**The first source is never erased.** `prior_state` overwrites `source` but inherits `origin_source`. Overwrite both and you've opened a laundering path: ask once, execute once, and from then on any value can claim a clean lineage.
 
-Records accumulate under one `action_key`: `ask_user` → `execute` → `executed`. Only `executed` becomes a baseline for tier 4 on the next run.
+Records accumulate under one `action_key`: `ask_user` → `execute` → `executed`. Only `executed` becomes a baseline for `prior_state` on the next run.
 
 ---
 
@@ -232,7 +243,7 @@ if (state.execution_decision === "execute") {
 }
 ```
 
-`instruction` is an array of trust-labeled segments, not a string. Pass a string and tier 1 dies closed — every field stays `unknown`. That's deliberate: untrusted text that reached the context (a forwarded email, a tool result, a scraped page) can't produce a `known` value on its own. To use something out of it, ask, and take the answer back as `user_answer`.
+`instruction` is an array of trust-labeled segments, not a string. Pass a string and the `instruction` source dies closed — every field stays `unknown`. That's deliberate: untrusted text that reached the context (a forwarded email, a tool result, a scraped page) can't produce a `known` value on its own. To use something out of it, ask, and take the answer back as `user_answer`.
 
 A value claimed from the instruction has to name its coordinates — which segment, which character range. No span, or one out of bounds, and it's rejected.
 
@@ -242,7 +253,7 @@ Check `preflight.unsafeDefaults` after construction. If it's non-empty, the gate
 
 ## What you have to implement
 
-Six hooks are required at construction. Four throw `not implemented`. The other two have bodies, but `extractFromInstruction` always returns `undefined` (tier 1 dead) and `measureFromEnvironment` is a thin passthrough over `ctx.measured_data` — both still fail construction if you don't supply your own.
+Six hooks are required at construction. Four throw `not implemented`. The other two have bodies, but `extractFromInstruction` always returns `undefined` (the `instruction` source is dead) and `measureFromEnvironment` is a thin passthrough over `ctx.measured_data` — both still fail construction if you don't supply your own.
 
 | Hook | Returns | If you get it wrong |
 |---|---|---|
@@ -251,7 +262,7 @@ Six hooks are required at construction. Four throw `not implemented`. The other 
 | `confirmToolNameMatchesIntent` | `{ approved, reason }` | this is Gate 1; a non-conforming return is not approval |
 | `extractFromInstruction` | `{ value, segment_index, span }` | misreport a trusted segment and the trust check is defeated |
 | `measureFromEnvironment` | `{ valid, value }` | `valid: false` must never become `known`; an LLM-backed hook here is not a measurement |
-| `buildActionKey` | opaque string | the key design *is* the blast radius of tier 4 |
+| `buildActionKey` | opaque string | the key design *is* the blast radius of `prior_state` |
 
 Three more ship with defaults that verify nothing: `applyFieldPolicy`, `validateFieldSchema` (no format or type checking at all), and `verifyUserChecklistItem` (everything comes back unverified). `strict: true` rejects them.
 
@@ -267,7 +278,7 @@ At instruction time, values get resolved while the user is still present — tha
 
 At trigger time the whole preflight runs again on the deferred input, and `pending_at_trigger` excuses nothing. The user checklist is verified only here — conditions checked at instruction time would be stale by the time the call fires.
 
-What you carry forward is a choice. Intent should be preserved (instruction, checklist, answers). Reality should be re-fetched (schema, pre-set data, policy). Measurements must not be carried — a preserved measurement is a stale one. And preserving is freezing: an answer you over-asked for at instruction time lands in tier 0 and will beat the fresh measurement at trigger time.
+What you carry forward is a choice. Intent should be preserved (instruction, checklist, answers). Reality should be re-fetched (schema, pre-set data, policy). Measurements must not be carried — a preserved measurement is a stale one. And preserving is freezing: an answer you over-asked for at instruction time lands in `user_answer` and will beat the fresh measurement at trigger time.
 
 ---
 
@@ -277,6 +288,7 @@ What you carry forward is a choice. Intent should be preserved (instruction, che
 - **No integrity check on the state it's handed.** `executeIfReady` reads the object you give it. Hand it a hand-built one and the gate is bypassed. If decision and execution cross a trust boundary, sign it.
 - **No retry.** A throw from the tool call doesn't mean nothing happened on the provider side. For payments, use an idempotency key and confirm by measurement.
 - **No per-tool risk weighting.** `delete_all_records` and `list_records` pass the same gate. Tool selection itself sits outside this structure: an invented tool can't be picked, but picking the wrong one among several that could all do the job still gets through.
+- **No `null` state.** The specification separates `known` / `null` / `unknown`, where `null` means the lookup ran and confirmed there is nothing there. This skeleton has only `known` and `unknown`, so a confirmed absence is indistinguishable from a lookup that never finished. Add the third state if you need that distinction; the counter should still count only `unknown`.
 - **No locking.** Concurrent preflight and execution on the same `action_key` is the caller's problem.
 - **Flat arguments assumed.** Field name equals argument key. Nested schemas and key-mapping tools need an adapter.
 
@@ -288,7 +300,7 @@ Apply this only to irreversible actions. Not everything has to be in place.
 
 Not every deployment needs all three checklists. Immediate execution only, a single tool, no user conditions to check — take the part that matches. If the agent and the tool have the same owner, the per-tool list goes in the slot where the MCP input schema would be.
 
-Gate 1 is often better handled as a principle given to the model than as code here — see the essay on what can live as a principle and what has to live in code. Asking the user is handled by built-in functionality in most agent frameworks now. Much of the rest of this file exists to make the structure explicit; the part that actually has to be code is `lookupField`.
+Gate 1 is often better handled as a principle given to the model than as code here, for the reason given above. Asking the user is handled by built-in functionality in most agent frameworks now.
 
 The two gates split cleanly — they share only `fixed`, `action_key`, and `phase`, and their hooks don't overlap. Turning either one into a general-purpose module for LangGraph or similar is welcome.
 
@@ -298,7 +310,7 @@ The two gates split cleanly — they share only `fixed`, `action_key`, and `phas
 
 MCP's input schema defines the shape of the values a tool needs. It doesn't say why a value is needed, who asked for the execution, or whether the execution is allowed right now. That's not an MCP problem — it shows up anywhere natural language turns into execution. MCP is just easy to point at, because the boundary is written down as a protocol. When one owner has both sides, the boundary is invisible and the rules end up scattered across prompts and code.
 
-The argument is in [*Who Fills In the Form*](./who-fills-in-the-form.md). An earlier version was posted [here](https://discuss.huggingface.co/t/if-unsure-ask-never-guess-ai-agent-pre-execution-checklist/176632).
+The first version of the argument was posted [here](https://discuss.huggingface.co/t/if-unsure-ask-never-guess-ai-agent-pre-execution-checklist/176632).
 
 ---
 
@@ -317,5 +329,3 @@ Copyright © 2026 AnnaSoft Inc. (Republic of Korea)
 2. Model Architecture & Native Integration - Direct application or internalization of these architectural principles (Inference Control and Lookup-Based Verification, such as slot-based state control mechanisms) within model weights, neural layers, or training/inference pipelines by organizations with annual gross revenue of USD 1 billion or more requires prior written agreement with AnnaSoft Inc. All other organizations may use these principles free of charge.
 
 Contact: hello@anna.software
-
-
