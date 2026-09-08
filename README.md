@@ -289,6 +289,7 @@ What you carry forward is a choice. Intent should be preserved (instruction, che
 - **No retry.** A throw from the tool call doesn't mean nothing happened on the provider side. For payments, use an idempotency key and confirm by measurement.
 - **No per-tool risk weighting.** `delete_all_records` and `list_records` pass the same gate. Tool selection itself sits outside this structure: an invented tool can't be picked, but picking the wrong one among several that could all do the job still gets through.
 - **No `null` state.** The specification separates `known` / `null` / `unknown`, where `null` means the lookup ran and confirmed there is nothing there. This skeleton has only `known` and `unknown`, so a confirmed absence is indistinguishable from a lookup that never finished. Add the third state if you need that distinction; the counter should still count only `unknown`.
+- **No route for unresolved items.** The specification splits an unresolved slot four ways — ask the user, measure, hold, or repair the definition. This skeleton sends everything to `ask_user`, including a field whose lookup hook threw, which no user answer can fix. Route those to hold and surface them to whoever owns the hook.
 - **No locking.** Concurrent preflight and execution on the same `action_key` is the caller's problem.
 - **Flat arguments assumed.** Field name equals argument key. Nested schemas and key-mapping tools need an adapter.
 
