@@ -3,19 +3,22 @@
  * [Execution State Preflight Architecture] — a verification skeleton that runs
  * before an MCP Tool call.
  *
- * Premise: Tool selection accuracy never reaches 100%. 
+ * Premise: Tool selection accuracy never reaches 100%.
  * This skeleton does not improve selection. It keeps a wrong one out of execution.
  *
- * Two places are [CORE].
- *   lookupField — walks five sources, never generates a value, unknown when empty.
- *   Step 1-0 Tool gate — the one judgment this skeleton cannot make itself. 
- * The Background, decision path, and principles are in the [APPENDIX] at the bottom.
+ * Three checks run in order, and each one writes a verdict rather than executing or blocking:
+ *   intent gate (Step 1-a)  — was the action settled at all
+ *   tool gate   (Step 1-c)  — is this action really this tool
+ *   value gate  (Step 5-6)  — are all slots and checklist items settled
+ * Only two things here are deterministic: lookupField, which walks five sources and never
+ * generates a value, and the value gate's count. The tool gate is judged from the tool's
+ * description, which is prose — it is mitigation, not verification, and belongs on the
+ * principle side. The Background, decision path, and principles are in the [APPENDIX].
  *
- * Apply it only to irreversible actions.
- * Not everything has to be in place.
- * Gates 1 and 2 are unnecessary depending on the situation, and are better replaced by the prompt.
- * Asking the user is now handled by built-in functionality.
- * The rest is for structural explanation purposes, so you may move it to the prompt. The only actually useful part is `lookupField`
+ * Apply it only to irreversible actions, and take only the parts that fit.
+ * The intent and tool gates are often better placed in the prompt. Asking the user is handled
+ * by built-in functionality in most agent frameworks now. Much of the rest exists to make the
+ * structure explicit; what has to be code is `lookupField` and the shape of the record.
  * ============================================================================
  */
 
@@ -45,8 +48,9 @@
  * @property {boolean} [pending_at_trigger]
  *   // Marks "unknown is correct now, will be settled at trigger time". Only applyFieldPolicy sets it.
  *   // It excuses a field only at the at_instruction gate. At at_trigger, unknown is unmet without exception.
- *   // NOTE: no staleness slot. Tier 4 is refused by default in applyFieldPolicy instead.
- * @property {boolean} [lookup_failed]  // A tier 1/3 hook threw. Set by lookupField only. See [LOOKUP HOOK FAILURE]
+ *   // NOTE: no staleness slot. prior_state is refused by default in applyFieldPolicy instead.
+ * @property {boolean} [lookup_failed]  // The instruction or measurement hook threw. Set by lookupField only.
+ *                                       //   See [LOOKUP HOOK FAILURE]
  * @property {string} [_diag_note]      // Hook exception text. Logs only — never copied into note
  * @property {string} [note]
  * @property {string} resolved_at
@@ -85,7 +89,7 @@
  *
  * @typedef {Object} FixedPreSet
  * @property {PreSetEntry} [c2_user_action_name]  // C2 fallback for THIS request. Separate input, not part
- *   // of preSetData: tier 2 reads every key there, so a reserved key would collide with a same-named field.
+ *   // of preSetData: the pre_set_data step reads every key there, so a reserved key would collide with a same-named field.
  *   // Not the place for a standing C2→C3 mapping — see POLICY (learned mapping) on confirmToolNameMatchesIntent.
  *   // BREAKS: a c1_when_case entry here is ignored. C1 comes from the utterance only.
  *
@@ -159,7 +163,7 @@ const MSG_INTENT_EXHAUSTED =
 
 // POLICY (intent_attempt lifecycle) — stateless skeleton, so the caller enforces these:
 //   1. Per REQUEST, judged by instruction change. Not elapsed time, not session (time is not an
-//      invalidation basis anywhere in this file — see tier 0).
+//      invalidation basis anywhere in this file — see the user_answer step).
 //   2. Carry-forward is the DEFAULT; reset needs an affirmative new-request signal.
 //      A textual difference alone is not a signal: "do it" → "do it now" would reopen the loop.
 //   3. next_intent_attempt === null → re-entry only from a NEW utterance. Never auto-retry.
@@ -211,7 +215,7 @@ function usableActionName(v) {
   return typeof v === "string" && v.trim() !== "";
 }
 
-// C2 fallback. Tier 2's acceptance conditions: wrapper shape plus trust "user".
+// C2 fallback. Same acceptance conditions as pre_set_data: wrapper shape plus trust "user".
 //   Stricter is defensible, looser is not — C2 feeds action_key, which sets prior_state's blast radius.
 //   BREAKS: accept a raw string and one unwrapped value redefines what action this is.
 function readC2Fallback(fixedPreSet) {
@@ -389,7 +393,7 @@ function readSchemaShape(inputSchema) {
 
 // [REQUIRED-OP] Names the lookup chain may try. A superset of the slot list: branch selection needs
 //   grounded values before the list exists, and optional arguments have to be recoverable.
-// POLICY: cost lives here — one tier 1/3 lookup per candidate. Narrow it freely; never widen it past
+// POLICY: cost lives here — one instruction/measurement lookup per candidate. Narrow it freely; never widen it past
 //   what the schema declares.
 function getCandidateSlots(mcpTool) {
   const schema = mcpTool?.inputSchema;
@@ -450,7 +454,7 @@ function getAdvisoryNotes(mcpTool) {
 }
 
 // 4. Per-field lookup chain
-//    The five tiers decide only whether a value EXISTS. Format validation comes after (applyFieldPolicy → validateFieldSchema).
+//    The five sources decide only whether a value EXISTS. Format validation comes after (applyFieldPolicy → validateFieldSchema).
 //    BREAKS: reorder and a later intent loses to an earlier one; demoting user_answer ignores the answer just given.
 async function resolveField(h, fieldName, ctx) {
   const resolved_at = h.now();
@@ -482,17 +486,20 @@ async function resolveField(h, fieldName, ctx) {
 
 // ────────────────────────────────────────────────────────────────
 // [CORE] Never generates a value. Looks up five sources in order. If all are empty, unknown.
-// NOTE: an empty tier leaves no trace in the record. (This is lookup, not validation.)
+// NOTE: an empty source leaves no trace in the record. (This is lookup, not validation.)
 //     Demotion reasons from the validation stage are written to note by resolveField.
-// [LOOKUP HOOK FAILURE] A throw is not an empty tier. It settles the field unknown and ends the chain:
-//     tier 1 undefined → tier 2 runs  /  tier 1 throws → tier 2 never runs
-//     tier 3 undefined → tier 4 runs  /  tier 3 throws → tier 4 never runs
+// [LOOKUP HOOK FAILURE] A throw is not an empty source. It settles the field unknown and ends the chain:
+//     instruction undefined → pre_set_data runs  /  instruction throws → pre_set_data never runs
+//     measured_data undefined → prior_state runs  /  measured_data throws → prior_state never runs
 //     BREAKS: bare calls let a throw escape to the backstop — one field kills the run. Falling through
-//       instead hands the slot to a lower tier, with no trace per the NOTE above.
+//       instead hands the slot to a later source, with no trace per the NOTE above.
+// NOTE: a lookup_failed field currently lands in unknown_fields and becomes ask_user. Per the
+//     specification this is a definition/implementation gap — no user answer fixes a hook that threw.
+//     An adopting system should route these to hold and surface them to whoever owns the hook.
 // ────────────────────────────────────────────────────────────────
 
 const LOOKUP_HOOK_FAILED = Symbol("lookup_hook_failed");
-const lookupFailed = tier => e => ({ [LOOKUP_HOOK_FAILED]: true, tier, detail: e?.message ?? String(e) });
+const lookupFailed = source => e => ({ [LOOKUP_HOOK_FAILED]: true, source, detail: e?.message ?? String(e) });
 
 // BREAKS: exception text in note reaches the user via gate.unknown_fields.
 function lookupFailureRecord(fieldName, failure) {
@@ -500,27 +507,27 @@ function lookupFailureRecord(fieldName, failure) {
     name: fieldName, value: undefined, status: "unknown", source: null, origin_source: null,
     lookup_failed: true,
     pending_at_trigger: false,
-    note: `lookup hook failed (tier: ${failure.tier})`,
+    note: `lookup hook failed (source: ${failure.source})`,
     _diag_note: failure.detail,
   };
 }
 async function lookupField(h, fieldName, ctx) {
   const { userAnswers, instruction, preSetData, priorExecutionState } = ctx;
-  // For tiers 0–3, this decision is itself the first source.
+  // For the first four sources, this decision is itself the origin.
   const fresh = rec => ({ ...rec, origin_source: rec.source });
 
-  // Tier 0: user answer (injected on re-run after ask_user)
+  // Source 1 — user_answer (injected on re-run after ask_user)
   // NOTE: filling userAnswers happens outside the skeleton.
-  // BREAKS: LLM parsing output here makes the top tier model output.
+  // BREAKS: LLM parsing output here makes the first source model output.
   // NOTE: a user_answer has no expiry and outranks a later measurement.
   // POLICY: invalidate on a change to what the value derived from, not on elapsed time.
   if (userAnswers && fieldName in userAnswers) {
     return fresh({ name: fieldName, value: userAnswers[fieldName], status: "known", source: "user_answer" });
   }
 
-  // Tier 1: instruction — known only from a trusted segment with a valid span.
+  // Source 2 — instruction: known only from a trusted segment with a valid span.
   //   To use a value from an untrusted segment, ask and take it back as user_answer.
-  //   If instruction is a string, this entire tier dies (fail-closed).
+  //   If instruction is a string, this entire source dies (fail-closed).
   const fromInstruction = await safeHook(h.extractFromInstruction, [fieldName, instruction],
     lookupFailed("instruction"));
   if (fromInstruction?.[LOOKUP_HOOK_FAILED]) return lookupFailureRecord(fieldName, fromInstruction);
@@ -536,7 +543,7 @@ async function lookupField(h, fieldName, ctx) {
     }
   }
 
-  // Tier 2: pre-set data — accepted only with trust "user". A raw value without the wrapper is rejected.
+  // Source 3 — pre_set_data: accepted only with trust "user". A raw value without the wrapper is rejected.
   //   NOTE: old-schema input looks like every field being stuck at unknown. Check here first when migrating.
   if (preSetData && fieldName in preSetData) {
     const entry = preSetData[fieldName];
@@ -545,7 +552,7 @@ async function lookupField(h, fieldName, ctx) {
     }
   }
 
-  // Tier 3: measurement — accepted only when valid.
+  // Source 4 — measured_data: accepted only when valid.
   // NOTE: the means of observation is not recorded. If this hook is LLM-based, it is not a measurement.
   const fromMeasurement = await safeHook(h.measureFromEnvironment, [fieldName, ctx],
     lookupFailed("measured_data"));
@@ -554,7 +561,7 @@ async function lookupField(h, fieldName, ctx) {
     return fresh({ name: fieldName, value: fromMeasurement.value, status: "known", source: "measured_data" });
   }
 
-  // Tier 4: prior Execution State.
+  // Source 5 — prior_state: inherited from a previous execution.
   //   NOTE: "executed" is the ONLY condition checked here — not age, not staleness. applyFieldPolicy runs
   //     after this and is where the inheritance is refused by default.
   //   source is overwritten with prior_state, but origin_source is inherited.
@@ -571,10 +578,10 @@ async function lookupField(h, fieldName, ctx) {
   return { name: fieldName, value: undefined, status: "unknown", source: null, origin_source: null };
 }
 
-// [REQUIRED-SAFETY] Blocks tier 4 by default (inherited values read as fresh — staleness is undetectable
+// [REQUIRED-SAFETY] Blocks prior_state by default (inherited values read as fresh — staleness is undetectable
 //   here), passes everything else through. Carry-forward is opt-in.
 // CONTRACT: do not throw. To block: { ...record, value: undefined, status: "unknown", source: null }.
-//   No falling back to a lower tier. Set pending_at_trigger: true for an at_instruction unknown that
+//   No falling back to a later source. Set pending_at_trigger: true for an at_instruction unknown that
 //   settles at trigger time — the only thing the gate excuses, and the default never sets it.
 function applyFieldPolicy(record, ctx) {
   if (record.source !== "prior_state") return record;
@@ -589,7 +596,7 @@ function validateFieldSchema(value, schema, ctx) {
 
 // [REQUIRED-OP] CONTRACT: { valid, value } or undefined (no means of observation). valid:false must never become known.
 // NOTE: the return shape is not validated. A raw value arrives with valid undefined and is silently skipped.
-// NOTE: undefined moves on to tier 4; a throw settles the field unknown. Do not throw for "cannot observe".
+// NOTE: undefined moves on to prior_state; a throw settles the field unknown. Do not throw for "cannot observe".
 function measureFromEnvironment(fieldName, ctx) {
   if (ctx.measured_data && fieldName in ctx.measured_data) return ctx.measured_data[fieldName];
   return undefined;
@@ -598,7 +605,7 @@ function measureFromEnvironment(fieldName, ctx) {
 // [REQUIRED-OP] Extract a value from the instruction (LLM). Unimplemented means every field stays unknown.
 // CONTRACT: instruction is an InstructionSegment[].
 //   Found → { value, segment_index, span: [start, end] }  /  not found or extraction failed → undefined
-//   NOTE: undefined moves on to tier 2; a throw settles the field unknown. Do not throw for "not found".
+//   NOTE: undefined moves on to pre_set_data; a throw settles the field unknown. Do not throw for "not found".
 //   segment_index = the segment the value came from. span = the character range within that segment's text (half-open).
 //   A missing or out-of-bounds span is rejected. The skeleton checks shape and bounds only.
 //   BREAKS: misreport a trusted segment and the trust check is defeated.
@@ -1010,7 +1017,7 @@ function formatReason(execution_decision, gate) {
 // [OPTIONAL] POLICY: preserve = intent at instruction time (instruction/userChecklist/userAnswers).
 //       re-fetch = reality at trigger time (mcpTool schema/preSetData/agentPolicy).
 //       measured_data and checklistAnswers must not be preserved (stale measurements; conditions are a trigger-time decision).
-// NOTE: preserving is freezing. user_answer is tier 0 and beats the measurement at trigger time.
+// NOTE: preserving is freezing. user_answer is the first source and beats the measurement at trigger time.
 //   Values that go stale should not be asked for — pass them through with pending_at_trigger.
 function buildDeferredInput({ instruction, mcpTool, preSetData, agentPolicy, userChecklist, userAnswers }) {
   return { instruction, userChecklist, userAnswers };
@@ -1078,7 +1085,7 @@ async function recordExecutionState(h, executionState) {
 }
 
 /**
- * Lookup for tier 4 of the chain.
+ * Lookup for the prior_state source.
  * CONTRACT: return only the most recent executed record. Nothing else may serve as baseline. null if none.
  */
 async function getPriorExecutionState(h, actionKey) {
@@ -1147,7 +1154,7 @@ const REQUIRED_HOOKS = [
 ];
 
 // Hooks that have a default implementation whose default is "do not verify". Unwired, the gate is weak.
-// NOTE: applyFieldPolicy's default refuses tier 4, but still validates nothing. It stays on this list for that.
+// NOTE: applyFieldPolicy's default refuses prior_state, but still validates nothing. It stays on this list for that.
 // NOTE: unwired, validatePayload lets a value that fills its slot while violating the schema through.
 const UNSAFE_DEFAULT_HOOKS = ["applyFieldPolicy", "validateFieldSchema", "verifyUserChecklistItem", "validatePayload"];
 
@@ -1248,8 +1255,9 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *      └─ not a list ────────────────────► "hold" (kind: schema_unsupported)
  *      ▼
  * Step 2-3. resolveField per candidate                      ← common to both phases
- *      │ └─ lookupField walks five tiers → all empty means "unknown"
- *      │    a tier 1/3 hook that THROWS settles unknown on the spot — no lower tier, no applyFieldPolicy
+ *      │ └─ lookupField walks five sources → all empty means "unknown"
+ *      │    an instruction/measurement hook that THROWS settles unknown on the spot — no later source,
+ *      │    no applyFieldPolicy
  *      │    (known then goes applyFieldPolicy → validateFieldSchema; a violation demotes to unknown)
  *      ▼
  * Step 3-0. materializeSlots(mcpTool, groundedNames)  ← grounded = came back known, nothing else
@@ -1271,7 +1279,7 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *      └─ [otherwise] ──────────────────────────────────► "ask_user"
  *      NOTE: executeIfReady sends call_arguments verbatim. It never rebuilds the payload.
  *
- * Feedback: only executed records become the baseline for tier 4 (prior_state) on the next run.
+ * Feedback: only executed records become the baseline for prior_state on the next run.
  * Exception: a throw at any step is caught by runPreflight's backstop as "hold".
  *
  * POLICY (do NOT store): the raw instruction.
@@ -1281,11 +1289,12 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *       way to decide when to ask. This resembles a validator (Pydantic), except that questions about
  *       intent and context come first, and blanks are never filled without provenance.
  *       unknown is not the model's self-report; it is what remains after all five sources were checked.
+ *       What the three states distinguish is whether the check happened, not whether the requirement is met.
  *
  * Principles: Separation → Validation → Enforcement → Traceability
  *   Separation   trust-labeled segments; fixed checklist (C1/C2/C3) kept apart from value lookup
  *   Validation   lookupField → applyFieldPolicy → validateFieldSchema
- *   Enforcement  gate → execution_decision → executeIfReady
+ *   Binding      gate → execution_decision → executeIfReady (the record is read, not re-derived)
  *   Traceability source / origin_source / recordExecutionState
  *
  * - Position:   sits in front of a validator (Pydantic)
@@ -1299,7 +1308,7 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *               same for the C2 fallback: wrapper plus trust "user", never a raw string
  *               values from the instruction must name their coordinates via a span within a segment; unnamed means rejected
  * - Inheritance: the first source is never erased by any path
- *               tier 4 inherits on "executed" alone; the default refuses it, allowing it is the adopting system's
+ *               prior_state inherits on "executed" alone; the default refuses it, allowing it is the adopting system's
  * - Timing:     values at instruction time, conditions at trigger time. Only values that cannot be asked for now get pending_at_trigger
  * - Decision:   if even one unknown remains, do not execute — record instead
  * - Execution:  reference only recorded state. A hook failure is not a pass; it is unmet
