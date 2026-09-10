@@ -6,7 +6,7 @@ Three checklists say what has to be true before a call goes out. Two gates check
 
 This is not a wall in front of your agent. It fills, with a stated source, the blanks that guessing used to fill. Execution is still the goal.
 
-**Status:** a specification, not a library. `createPreflight` refuses to build without six injected hooks.
+**Status:** a reference skeleton, not a library. `createPreflight` refuses to build without six injected hooks.
 
 The code here is a skeleton meant to show the structure, not something to adopt as-is. What actually has to be code in your system is `lookupField` and the shape of the decision record. Everything else — the agent loop, how you ask the user, storage — you write to fit what you already have. Take the parts that match and leave the rest.
 
