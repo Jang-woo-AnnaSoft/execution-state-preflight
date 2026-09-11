@@ -2,7 +2,7 @@
 
 These are implementation notes. The argument — why the checklist has to sit outside the model — is in the specification. What follows assumes it and describes only the structure needed to build the thing.
 
-The model still extracts values, converses, and matches tool candidates. One thing is taken away: certifying that the state it filled is complete enough to execute.
+The model still extracts values, converses, and matches tool candidates. Two things are taken away: deciding what has to be checked, which goes to whoever declares a checklist, and certifying that the state it filled is complete enough to execute, which goes to code.
 
 ---
 
@@ -67,22 +67,21 @@ Values are read, never produced: whether a condition holds is answered by observ
 
 `NULL` exists so that "there is nothing" is a normal thing to write down. Forbid it and the only available move is to invent something.
 
-**These three distinguish whether the check happened, not whether the requirement is satisfied.** A `NULL` required argument does not permit execution — a separate judgment, and not this layer's.
+**These three distinguish whether the check happened, not whether the requirement is satisfied.** A `NULL` required argument does not permit execution, but that is not a fourth state: the slot stays `NULL`, and the failed requirement is recorded as unmet (Section 6).
 
 ---
 
 ## 5. Unresolved is not the same as ask the user
 
-`UNKNOWN` routes by who can resolve it.
+`UNKNOWN` routes by who can resolve it. The route follows from the slot's allowed sources and the lookup result; the model does not pick it.
 
 | Route | When |
 |---|---|
 | **Ask** | The user can answer |
 | **Measure** | Only the system can answer. Do not re-ask |
-| **Hold** | The lookup ran, the condition is settled, and it prohibits execution. No longer unresolved |
 | **Repair the definition** | The condition was never declared, or the middleware cannot interpret it. No user answer fixes this |
 
-The last two differ. Insufficient balance is a finished check; a condition the provider never declared is a missing one. Collapsing both into "cannot resolve" loses the distinction that says where the work goes. Skip the routing entirely and the user is trapped in a loop over questions they cannot answer.
+Hold is not on this table. When the lookup ran, the condition is settled, and it prohibits execution, the slot is no longer unresolved: it is `KNOWN`, and the prohibition is recorded as unmet (Section 6). Hold and repair differ. Insufficient balance is a finished check; a condition the provider never declared is a missing one. Collapsing both into "cannot resolve" loses the distinction that says where the work goes. Skip the routing entirely and the user is trapped in a loop over questions they cannot answer.
 
 ---
 
@@ -96,7 +95,9 @@ Unknown Count == 0  →  the check is complete
 
 `KNOWN` and `NULL` are finished lookups and do not enter the count. The count measures verification, not fulfillment.
 
-Counting requires a settled list, so an error in deciding that list is not detectable by counting. Section 9 says where that lands.
+A finished check can still fail its requirement. Compare each checked slot against what was declared: a condition that prohibits execution (hold), or a required argument confirmed `NULL`, is recorded as **unmet**. Unmet items are not counted and are not questions. The comparison has to be deterministic; a condition that cannot be compared stays `UNKNOWN` and routes to repair.
+
+Counting requires a settled checklist, so an error in deciding that checklist is not detectable by counting. Section 9 says where that lands.
 
 ---
 
@@ -104,11 +105,11 @@ Counting requires a settled list, so an error in deciding that list is not detec
 
 The result of the check is stored. Execution reads that record and nothing else.
 
-Everything above is rules; this is what makes them hold. When decision and execution live in the same flow, the decision is an `if` somebody can skip. When execution only reads a stored decision, no path exists that runs without one.
+Everything above is rules; this is what makes them hold. When decision and execution live in the same flow, the decision is an `if` somebody can skip. When execution only reads a stored verdict, no path exists that runs without one.
 
-The record holds the verdict and stops there — each slot's state, the source that produced it, and the route an `UNKNOWN` took. Whether to proceed is the executing party's own decision, written to its own record.
+The record holds the verdict and stops there — each slot's state, the source that produced it, the route an `UNKNOWN` took, the count, and the unmet items. It does not say whether to proceed. That is the executing party's own decision, written to its own record.
 
-Blocked runs get recorded too. A log holding only successful executions lies: two rejections followed by a success reads as a first-try success.
+Runs that did not proceed get recorded too. A log holding only successful executions lies: two runs that stopped followed by one that went through reads as a first-try success.
 
 When the action is not immediate, the run splits into two phases under one key. Values are resolved at instruction time, while the user is still present — that is the last moment you can ask. Conditions are checked at trigger time, because a condition verified earlier would be stale by the time the call fires. Intent carries forward (instruction, checklists, answers), reality is re-fetched (schema, pre-set data, policy), and measurements are never carried.
 
@@ -130,7 +131,7 @@ If a violation is not observable from outside, it cannot live in the prompt. Mak
 
 **Tool selection.** Selection happens before this layer and is only checked here. Whether the action really is this tool is judged from the description, which is prose — mitigation by prompt, not verification by code. A wrong pick among several tools that could all do the job still gets through.
 
-**Forged records.** Separating decision from execution blocks execution without a decision, not execution on a fabricated one. Raising that to enforcement means signing decisions, with TTL and nonce.
+**Forged records.** Separating decision from execution leaves an execution without a decision with no grounds and makes it identifiable in the record; it does nothing about an execution grounded on a fabricated one. Raising that to enforcement means signing decisions, with TTL and nonce.
 
 **The calling layer.** Whoever picks up the tool, carries the counters, and agrees not to route around the check. It answers nothing; it runs the structure. Compliance here is a contract, enforced by code review and convention.
 
