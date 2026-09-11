@@ -252,9 +252,9 @@ user_answer → instruction → pre_set_data → measured_data → prior_state
 - user_answer — ask_user 인터랙션 이후 사용자가 직접 입력한 응답 데이터. 첫 회차에는 없음.
 - instruction — 사용자 발화로 확인된 구간에서 위치를 지정해 뽑아낸 값.
 - pre_set_data — 사용자가 미리 승인해 저장해 둔 설정값.
-- measured_data — 시스템 API를 조회해 그 자리에서 확인한 상태값.
-- prior_state — 실행 기록의 execution_decision이 "executed"인 이전 실행에서 승계된 인자 데이터. 게이트 판정 기록이 아니라 실행 주체가 남긴 실행 기록을 가리킨다.
-- 최종 단계까지 값이 확인되지 않으면 슬롯은 UNKNOWN으로 고정된다. LLM이 추정값을 제시하더라도 지정 소스가 대조되지 않으면 KNOWN이 되지 않는다.
+- measured_data — 시스템 API를 조회해 그 자리에서 확인한 상태값. 조회는 실측이어야 한다.
+- prior_state — 실행 기록의 execution_decision이 "executed"인 이전 실행에서 승계된 인자 데이터. 인자에만 적용되며 조건은 승계하지 않는다.
+- 최종 단계까지 값이 확인되지 않으면 슬롯은 UNKNOWN으로 고정된다. 모델이 값을 제시하더라도 그것은 위치에 대한 주장일 뿐이고, 그 위치에 값이 실제로 있는지는 게이트가 대조한다. 모델의 정직함은 이 구조의 전제가 아니다.
 - UNKNOWN이면서 사용자가 답할 수 있는 항목은 질의로 전달한다. 나머지는 4.4의 경로를 따른다.
 
 ### 5.3 instruction의 범위 정의
