@@ -36,7 +36,7 @@ The rules an action needs split by who defines them. This split is the whole des
 
 Who defines an item and what can resolve it are different questions. A provider declares that the balance must be sufficient; a system measurement resolves whether it is. The checklists below are the first axis; [where each value came from](#where-each-value-came-from) is the second.
 
-**Fixed checklist** — which tool are we picking, and are the execution conditions met (when/case)? Tool-independent, and identical for every execution. In the record these are `c1_when_case`, `c2_user_action_name`, `c3_provider_action_name`.
+**Fixed checklist** — which tool are we picking, and when does it run (when/case)? The timing is settled at instruction time; it is not one of the conditions checked at trigger time. Tool-independent, and identical for every execution. In the record these are `c1_when_case`, `c2_user_action_name`, `c3_provider_action_name`.
 
 **Provider checklist** — required fields, type and format, pre-execution checks, prohibited conditions, extra confirmation conditions. Changes per tool. Splits again on enforceability: `inputSchema.required` can be gated, while `description` is prose and can't be, so it's recorded as advisory and passed to the model as context.
 
@@ -239,6 +239,7 @@ const state = await preflight.runPreflightAndRecord({
 
 // Decide on the allow condition, never on a count.
 if (state.execution_decision === "execute") {
+  // Known defect: as shipped this returns "held" — see What this doesn't do.
   await preflight.executeIfReady(state, mcpTool, callMcpTool);
 } else {
   // state.gate says exactly what is missing, and in which shape
@@ -299,11 +300,12 @@ The specification is the standard. Read the skeleton with these gaps in mind.
 ## What this doesn't do
 
 - **No masking.** `fields[].value` is persisted verbatim — account numbers, amounts, recipients, tokens. Deferred records sit in plaintext from instruction time until trigger. Masking, access control, and append-only enforcement belong in your storage adapter.
-- **No integrity check on the state it's handed.** `executeIfReady` reads the object you give it. Hand it a hand-built one and the gate is bypassed. If decision and execution cross a trust boundary, sign it.
+- **No integrity check on the state it's handed.** `executeIfReady` reads the object you give it. Hand it a hand-built one and the gate is bypassed. If the verdict and execution cross a trust boundary, sign the record.
 - **No retry.** A throw from the tool call doesn't mean nothing happened on the provider side. For payments, use an idempotency key and confirm by measurement.
 - **No per-tool risk weighting.** `delete_all_records` and `list_records` pass the same gate. Tool selection itself sits outside this structure: an invented tool can't be picked, but picking the wrong one among several that could all do the job still gets through.
 - **No locking.** Concurrent preflight and execution on the same `action_key` is the caller's problem.
 - **Flat arguments assumed.** Field name equals argument key. Nested schemas and key-mapping tools need an adapter.
+- **Known defect: the quick start never executes.** `recordExecutionState` does not persist `call_arguments`, and `runPreflightAndRecord` returns that record. `executeIfReady` finds no payload in it and returns `held`, even when `execution_decision` is `execute`. The skeleton is not being revised; if you build on it, add `call_arguments` to the persisted record.
 
 ---
 
