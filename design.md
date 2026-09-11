@@ -17,7 +17,7 @@ Two questions get confused with each other. **Who defines the obligation** decid
 **Fixed checklist**, defined by the adopting system, applied to every call:
 
 - Which tool is this action, and does that tool actually produce the requested state change
-- When does it run — immediately, or on a condition or event
+- When does it run — immediately, at a set time, or on an event. This is settled at instruction time; it is not one of the conditions checked at trigger time
 - What the user calls the action, and what state change they want
 
 This settles the execution unit. Until it is settled you do not know which other checklists to load, so it comes first.
@@ -105,9 +105,9 @@ Counting requires a settled checklist, so an error in deciding that checklist is
 
 The result of the check is stored. Execution reads that record and nothing else.
 
-Everything above is rules; this is what makes them hold. When decision and execution live in the same flow, the decision is an `if` somebody can skip. When execution only reads a stored verdict, no path exists that runs without one.
+Everything above is rules; this is what makes them hold. When the verdict and execution live in the same flow, the verdict is an `if` somebody can skip. When execution only reads a stored verdict, no path exists that runs without one.
 
-The record holds the verdict and stops there — each slot's state, the source that produced it, the route an `UNKNOWN` took, the count, and the unmet items. It does not say whether to proceed. That is the executing party's own decision, written to its own record.
+The record holds the verdict and stops there — each slot's state, the source that produced it, the route an `UNKNOWN` took, the count, and the unmet items. A verdict with no `UNKNOWN` and no unmet items is what the specification calls an **executable state**; anything else gives execution no grounds. The gate settles which of the two it is and records it. Whether to proceed is not part of the verdict: that is the executing party's own decision, written to its own record.
 
 Runs that did not proceed get recorded too. A log holding only successful executions lies: two runs that stopped followed by one that went through reads as a first-try success.
 
@@ -131,7 +131,7 @@ If a violation is not observable from outside, it cannot live in the prompt. Mak
 
 **Tool selection.** Selection happens before this layer and is only checked here. Whether the action really is this tool is judged from the description, which is prose — mitigation by prompt, not verification by code. A wrong pick among several tools that could all do the job still gets through.
 
-**Forged records.** Separating decision from execution leaves an execution without a decision with no grounds and makes it identifiable in the record; it does nothing about an execution grounded on a fabricated one. Raising that to enforcement means signing decisions, with TTL and nonce.
+**Forged records.** Separating the verdict from execution leaves an execution without a verdict with no grounds and makes it identifiable in the record; it does nothing about an execution grounded on a fabricated one. Raising that to enforcement means signing verdicts, with TTL and nonce.
 
 **The calling layer.** Whoever picks up the tool, carries the counters, and agrees not to route around the check. It answers nothing; it runs the structure. Compliance here is a contract, enforced by code review and convention.
 
