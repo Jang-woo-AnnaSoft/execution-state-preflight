@@ -10,15 +10,15 @@ This is not a wall in front of your agent. It fills, with a stated source, the b
 
 The code here is a skeleton meant to show the structure, not something to adopt as-is. What actually has to be code in your system is `lookupField` and the shape of the decision record. Everything else — the agent loop, how you ask the user, storage — you write to fit what you already have. Take the parts that match and leave the rest.
 
-**Start here.** [*Moving the Verdict Out of the Model (판단 권한 이관)*](./spec.ko.md) is the argument — why the list of what to check has to sit outside the model, and what changes when it does. [design.md](./design.md) is the short version of the structure: the two axes, the checklists, the source order, the three states, and where the boundaries are. This README describes the reference skeleton itself — the hook contracts, the record shape, and what this does and does not cover.
+**Start here.** [*Moving the Verdict Out of the Model (판단 권한 이관)*](./spec.ko.md) is the argument — why the checklist has to sit outside the model, and what changes when it does. [design.md](./design.md) is the short version of the structure: the two axes, the checklists, the source order, the three states, and where the boundaries are. This README describes the reference skeleton itself — the hook contracts, the record shape, where it falls short of the specification, and what this does and does not cover. The specification is the standard; the skeleton is not being revised to meet it.
 
 Read in that order if you are deciding whether this is worth doing. Start here if you already are.
 
 ---
 
-## Eight problems
+## Seven problems
 
-Getting to three checklists and two gates meant working through seven of them.
+Getting to three checklists and two gates meant working through these.
 
 1. Inference accuracy not being the thing that grants execution authority
 2. The first draft moving to the model, which turns human review into a click-through
@@ -61,9 +61,11 @@ instruction (trust-labeled segments)
    └─ both clear                                → execute → executed
 ```
 
-Both gates end at a record. Neither calls the tool and neither aborts anything — `execution_decision` is a verdict written to state, and `executeIfReady` is a separate step that reads it. A run with no record has no grounds to proceed on.
+Both gates end at a record. Neither calls the tool and neither aborts anything, and `executeIfReady` is a separate step that reads the record. A run with no record has no grounds to proceed on. The skeleton does, however, write `execution_decision` into the gate's own record, which the specification does not allow — see [Where the skeleton differs from the specification](#where-the-skeleton-differs-from-the-specification).
 
 Gate 1 sits above everything the provider supplies. Move it lower and an undetermined tool's `required` fields and `description` ride into the gate with it — you'd be validating arguments for a call that shouldn't happen at all.
+
+The source comments count three checks rather than two: the intent gate and the tool gate there are the two halves of Gate 1 here, and the value gate is Gate 2. The record examples below are trimmed to the fields under discussion and carry an older `schema_version`; the skeleton now writes `1.8`, which adds `fixed.c2_source`, `fixed.c3_match`, and `lookup_failed` on fields.
 
 ---
 
@@ -186,7 +188,7 @@ The gate clears only when both counts are zero.
 }
 ```
 
-The skeleton keeps two counters, `unknown_count` for fields and `unverified_checklist_count` for the user checklist, because the two need different questions put to the user. The specification names a single `unknown_count`; it is the sum of these two. Splitting the arrays is fine, counting them twice is not.
+The skeleton keeps two counters, `unknown_count` for fields and `unverified_checklist_count` for the user checklist, because the two need different questions put to the user. The specification counts slots and the user checklist under a single `unknown_count`, but these two counters are not simply its parts: `unverified` also covers a condition that was checked and found violated, which the specification records as unmet instead of counting. Splitting the arrays is fine; counting one item twice, or counting an unmet item as unconfirmed, is not.
 
 `advisory_notes` carries the provider's `description`. It's recorded and handed to the model, and it is not part of the gate — natural language can't be enforced, so pretending otherwise would put an unverifiable condition in a verifying position.
 
@@ -282,14 +284,24 @@ What you carry forward is a choice. Intent should be preserved (instruction, che
 
 ---
 
+## Where the skeleton differs from the specification
+
+The specification is the standard. Read the skeleton with these gaps in mind.
+
+- **The verdict says whether to proceed.** The skeleton writes `execution_decision` — `execute`, `ask_user`, `hold`, `deferred` — into the gate's own record, and `executeIfReady` follows it. The specification keeps that out of the decision record: the gate records slot states, routes, the count, and unmet items, and the executing party decides and writes its own record. After the call the skeleton does write `executed` or `failed`, but as a copy of the gate record with `execution_decision` overwritten, not as the executing party's own record. The quick start also branches on the value `runPreflightAndRecord` returns, which the specification (§3.5) says is not separation.
+- **`verified` mixes confirmation and fulfillment.** On a user checklist item, `verified` means the condition was checked and holds. A condition checked and found violated has nowhere to go but `unverified`, which is counted and becomes `ask_user` — a question no answer resolves. The specification counts only whether the check happened; a checked condition that prohibits execution is recorded as unmet, outside the count. The skeleton's record has no place for unmet items.
+- **`hold` means something else.** In the specification, hold is a checked condition that prohibits execution, recorded as unmet — not a route and not a state. The skeleton writes `hold` mostly for configuration and implementation defects (a checklist item without an `id`, `schema_unsupported`, `action_key_failed`, an exception caught by the backstop), which the specification calls definition repair, and for exhausted retries. `payload_invalid` — every slot settled, the assembled object still fails the schema — is the closest the skeleton comes to the specification's hold. `executeIfReady` also returns `status: "held"` for anything other than `execute`, including `ask_user`.
+- **No `null` state.** The specification separates `known` / `null` / `unknown`, where `null` means the lookup ran and confirmed there is nothing there. This skeleton has only `known` and `unknown`, so a confirmed absence is indistinguishable from a lookup that never finished. Add the third state if you need that distinction; the counter should still count only `unknown`.
+- **No route for unresolved items.** The specification splits an unresolved slot three ways — ask the user, measure, or repair the definition — and writes the route into the decision record. This skeleton sends everything to `ask_user`, including a field whose lookup hook threw, which no user answer can fix. The specification treats that as definition repair: surface it to whoever owns the hook, not to the user. The source comment that says to route these to hold is using the skeleton's meaning of hold.
+
+---
+
 ## What this doesn't do
 
 - **No masking.** `fields[].value` is persisted verbatim — account numbers, amounts, recipients, tokens. Deferred records sit in plaintext from instruction time until trigger. Masking, access control, and append-only enforcement belong in your storage adapter.
 - **No integrity check on the state it's handed.** `executeIfReady` reads the object you give it. Hand it a hand-built one and the gate is bypassed. If decision and execution cross a trust boundary, sign it.
 - **No retry.** A throw from the tool call doesn't mean nothing happened on the provider side. For payments, use an idempotency key and confirm by measurement.
 - **No per-tool risk weighting.** `delete_all_records` and `list_records` pass the same gate. Tool selection itself sits outside this structure: an invented tool can't be picked, but picking the wrong one among several that could all do the job still gets through.
-- **No `null` state.** The specification separates `known` / `null` / `unknown`, where `null` means the lookup ran and confirmed there is nothing there. This skeleton has only `known` and `unknown`, so a confirmed absence is indistinguishable from a lookup that never finished. Add the third state if you need that distinction; the counter should still count only `unknown`.
-- **No route for unresolved items.** The specification splits an unresolved slot four ways — ask the user, measure, hold, or repair the definition. This skeleton sends everything to `ask_user`, including a field whose lookup hook threw, which no user answer can fix. Route those to hold and surface them to whoever owns the hook.
 - **No locking.** Concurrent preflight and execution on the same `action_key` is the caller's problem.
 - **Flat arguments assumed.** Field name equals argument key. Nested schemas and key-mapping tools need an adapter.
 
@@ -299,7 +311,7 @@ What you carry forward is a choice. Intent should be preserved (instruction, che
 
 Apply this only to irreversible actions. Not everything has to be in place.
 
-Not every deployment needs all three checklists. Immediate execution only, a single tool, no user conditions to check — take the part that matches. If the agent and the tool have the same owner, the per-tool list goes in the slot where the MCP input schema would be.
+Not every deployment needs all three checklists. Immediate execution only, a single tool, no user conditions to check — take the part that matches. If the agent and the tool have the same owner, the per-tool checklist goes where the MCP input schema would go.
 
 Gate 1 is often better handled as a principle given to the model than as code here, for the reason given above. Asking the user is handled by built-in functionality in most agent frameworks now.
 
