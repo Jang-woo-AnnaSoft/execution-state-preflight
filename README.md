@@ -51,8 +51,9 @@ The fixed checklist is what Gate 1 asks. The provider and user checklists are wh
 ```
 instruction (trust-labeled segments)
    │
-   ├─ Gate 1   Fixed checklist                  → tool_undetermined → ask_user
-   │           is this the right tool? when does it run?
+   ├─ Gate 1   Fixed checklist                  → intent_undetermined → ask_user
+   │           what is the action? when does it run?   tool_undetermined
+   │           is this the right tool?
    │
    ├─ Gate 2   Provider + User checklists       → unknown_fields    → ask_user
    │           where did each value come from?     unverified_checklist
@@ -92,7 +93,8 @@ Tool selection accuracy is never going to hit 100%. Wrong picks are inevitable, 
   "unknown_count": null,
   "gate": {
     "kind": "tool_undetermined",
-    "user_message": "I could not determine which tool to use. Please restate what you want to do.",
+    "user_message": "I could not tell which action this maps to. Please describe what you want done, in your own words.",
+    "next_tool_attempt": 1,
     "_diag": {
       "candidate_tool": "records.delete_all",
       "user_action": "clean up the old invoices",
@@ -104,7 +106,7 @@ Tool selection accuracy is never going to hit 100%. Wrong picks are inevitable, 
 }
 ```
 
-Four things in that record are deliberate:
+Five things in that record are deliberate:
 
 **The user message doesn't name the candidate tool.** Show someone `records.delete_all` and the question stops being "what did you want" and becomes "approve this?" — people pick what they're shown. The candidate lives in `_diag`, which goes to logs and never to the user.
 
@@ -112,7 +114,9 @@ Four things in that record are deliberate:
 
 **`fields` is `null`, not `[]`.** Null means no decision was made; `[]` would mean the lookup ran and came out empty. Same for `unknown_count`. This is why the caller contract is `if (decision !== "execute")` and never `if (unknown_count > 0)` — `null > 0` is `false`, and a not-yet-computed state would sail through.
 
-**Re-entry replaces the tool, not the answers.** The response to `tool_undetermined` doesn't go into `userAnswers`. You swap `mcpTool` and call again. The skeleton deliberately doesn't read the "user already reselected" flag, because reading it would turn it into a bypass switch; only the name is fixed (`input.tool_reselected_by_user`) so the adopting system can implement it consistently. Cap the retries — two or three under the same `action_key`, then hold.
+**Re-entry replaces the tool, not the answers.** The response to `tool_undetermined` doesn't go into `userAnswers`. You swap `mcpTool` and call again, passing back `next_tool_attempt` as `input.tool_attempt`. The skeleton deliberately doesn't read the "user already reselected" flag, because reading it would turn it into a bypass switch; only the name is fixed (`input.tool_reselected_by_user`) so the adopting system can implement it consistently.
+
+**There is a ceiling, and it is in the skeleton.** Two asks each for intent and for the tool, counted separately — a tool reselection shouldn't spend the intent budget. On the third, the gate returns `intent_undetermined_exhausted` or `tool_undetermined_exhausted` with `next_*_attempt: null` and holds: no value to auto-retry with, so resolution leaves this logic and moves to conversation. You carry the counter; records at this stage have no `action_key`, so storage can't supply it. Carrying it forward is the default, and resetting it needs an affirmative new-request signal — reset it every turn and the ceiling is gone. The value gate has no equivalent ceiling; that one is yours. The specification doesn't cover ceilings at all — this is the skeleton filling a gap it ran into.
 
 If you have few enough tools to present a list, present it flat. No default selection, no "recommended" marker.
 
@@ -221,7 +225,7 @@ const preflight = createPreflight({
     buildActionKey,               // → opaque string; sets the blast radius of prior_state
   },
   storage,        // { persist, load } — append-only, or preserve `executed` separately
-  strict: true,   // also reject the three non-verifying defaults
+  strict: true,   // also reject the four non-verifying defaults
 });
 
 const state = await preflight.runPreflightAndRecord({
@@ -238,6 +242,8 @@ const state = await preflight.runPreflightAndRecord({
 });
 
 // Decide on the allow condition, never on a count.
+// This branch is not the separation the specification asks for (§3.5): a conforming executor
+// loads the record by action_key + phase and decides for itself. See the differences section.
 if (state.execution_decision === "execute") {
   // Known defect: as shipped this returns "held" — see What this doesn't do.
   await preflight.executeIfReady(state, mcpTool, callMcpTool);
@@ -267,7 +273,7 @@ Six hooks are required at construction. Four throw `not implemented`. The other 
 | `measureFromEnvironment` | `{ valid, value }` | `valid: false` must never become `known`; an LLM-backed hook here is not a measurement |
 | `buildActionKey` | opaque string | the key design *is* the blast radius of `prior_state` |
 
-Three more ship with defaults that verify nothing: `applyFieldPolicy`, `validateFieldSchema` (no format or type checking at all), and `verifyUserChecklistItem` (everything comes back unverified). `strict: true` rejects them.
+Four more ship with defaults that verify nothing: `applyFieldPolicy`, `validateFieldSchema` (no format or type checking at all), `verifyUserChecklistItem` (everything comes back unverified), and `validatePayload`. `strict: true` rejects them.
 
 Layer boundaries are deliberately not prescribed. Where this sits relative to your agent loop is your call.
 
@@ -331,7 +337,7 @@ The first version of the argument was posted [here](https://discuss.huggingface.
 
 ## A proposal for MCP
 
-The user checklist can carry *how* each condition gets checked, not just what it is. If tool providers put that check method into the input schema, the rules currently sitting in `description` as prose become conditions you can actually evaluate before running, instead of hints the model may or may not honor.
+The provider checklist can carry *how* each condition gets checked, not just what it is. If tool providers put that check method into the input schema, the rules currently sitting in `description` as prose become conditions you can actually evaluate before running, instead of hints the model may or may not honor.
 
 ---
 
