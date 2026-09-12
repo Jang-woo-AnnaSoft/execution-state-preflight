@@ -10,7 +10,7 @@ This is not a wall in front of your agent. It fills, with a stated source, the b
 
 The code here is a skeleton meant to show the structure, not something to adopt as-is. What actually has to be code in your system is `lookupField` and the shape of the decision record. Everything else — the agent loop, how you ask the user, storage — you write to fit what you already have. Take the parts that match and leave the rest.
 
-**Start here.** [*Moving the Verdict Out of the Model (판단 권한 이관)*](./spec.ko.md) is the argument — why the checklist has to sit outside the model, and what changes when it does. [design.md](./design.md) is the short version of the structure: the two axes, the checklists, the source order, the three states, and where the boundaries are. This README describes the reference skeleton itself — the hook contracts, the record shape, where it falls short of the specification, and what this does and does not cover. The specification is the standard; the skeleton is not being revised to meet it.
+**Start here.** [*Declarative Authority for AI Agents*](./spec.ko.md) is the argument — why the checklist has to sit outside the model, and what changes when it does. [design.md](./design.md) is the short version of the structure: the two axes, the checklists, the source order, the three states, and where the boundaries are. This README describes the reference skeleton itself — the hook contracts, the record shape, where it falls short of the specification, and what this does and does not cover. The specification is the standard; the skeleton is not being revised to meet it.
 
 Read in that order if you are deciding whether this is worth doing. Start here if you already are.
 
