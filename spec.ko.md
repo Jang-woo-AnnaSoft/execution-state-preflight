@@ -257,7 +257,7 @@ user_answer → instruction → pre_set_data → measured_data → prior_state
 - instruction — 사용자 발화로 확인된 구간에서 위치를 지정해 뽑아낸 값.
 - pre_set_data — 사용자가 미리 승인해 저장해 둔 설정값.
 - measured_data — 시스템 API를 조회해 그 자리에서 확인한 시스템 상태. 조회는 실측이어야 한다.
-- prior_state — 이전 실행의 결과로부터 승계된 값. 값에만 적용되며 조건은 승계하지 않는다.
+- prior_state — 실행되었음이 기록으로 확인된 이전 실행에서 승계된 값. 값에만 적용되며 조건은 승계하지 않는다.
 - 최종 단계까지 값이 확인되지 않으면 슬롯은 UNKNOWN으로 고정된다. 모델이 값을 제시하더라도 그것은 위치에 대한 주장일 뿐이고, 그 위치에 값이 실제로 있는지는 게이트가 대조한다. 모델의 정직함은 이 구조의 전제가 아니다.
 
 ### 5.3 instruction의 범위 정의
