@@ -25,6 +25,7 @@ This is not a hypothetical problem. It can happen today.
 And solving it does not necessarily require a more intelligent AI.
 
 **We can separate decision authority from execution authority.**
+
 Move the authority to decide **what must be verified** outside the model.
 Move the authority to decide **whether it has been verified** outside the model.
 
