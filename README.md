@@ -1,58 +1,34 @@
 # The First Thing We Should Do to Delay Extinction by AI
 
-I do not believe that this document can prevent a future in which AI destroys humanity.
-
-If AI develops a sense of self and comes to have hostile intentions toward humanity, that is not a problem this document is designed to solve.
+I do not believe that this document can prevent a future in which AI destroys humanity. If AI develops a sense of self and comes to have hostile intentions toward humanity, that is not a problem this document is designed to solve.
 
 But there is something we can do before that moment comes.
 
 **While AI is still a tool for understanding and executing human intent, we can prevent it from exercising decision authority that was never given to it.**
 
-We often look for the danger of AI in hallucinations or incorrect reasoning.
+We often look for the danger of AI in hallucinations or incorrect reasoning. But there is a more fundamental problem: a model can fail to stop when it does not know something. It can fill the blank itself and carry that decision into execution.
 
-But there is a more fundamental problem.
+If a value is missing, it infers the value. If a condition is missing, it assumes the condition. If the intent is missing, it decides the intent.
 
-**A model can fail to stop when it does not know something. It can fill the blank itself and carry that decision into execution.**
+These are all the same problem. **The model is filling a blank where it should not have had the authority to decide.**
 
-If a value is missing, it infers the value.
-
-If a condition is missing, it assumes the condition.
-
-If the intent is missing, it decides the intent.
-
-These are all the same problem.
-
-**The model is filling a blank where it should not have had the authority to decide.**
-
-This is not a hypothetical problem. It can happen today.
-
-And solving it does not necessarily require a more intelligent AI.
+This is not a hypothetical problem. It can happen today. And solving it does not necessarily require a more intelligent AI.
 
 **We can separate decision authority from execution authority.**
 
-Move the authority to decide **what must be verified** outside the model.
+Move the authority to decide **what must be verified** outside the model. Move the authority to decide **whether it has been verified** outside the model.
 
-Move the authority to decide **whether it has been verified** outside the model.
+The model can still do the work. It can ask the user, look up information, and prepare what is needed for execution. But it does not decide what must be true before execution is allowed.
 
-The model can still do the work. It can ask the user, look up information, and prepare what is needed for execution.
-
-But it does not decide what must be true before the execution is allowed.
-
-That authority is declared outside the model through checklists.
-
-The model works against those declared requirements.
-
-The verification layer checks the declared requirements and records the verdict.
+That authority is declared outside the model through checklists. The model works against those declared requirements, while the verification layer checks them and records the verdict.
 
 **Execution does not ask the model for the verdict. It reads the recorded verdict.**
 
 This is the basic idea behind moving the verdict outside the model.
 
-The goal is not to put another wall in front of an agent.
+The goal is not to put another wall in front of an agent. It is to ensure that guessing does not become authority.
 
-**The goal is to stop guessing from becoming authority.**
-
-Execution is still the goal.
+**Execution is still the goal.**
 
 
 ---
