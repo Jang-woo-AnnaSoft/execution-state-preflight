@@ -173,7 +173,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 
 ```
                   ┌─────────────────────────────────────────┐
-                  │      Global Fixed Checklist             │
+                  │             Fixed Checklist             │
                   │  - Intent (incl. Tool Match) / Trigger  │
                   └───────────────────┬─────────────────────┘
             ┌──────────────────────────┴──────────────────────────┐
