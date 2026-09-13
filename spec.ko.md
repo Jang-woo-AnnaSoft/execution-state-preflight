@@ -132,7 +132,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
                                                        │
                                                        ▼
                                                [Decision Record]
-                                               unknown_count · unmet
+                                                 unknown_count 
                                                        │
               ┌────────────────────────────────────────┘
               │  (실행 주체가 판정 기록을 조회)
