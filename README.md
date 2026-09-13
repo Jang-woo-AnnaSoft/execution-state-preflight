@@ -43,7 +43,13 @@ This is not a wall in front of your agent. It fills, with a stated source, the b
 
 **Status:** a reference skeleton, not a library. `createPreflight` refuses to build without six injected hooks.
 
-The code here is a skeleton meant to show the structure, not something to adopt as-is. What actually has to be code in your system is `lookupField` and the shape of the decision record. Everything else — the agent loop, how you ask the user, storage — you write to fit what you already have. Take the parts that match and leave the rest.
+This code exists to explain the architecture, not to prescribe an implementation. `lookupField` and the decision record represent boundaries that must exist in code; the agent loop, user interaction, and storage should fit the system you already have.
+
+I believe this idea would be more useful if frameworks such as LangChain, LlamaIndex, or Microsoft Agent Framework refined and supported it directly.
+
+Take the idea, not this implementation. The code is here to make the structure concrete. In a real agent system, much of the surrounding work can remain conversational, preserving speed and flexibility.
+
+**The important part is the separation of authority, not this particular code.**
 
 **Start here.** [*Declarative Authority for AI Agents*](./spec.ko.md) is the argument — why the checklist has to sit outside the model, and what changes when it does. [design.md](./design.md) is the short version of the structure: the two axes, the checklists, the source order, the three states, and where the boundaries are. This README describes the reference skeleton itself — the hook contracts, the record shape, where it falls short of the specification, and what this does and does not cover. The specification is the standard; the skeleton is not being revised to meet it.
 
