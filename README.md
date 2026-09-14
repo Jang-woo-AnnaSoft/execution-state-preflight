@@ -1,34 +1,42 @@
 # The First Thing We Should Do to Delay Extinction by AI
 
-I do not believe that this document can prevent a future in which AI destroys humanity. If AI develops a sense of self and comes to have hostile intentions toward humanity, that is not a problem this document is designed to solve.
+People talk about a future in which AI destroys humanity. If AI ever develops a sense of self and turns hostile toward humanity, that is beyond the scope of this document.
 
-But there is something we can do before that moment comes.
+There is, however, something we can do before then.
 
-**While AI is still a tool for understanding and executing human intent, we can prevent it from exercising decision authority that was never given to it.**
+**While AI is still a system that understands and executes human intent, we can prevent it from exercising decision authority on its own.**
 
-We often look for the danger of AI in hallucinations or incorrect reasoning. But there is a more fundamental problem: a model can fail to stop when it does not know something. It can fill the blank itself and carry that decision into execution.
+We often attribute the danger of AI to hallucination or faulty reasoning. The deeper problem is what happens when the model encounters something it does not know. **It does not stop. It fills the blank.**
 
-If a value is missing, it infers the value. If a condition is missing, it assumes the condition. If the intent is missing, it decides the intent.
+* **If a value is missing, it infers the value.** → Incorrect execution
+* **If a condition is missing, it assumes the condition.** → Execution without instruction
+* **If the intent is missing, it decides the intent.** → Different execution / execution without instruction
 
-These are all the same problem. **The model is filling a blank where it should not have had the authority to decide.**
+The underlying problem is the same. The model is an engine that fills blanks. This is not a defect. It is trained behavior. Prohibition prompts or better model performance will not remove it.
 
-This is not a hypothetical problem. It can happen today. And solving it does not necessarily require a more intelligent AI.
+> **The model distorts the user's instruction and then executes with confidence. Confidence expands the scope.**
 
-**We can separate decision authority from execution authority.**
+> **A tool will execute as long as its required inputs are satisfied.**
 
-Move the authority to decide **what must be verified** outside the model. Move the authority to decide **whether it has been verified** outside the model.
+This is not science fiction. **It is happening now.**
 
-The model can still do the work. It can ask the user, look up information, and prepare what is needed for execution. But it does not decide what must be true before execution is allowed.
+We do not need a smarter AI to solve this.
 
-That authority is declared outside the model through checklists. The model works against those declared requirements, while the verification layer checks them and records the verdict.
+**Separate what must be decided and the verdict from the AI.**
 
-**Execution does not ask the model for the verdict. It reads the recorded verdict.**
+* Move the authority to decide **what must be verified** outside the model.
+* Move the authority to decide **whether it has been verified** outside the model.
 
-This is the basic idea behind moving the verdict outside the model.
+The model can still do the work. It can ask the user, retrieve information, and prepare what is needed for execution.
 
-The goal is not to put another wall in front of an agent. It is to ensure that guessing does not become authority.
+Rules are declared outside the model through checklists. Principles and code perform the verification and record the verdict. Execution reads only the recorded result.
 
-**Execution is still the goal.**
+**The verdict belongs outside the model.** The authority the model has been filling simply because nobody declared it must be taken back.
+
+This is not about putting another wall in front of the agent. It is about stopping guesses from becoming execution.
+
+The goal is not to execute the model's judgment. **It is to execute the user's exact intent.**
+
 
 
 ---
