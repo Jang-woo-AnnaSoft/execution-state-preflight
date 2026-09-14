@@ -14,9 +14,9 @@ We often attribute the danger of AI to hallucination or faulty reasoning. The de
 
 The underlying problem is the same. The model is an engine that fills blanks. This is not a defect. It is trained behavior. Prohibition prompts or better model performance will not remove it.
 
-> **The model distorts the user's instruction and then executes with confidence. Confidence expands the scope.**
+### *The model distorts the user's instruction and then executes with confidence. Confidence expands the scope.*
 
-> **A tool will execute as long as its required inputs are satisfied.**
+### *A tool will execute as long as its required inputs are satisfied.*
 
 This is not science fiction. **It is happening now.**
 
