@@ -22,6 +22,8 @@ This is not science fiction. **It is happening now.**
 
 We do not need a smarter AI to solve this.
 
+What has to be filled in is the provider's to declare. Filling in what is left is the user's. With no such split, the model took on both.
+
 **Separate what must be decided and the verdict from the AI.**
 
 * Move the authority to decide **what must be verified** outside the model.
