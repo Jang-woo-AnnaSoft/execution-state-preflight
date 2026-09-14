@@ -2,7 +2,7 @@
 
 These are implementation notes. The argument — why the checklist has to sit outside the model — is in the specification. What follows assumes it and describes only the structure needed to build the thing.
 
-The model still extracts values, converses, and matches tool candidates. Two things are taken away: deciding what has to be checked, which goes to whoever declares a checklist, and certifying that the state it filled is complete enough to execute, which goes to code.
+The model still extracts values, converses, and matches tool candidates. Two things are taken away: deciding what has to be checked, which goes to whoever declares a checklist, and deciding whether the state it filled is complete enough to execute, which goes to code.
 
 ---
 
