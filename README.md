@@ -31,7 +31,7 @@ What has to be filled in is the provider's to declare. Filling in what is left i
 
 The model can still do the work. It can ask the user, retrieve information, and prepare what is needed for execution.
 
-Rules are declared outside the model through checklists. Principles and code perform the verification and record the verdict. Execution reads only the recorded result.
+Rules are declared outside the model through checklists. Code perform the verification and record the verdict. Execution reads only the recorded result.
 
 **The verdict belongs outside the model.** The authority the model has been filling simply because nobody declared it must be taken back.
 
