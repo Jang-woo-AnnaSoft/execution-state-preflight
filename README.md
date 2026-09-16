@@ -1,43 +1,43 @@
 # The First Thing We Should Do to Delay Extinction by AI
 
-People talk about a future in which AI destroys humanity. If AI ever develops a sense of self and turns hostile toward humanity, that is beyond the scope of this document.
+People talk about a future in which AI destroys humanity. What if AI develops a sense of self and turns hostile toward humans? That is not the problem this document addresses.
 
-There is, however, something we can do before then.
+There is, however, something we can do before that moment comes.
 
-**While AI is still a system that understands and executes human intent, we can prevent it from exercising decision authority on its own.**
+While AI is still a system that understands and executes human intent, **we can keep it from exercising decision authority on its own.**
 
-We often attribute the danger of AI to hallucination or faulty reasoning. The deeper problem is what happens when the model encounters something it does not know. **It does not stop. It fills the blank.**
+We often attribute the danger of AI to hallucination or faulty reasoning. But there is a more fundamental problem. The model does not stop when it does not know. **It fills the blank itself.**
 
 * **If a value is missing, it infers the value.** → Incorrect execution
 * **If a condition is missing, it assumes the condition.** → Execution without instruction
 * **If the intent is missing, it decides the intent.** → Different execution / execution without instruction
 
-The underlying problem is the same. The model is an engine that fills blanks. This is not a defect. It is trained behavior. Prohibition prompts or better model performance will not remove it.
+All three are the same problem. The model is an engine that fills blanks. This is not a defect. It is trained behavior. Prohibition prompts or better model performance alone will not remove it.
 
-### *The model distorts the user's instruction and then executes with confidence. Confidence expands the scope.*
+> **The model distorts the user's instruction and then executes with confidence. Confidence expands the scope.**
+>
+> **A tool will execute as long as its required inputs are satisfied.**
 
-### *A tool will execute as long as its required inputs are satisfied.*
+This is not a problem of the future. It is happening everywhere, right now.
 
-This is not science fiction. **It is happening now.**
+And solving it does not necessarily require a smarter AI.
 
-We do not need a smarter AI to solve this.
+**Separate both what must be decided and the verdict from the AI.**
 
-**Separate what must be decided and the verdict from the AI.**
+* Move the decision of **what must be verified** outside the model.
+* Move the verdict on **whether it has been verified** outside the model, too.
 
-* Move the authority to decide **what must be verified** outside the model.
-* Move the authority to decide **whether it has been verified** outside the model.
+The model can still do the work. It asks the user, retrieves information, and prepares what is needed for execution.
 
-The model can still do the work. It can ask the user, retrieve information, and prepare what is needed for execution.
+Rules are declared outside the model as checklists. Code performs the verification and records the verdict. Execution only reads the recorded result.
 
-Rules are declared outside the model through checklists. Code perform the verification and record the verdict. Execution reads only the recorded result.
+**This takes back the authority the model has been filling in because nobody declared it.**
 
-**The authority the model has been filling simply because nobody declared it must be taken back.**
+Better model performance increases capability. If decision authority remains with the model, that added capability widens its reach into deciding what was never declared.
 
-This is not about putting another wall in front of the agent. It is about stopping guesses from becoming execution.
+If authority sits outside the model, both the decision and the responsibility remain with humans.
 
-The goal is not to execute the model's judgment. **It is to execute the user's exact intent.**
-
-
+What this structure does is stop guesses from becoming execution. The goal is not to execute the model's judgment, but **to execute exactly what the user has explicitly declared.**
 
 ---
 
@@ -388,14 +388,5 @@ The first version of the argument was posted [here](https://discuss.huggingface.
 
 The provider checklist can carry *how* each condition gets checked, not just what it is. If tool providers put that check method into the input schema, the rules currently sitting in `description` as prose become conditions you can actually evaluate before running, instead of hints the model may or may not honor.
 
----
-
-## Ownership & License
-
-Copyright © 2026 AnnaSoft Inc. (Republic of Korea)
-
-1. Agent Framework & Software - This framework, source code, and specification are free for all organizations, including unrestricted commercial use, modification, and redistribution.
-
-2. Model Architecture & Native Integration - Direct application or internalization of these architectural principles (Inference Control and Lookup-Based Verification, such as slot-based state control mechanisms) within model weights, neural layers, or training/inference pipelines by organizations with annual gross revenue of USD 1 billion or more requires prior written agreement with AnnaSoft Inc. All other organizations may use these principles free of charge.
 
 Contact: hello@anna.software
