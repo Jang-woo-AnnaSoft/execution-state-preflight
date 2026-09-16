@@ -22,8 +22,6 @@ This is not science fiction. **It is happening now.**
 
 We do not need a smarter AI to solve this.
 
-What has to be filled in is the provider's to declare. Filling in what is left is the user's. With no such split, the model took on both.
-
 **Separate what must be decided and the verdict from the AI.**
 
 * Move the authority to decide **what must be verified** outside the model.
@@ -33,7 +31,7 @@ The model can still do the work. It can ask the user, retrieve information, and 
 
 Rules are declared outside the model through checklists. Code perform the verification and record the verdict. Execution reads only the recorded result.
 
-**The verdict belongs outside the model.** The authority the model has been filling simply because nobody declared it must be taken back.
+**The authority the model has been filling simply because nobody declared it must be taken back.**
 
 This is not about putting another wall in front of the agent. It is about stopping guesses from becoming execution.
 
