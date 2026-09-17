@@ -1,9 +1,9 @@
-# Declarative Authority for AI Agents
+# Taking Definition and Verdict Authority Out of the Model
 
 > This specification deals with missing inputs, not with the correctness of computation.
 > Don't trust what the model says. Have code count only whether each check was carried out.
 
-*RFC: Declare, judge, record, execute — separating decision authority from the model*
+*RFC: Declare, judge, record, execute — separating authority from the model*
 
 ---
 
@@ -22,7 +22,7 @@ Existing work raises model accuracy and validates input arguments with schemas a
 
 The model's output is not grounds for execution. It is input for preparing execution. The model does not do less work: value extraction, conversation, and tool candidate matching stay with the model.
 
-Two authorities move. Definition authority, the authority to decide what gets checked, goes to whoever declares the checklist. Verdict authority, the authority to judge whether every checklist item has been checked, goes to the counting code.
+Two decision authorities move out of the model. Definition authority, the authority to decide what gets checked, goes to whoever declares the checklist. Verdict authority, the authority to judge whether every checklist item has been checked, goes to the counting code. The verdict ends in a record, and execution is left to an external party that reads that record.
 
 ### 0.1 Relationship to existing assets
 
