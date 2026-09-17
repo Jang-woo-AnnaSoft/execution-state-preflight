@@ -1,7 +1,7 @@
 # Declarative Authority for AI Agents
 
 > 본 명세는 계산의 정확성이 아니라 입력의 누락을 다룬다.
-> 모델의 말을 믿지 말고, 검증 절차의 완수 여부만 코드로 세라
+> 모델의 말을 믿지 말고, 검증 절차의 완수 여부만 코드로 세라.
 
 *RFC: Declare, judge, record, execute — separating decision authority from the model*
 
@@ -421,8 +421,7 @@ user_answer → instruction → pre_set_data → measured_data → prior_state
 | --- | --- | --- | --- |
 | **CaMeL ([arXiv:2503.18813v2](https://arxiv.org/abs/2503.18813v2)) / Fides ([arXiv:2505.23643v2](https://arxiv.org/abs/2505.23643v2))** | 프롬프트 인젝션과 정보 흐름에 의한 비인가 행동 | 모델 외부의 정책·정보 흐름 제어 | 악의적 외부 입력과 정보 흐름의 통제 |
 | **Ask-when-Needed ([arXiv:2409.00557v4](https://arxiv.org/abs/2409.00557v4))** | 인자 누락과 불명확한 지시 | 모델의 판단(프롬프트 유도) | 되묻기를 통한 누락 정보 보완 |
-| **본 명세** | 공격이 없어도 발생하는 누락과 추측 | 모델 외부의 검증 코드 | 확인할 항목을 선언하고, 미확인 상태를 코드가 판정하며, 판정을 집행과 분리한다 |
-
+| **본 명세** | 공격이 없어도 발생하는 누락과 추측 | 모델 외부의 검증 코드 | 확인할 항목을 선언하고, 미확인 상태를 코드가 판정하며, 판정을 실행과 분리한다 |
 
 ---
 
