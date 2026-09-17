@@ -293,8 +293,9 @@ const state = await preflight.runPreflightAndRecord({
 // Decide on the allow condition, never on a count.
 // This branch is not the separation the specification asks for (§3.5): a conforming executor
 // loads the record by action_key + phase and decides for itself. See the differences section.
+// Under the specification this call would not execute from the gate's record.
+// It is left executing here so the example runs end to end.
 if (state.execution_decision === "execute") {
-  // Known defect: as shipped this returns "held" — see What this doesn't do.
   await preflight.executeIfReady(state, mcpTool, callMcpTool);
 } else {
   // state.gate says exactly what is missing, and in which shape
@@ -344,7 +345,7 @@ What you carry forward is a choice. Intent should be preserved (instruction, che
 
 The specification is the standard. Read the skeleton with these gaps in mind.
 
-- **The verdict says whether to proceed.** The skeleton writes `execution_decision` — `execute`, `ask_user`, `hold`, `deferred` — into the gate's own record, and `executeIfReady` follows it. The specification keeps that out of the decision record: the gate records slot states, routes, the count, and unmet items, and the executing party decides and writes its own record. After the call the skeleton does write `executed` or `failed`, but as a copy of the gate record with `execution_decision` overwritten, not as the executing party's own record. The quick start also branches on the value `runPreflightAndRecord` returns, which the specification (§3.5) says is not separation.
+- **The verdict says whether to proceed.** The skeleton writes `execution_decision` — `execute`, `ask_user`, `hold`, `deferred` — into the gate's own record, and `executeIfReady` follows it. The specification keeps that out of the decision record: the gate records slot states, routes, the count, and unmet items, and the executing party decides and writes its own record. After the call the skeleton does write `executed` or `failed`, but as a copy of the gate record with `execution_decision` overwritten, not as the executing party's own record. The quick start also branches on the value `runPreflightAndRecord` returns, which the specification (§3.5) says is not separation. Under the specification, execution would not proceed from the gate's record; the skeleton keeps that path so the example actually runs.
 - **`verified` mixes confirmation and fulfillment.** On a user checklist item, `verified` means the condition was checked and holds. A condition checked and found violated has nowhere to go but `unverified`, which is counted and becomes `ask_user` — a question no answer resolves. The specification counts only whether the check happened; a checked condition that prohibits execution is recorded as unmet, outside the count. The skeleton's record has no place for unmet items.
 - **`hold` means something else.** In the specification, hold is a checked condition that prohibits execution, recorded as unmet — not a route and not a state. The skeleton writes `hold` mostly for configuration and implementation defects (a checklist item without an `id`, `schema_unsupported`, `action_key_failed`, an exception caught by the backstop), which the specification calls definition repair, and for exhausted retries. `payload_invalid` — every slot settled, the assembled object still fails the schema — is the closest the skeleton comes to the specification's hold. `executeIfReady` also returns `status: "held"` for anything other than `execute`, including `ask_user`.
 - **No `null` state.** The specification separates `known` / `null` / `unknown`, where `null` means the lookup ran and confirmed there is nothing there. This skeleton has only `known` and `unknown`, so a confirmed absence is indistinguishable from a lookup that never finished. Add the third state if you need that distinction; the counter should still count only `unknown`.
@@ -354,13 +355,12 @@ The specification is the standard. Read the skeleton with these gaps in mind.
 
 ## What this doesn't do
 
-- **No masking.** `fields[].value` is persisted verbatim — account numbers, amounts, recipients, tokens. Deferred records sit in plaintext from instruction time until trigger. Masking, access control, and append-only enforcement belong in your storage adapter.
+- **No masking.** `fields[].value` and `call_arguments` are persisted verbatim — account numbers, amounts, recipients, tokens. Deferred records sit in plaintext from instruction time until trigger. Masking, access control, and append-only enforcement belong in your storage adapter.
 - **No integrity check on the state it's handed.** `executeIfReady` reads the object you give it. Hand it a hand-built one and the gate is bypassed. If the verdict and execution cross a trust boundary, sign the record.
 - **No retry.** A throw from the tool call doesn't mean nothing happened on the provider side. For payments, use an idempotency key and confirm by measurement.
 - **No per-tool risk weighting.** `delete_all_records` and `list_records` pass the same gate. Tool selection itself sits outside this structure: an invented tool can't be picked, but picking the wrong one among several that could all do the job still gets through.
 - **No locking.** Concurrent preflight and execution on the same `action_key` is the caller's problem.
 - **Flat arguments assumed.** Field name equals argument key. Nested schemas and key-mapping tools need an adapter.
-- **Known defect: the quick start never executes.** `recordExecutionState` does not persist `call_arguments`, and `runPreflightAndRecord` returns that record. `executeIfReady` finds no payload in it and returns `held`, even when `execution_decision` is `execute`. The skeleton is not being revised; if you build on it, add `call_arguments` to the persisted record.
 
 ---
 
@@ -389,5 +389,6 @@ The first version of the argument was posted [If unsure, ask. Never guess. — A
 The provider checklist can carry *how* each condition gets checked, not just what it is. If tool providers put that check method into the input schema, the rules currently sitting in `description` as prose become conditions you can actually evaluate before running, instead of hints the model may or may not honor.
 
 
-Contact: hello@anna.software
-License: see [LICENSE.md](./spec.en.md)
+Contact: [hello@anna.software](mailto:hello@anna.software)
+
+License: see [License.md](./LICENSE.md)
