@@ -59,7 +59,8 @@ Take the idea, not this implementation. The code is here to make the structure c
 
 **The important part is the separation of authority, not this particular code.**
 
-**Start here.** [*Declarative Authority for AI Agents*](./spec.ko.md) is the argument — why the checklist has to sit outside the model, and what changes when it does. [design.md](./design.md) is the short version of the structure: the two axes, the checklists, the source order, the three states, and where the boundaries are. This README describes the reference skeleton itself — the hook contracts, the record shape, where it falls short of the specification, and what this does and does not cover. The specification is the standard; the skeleton is not being revised to meet it.
+**Start here.** [*Taking Definition and Verdict Authority Out of the Model
+*](./spec.en.md) / [*정의·판정 권한을 모델 밖으로*](./spec.ko.md) is the argument — why the checklist has to sit outside the model, and what changes when it does. [design.md](./design.md) is the short version of the structure: the two axes, the checklists, the source order, the three states, and where the boundaries are. This README describes the reference skeleton itself — the hook contracts, the record shape, where it falls short of the specification, and what this does and does not cover. The specification is the standard; the skeleton is not being revised to meet it.
 
 Read in that order if you are deciding whether this is worth doing. Start here if you already are.
 
