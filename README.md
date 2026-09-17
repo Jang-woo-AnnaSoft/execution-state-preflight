@@ -391,4 +391,4 @@ The provider checklist can carry *how* each condition gets checked, not just wha
 
 Contact: [hello@anna.software](mailto:hello@anna.software)
 
-License: see [License.md](./LICENSE.md)
+License: see [LICENSE.md](./LICENSE.md)
