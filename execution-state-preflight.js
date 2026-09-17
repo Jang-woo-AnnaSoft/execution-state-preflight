@@ -1069,6 +1069,7 @@ async function recordExecutionState(h, executionState) {
     unknown_count: executionState.unknown_count,
     unverified_checklist_count: executionState.unverified_checklist_count ?? null,
     gate: executionState.gate ?? null,
+    call_arguments: executionState.call_arguments ?? null,   // The exact payload executeIfReady sends
     execution_decision: executionState.execution_decision,
     reason: executionState.reason,
     timestamp: executionState.timestamp,
