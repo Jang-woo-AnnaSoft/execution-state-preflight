@@ -59,7 +59,7 @@ Take the idea, not this implementation. The code is here to make the structure c
 
 **The important part is the separation of authority, not this particular code.**
 
-**Start here.** [*Taking Definition and Verdict Authority Out of the Model*](./spec.en.md)/[*정의·판정 권한을 모델 밖으로*](./spec.ko.md) is the argument — why the checklist has to sit outside the model, and what changes when it does. [design.md](./design.md) is the short version of the structure: the two axes, the checklists, the source order, the three states, and where the boundaries are. This README describes the reference skeleton itself — the hook contracts, the record shape, where it falls short of the specification, and what this does and does not cover. The specification is the standard; the skeleton is not being revised to meet it.
+**Start here.** [*Taking Definition and Verdict Authority Out of the Model*](./spec.en.md), [*정의·판정 권한을 모델 밖으로*](./spec.ko.md) is the argument — why the checklist has to sit outside the model, and what changes when it does. [design.md](./design.md) is the short version of the structure: the two axes, the checklists, the source order, the three states, and where the boundaries are. This README describes the reference skeleton itself — the hook contracts, the record shape, where it falls short of the specification, and what this does and does not cover. The specification is the standard; the skeleton is not being revised to meet it.
 
 Read in that order if you are deciding whether this is worth doing. Start here if you already are.
 
@@ -380,7 +380,7 @@ The two gates split cleanly — they share only `fixed`, `action_key`, and `phas
 
 MCP's input schema defines the shape of the values a tool needs. It doesn't say why a value is needed, who asked for the execution, or whether the execution is allowed right now. That's not an MCP problem — it shows up anywhere natural language turns into execution. MCP is just easy to point at, because the boundary is written down as a protocol. When one owner has both sides, the boundary is invisible and the rules end up scattered across prompts and code.
 
-The first version of the argument was posted [here](https://discuss.huggingface.co/t/if-unsure-ask-never-guess-ai-agent-pre-execution-checklist/176632).
+The first version of the argument was posted [If unsure, ask. Never guess. — AI Agent Pre-Execution Checklist](https://discuss.huggingface.co/t/if-unsure-ask-never-guess-ai-agent-pre-execution-checklist/176632).
 
 ---
 
@@ -390,3 +390,4 @@ The provider checklist can carry *how* each condition gets checked, not just wha
 
 
 Contact: hello@anna.software
+License: see [LICENSE.md](./spec.en.md)
