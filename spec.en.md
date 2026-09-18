@@ -201,7 +201,7 @@ Every value, condition, and intent item is registered in an external checklist, 
 
 Providers already describe conditions in the tool description. The description arrives with the tool list, so string parsing alone turns it into slots. What keeps it from being an enforced checklist is that nobody has agreed on what is required. Three labels are proposed.
 
-- [Required]: attached to an argument. A field whose source location must be matched against an external source.
+- [Required]: attached to an argument or a condition. An item whose source location must be matched against an external source. On a condition, user approval does not satisfy it; it is confirmed only from the declared system source.
 - [Verify]: attached to a condition. Creates a user approval slot.
 - [Notice]: attached to a constraint. The user must be informed before execution.
 
