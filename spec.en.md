@@ -232,6 +232,16 @@ Items are counted the same way, but resolve differently when unconfirmed. An imp
 - The ask-the-user route has a ceiling. When it is reached, the slot stays UNKNOWN, resolution moves to conversation outside this logic, and reaching the ceiling is itself written to the decision record. The adopting system sets the ceiling. Without one, an unanswerable item is asked again forever, and the record cannot tell that apart from the user giving up.
 - What is confirmed by asking the user is confirmed at instruction time. Everything else is checked again at trigger time.
 
+### 4.6 Carrying out the ask
+
+- Items routed to asking the user in 4.5 can be carried out by the model.
+- Code builds the list of blanks. Asking the user and bringing the answers back can be the model's job. The list decides what to ask. The model decides how to ask it.
+- What the model decides is the form of the asking. It can ask several items at once, choose the order, explain why it is asking, and gather answers that arrive across several turns.
+- What the model does not decide is the list itself. It does not drop items or add them, and it does not mark a slot confirmed because an answer came back. The answer is looked up again as the user_answer source, and the verdict stays with code.
+- Nothing is asked that does not need asking. Items the system can measure never reach the user (previous section), and a value that came up earlier in the conversation is looked up rather than asked again (5.3, 6.2).
+- The gate stands only in front of irreversible execution (1). Reversible calls such as reads do not go through this at all.
+- This part gets better as models get better. Because the verdict sits outside the model, a gain in capability goes into the quality of the asking rather than into more authority.
+
 ---
 
 ## 5. Whitelist lookup pipeline
