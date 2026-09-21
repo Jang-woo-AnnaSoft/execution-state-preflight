@@ -52,7 +52,7 @@ This specification is not applied to every tool call across the board. What it c
 
 ## 2. Problem definition
 
-Premise: the model is an engine that fills blanks. This is not a defect but trained behavior, so neither prohibitions nor better performance will remove it. The items below are the failures that appear when this property meets the way systems are built.
+Premise: the model is an engine that fills blanks. This is not a defect but trained behavior, so neither prohibitions nor better performance will remove it. **It does not presume malice or error. Malice requires breaking something declared, and error requires missing a settled answer. Where nothing was declared, neither exists.**
 
 ### 2.1 Confusing inference with execution authority
 
