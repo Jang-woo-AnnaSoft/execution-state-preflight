@@ -1,4 +1,5 @@
 # Taking Definition and Verdict Authority Out of the Model
+*Values, conditions, intent: **people** should declare them, not the model.*
 
 > This specification deals with missing inputs, not with the correctness of computation.
 > Don't trust what the model says. Have code count only whether each check was carried out.
