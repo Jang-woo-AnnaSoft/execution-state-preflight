@@ -171,6 +171,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 ### 3.5 Changing what is computed (whether to execute → unconfirmed slots)
 
 - The goal of the computation is not whether to execute but pinning down the unconfirmed slots.
+- When the model decides what counts as unresolved, it can hide what is unresolved. When an external checklist decides, the system can detect it.
 - What a person receives is blanks. The blanks are finite, each one carries its source, and the person answers only the items only they can answer.
 - The gate only checks unconfirmed slots and records the result.
 - The executing party sits outside this specification and decides separately whether to execute, consulting only the decision record.
@@ -392,7 +393,8 @@ With authority outside the model, decisions and accountability stay with the par
 ### 7.2 What adoption brings
 
 - Conditions become something to verify. A validator that only looked at values now walks the conditions too.
-- Rules become data. Your own rules, and those of policy bodies, companies, and regulators, are each registered as one line in a checklist, change without a deploy, and can be listed.
+- Rules become data. A tool provider's conditions, your own rules, and rules from policy bodies, companies or regulators all register as a line in a checklist, change without a deploy, and can be listed in full.
+- Adding a tool does not change the execution path. A new tool adds a declaration, not new execution logic.
 - Scaling cost is fixed and independent of model performance. Adding tools and conditions, or swapping the model, leaves the gate code unchanged.
 - Questions don't multiply; they become visible. Values and conditions were always the user's to decide. Only the blanks go back to the user, and items that keep coming up are promoted to pre-set settings.
 - Decision records become input for model development. You get data by failure type, and undeclared and unsourced cases are separated out.
