@@ -43,6 +43,19 @@ This specification is not applied to every tool call across the board. What it c
 - Does not apply: read-only calls are not gated.
 - The trade: statements about answer quality are removed from the grounds for a verdict, and input completeness is gained in return. For reversible execution, the gain does not cover the cost. Checking the result and fixing it is the cheaper control.
 
+#### Deciding what counts as irreversible
+
+An execution is reversible when the party that ran it can restore the prior state on its own. It is irreversible when restoring requires the other party's consent or a third party's cooperation. The presence of an undo does not decide this.
+
+| Execution | Undo | What remains |
+|---|---|---|
+| Transfer | Conditional | The money already reached the other account |
+| Email send | Recall | The recipient may already have read it |
+| File delete | Trash restore | The change already propagated to outside systems |
+| Robot motion | Stop | It may already have touched a person or an object |
+
+An undo restores the state held by the party that ran the execution. It does not restore what was left outside. That is what this decides on.
+
 ### 1.2 Slot reduction rules
 
 - Domains with immediate execution only: no trigger slot.
