@@ -18,7 +18,7 @@ Existing work raises model accuracy and validates input arguments with schemas a
 | **What gets checked** | Arguments only. Structured Outputs and Tools schemas check data type and format; there is no field for conditions or intent (2.5). | Values, conditions (balance, permission), and intent become slots on the same footing. Because the verdict is about the action, conditions need no separate mechanism, and confidence scores are not used (3.3). |
 | **Do missing rules show up** | An undeclared item is missing from the record too, so it looks like an item that never existed rather than one that was missed (2.7). | An item that cannot be checked stays UNKNOWN and routes to definition repair (4.5). The gap is not filled, but the record shows who failed to declare what. |
 | **Is there a reason to trust a filled value** | A looked-up value and an invented one are the same string, so neither the user nor the validator can tell them apart (2.4). | A value filled in by the model does not settle the slot. If every designated source has been looked up and nothing is found, the slot is fixed at UNKNOWN (5.2). |
-| **Who judges that what was filled is everything** | The model hands over a neat, completed form and a person clicks through(2.2). | Counting code does. People receive blanks, not a filled-in form, and only the items only they can answer come back to them (3.5). |
+| **Who judges that what was filled is everything** | The model hands over a neat, completed form and a person clicks through (2.2). | Counting code does. People receive blanks, not a filled-in form, and only the items only they can answer come back to them (3.5). |
 | **Who decides to execute** | Validation is a branch inside the execution flow, so it can be skipped, and the skip leaves no trace. | The verdict ends in a record. An external executing party reads that record and makes its own decision. No execution path bypasses the record. |
 
 The model's output is not grounds for execution. It is input for preparing execution. The model does not do less work: value extraction, conversation, and tool candidate matching stay with the model.
@@ -91,7 +91,7 @@ Premise: the model is an engine that fills blanks. This is not a defect but trai
 - A looked-up value and an invented one have the same string form. Nothing in the result tells them apart. Not for the user, and not for a validator.
 - Adding another validator (LLM-as-a-Judge) does not solve this. What the judge receives is a call that has already been assembled, and the information needed to tell the two apart is not in it.
 - Passing the value along with a source label does not work either. The label is produced by the model, so an invented value gets a source too.
-  
+
 ### 2.5 No place to declare conditions
 
 - The input schema is a format for assembling a call, so only arguments get fields. There is no field for conditions.
