@@ -15,10 +15,10 @@ Existing work raises model accuracy and validates input arguments with schemas a
 | Axis | Existing | This specification |
 | --- | --- | --- |
 | **Who sets the rules** | Nobody, so the model sets them on every call. What to ask and what to skip changes from call to call, and since nothing is kept as a rule, the rules cannot be listed (2.3). | Parties with definition authority (provider, user, adopting system) declare them in external checklists. They change without a deploy, live in a fixed place, and can be listed. |
-| **What gets checked** | Arguments only. Structured Outputs and Tools schemas check data type and format; there is no field for conditions or intent (2.4). | Values, conditions (balance, permission), and intent become slots on the same footing. Because the verdict is about the action, conditions need no separate mechanism, and confidence scores are not used (3.3). |
-| **Do missing rules show up** | An undeclared item is missing from the record too, so it looks like an item that never existed rather than one that was missed (2.6). | An item that cannot be checked stays UNKNOWN and routes to definition repair (4.5). The gap is not filled, but the record shows who failed to declare what. |
-| **Is there a reason to trust a filled value** | A looked-up value and an invented one are the same string, so neither the user nor the validator can tell them apart (2.2). | A value filled in by the model does not settle the slot. If every designated source has been looked up and nothing is found, the slot is fixed at UNKNOWN (5.2). |
-| **Who judges that what was filled is everything** | The model hands over a neat, completed form and a person clicks through. A confidence score is the model grading itself. | Counting code does. People receive blanks, not a filled-in form, and only the items only they can answer come back to them (3.5). |
+| **What gets checked** | Arguments only. Structured Outputs and Tools schemas check data type and format; there is no field for conditions or intent (2.5). | Values, conditions (balance, permission), and intent become slots on the same footing. Because the verdict is about the action, conditions need no separate mechanism, and confidence scores are not used (3.3). |
+| **Do missing rules show up** | An undeclared item is missing from the record too, so it looks like an item that never existed rather than one that was missed (2.7). | An item that cannot be checked stays UNKNOWN and routes to definition repair (4.5). The gap is not filled, but the record shows who failed to declare what. |
+| **Is there a reason to trust a filled value** | A looked-up value and an invented one are the same string, so neither the user nor the validator can tell them apart (2.4). | A value filled in by the model does not settle the slot. If every designated source has been looked up and nothing is found, the slot is fixed at UNKNOWN (5.2). |
+| **Who judges that what was filled is everything** | The model hands over a neat, completed form and a person clicks through(2.2). | Counting code does. People receive blanks, not a filled-in form, and only the items only they can answer come back to them (3.5). |
 | **Who decides to execute** | Validation is a branch inside the execution flow, so it can be skipped, and the skip leaves no trace. | The verdict ends in a record. An external executing party reads that record and makes its own decision. No execution path bypasses the record. |
 
 The model's output is not grounds for execution. It is input for preparing execution. The model does not do less work: value extraction, conversation, and tool candidate matching stay with the model.
@@ -78,16 +78,21 @@ Premise: the model is an engine that fills blanks. This is not a defect but trai
 
 - With traditional forms, the user both filled in the form and reviewed it before approving. In an agent, the model becomes the author of the first draft.
 - The more polished the parameters, the more the user skips judgment and just gets through the step. Higher accuracy makes this weakness worse.
-- A looked-up value and an invented value have the same string form, and the user may not be able to tell them apart.
 
 ### 2.3 Why re-asking and after-the-fact exclusion don't work
 
 - Shared reason: the model is the one deciding what to ask and what to exclude. There is no standard to compare against.
 - Re-asking: an instruction to "ask when unclear" is not guaranteed to work. If the model doesn't notice what is missing, or has already filled the blank with a hallucination, the ambiguity is already gone.
-- After-the-fact exclusion: "search again, excluding inferred values" cannot be carried out. The two kinds of value look the same.
+- After-the-fact exclusion: "search again, excluding inferred values" cannot be carried out. For the reason in 2.4, they cannot be told apart.
 - Output that skipped a question carries no mark that it did. The omission shows up only after execution.
 
-### 2.4 No place to declare conditions
+### 2.4 Grounds for trusting a filled value
+
+- A looked-up value and an invented one have the same string form. Nothing in the result tells them apart. Not for the user, and not for a validator.
+- Adding another validator (LLM-as-a-Judge) does not solve this. What the judge receives is a call that has already been assembled, and the information needed to tell the two apart is not in it.
+- Passing the value along with a source label does not work either. The label is produced by the model, so an invented value gets a source too.
+  
+### 2.5 No place to declare conditions
 
 - The input schema is a format for assembling a call, so only arguments get fields. There is no field for conditions.
 - The chain: nowhere to write it → not something to validate → nobody declares it → the model assumes it.
@@ -96,7 +101,7 @@ Premise: the model is an engine that fills blanks. This is not a defect but trai
 - Tool servers sometimes check conditions. But a check after the call means unnecessary calls. A tool server's rejection reason doesn't end up in a decision record, and it can become a hint for the model to change the value and retry.
 - Conditions written as free text in the description go unverified as well, since there is no way to confirm the model took them in.
 
-### 2.5 Failure types
+### 2.6 Failure types
 
 Failures are not different kinds of fault. They differ in what was filled in by inference. In all three cases, something the model filled in without a declared source reached execution. The same outcome belongs in a different place depending on what was inferred.
 
@@ -108,7 +113,7 @@ Failures are not different kinds of fault. They differ in what was filled in by 
 
 Many blanks start with what the user didn't say. People usually don't know what they left out, so an incomplete instruction is the normal case. The problem is that the model fills the blank, the gap never shows, and the next instruction comes with the same blank.
 
-### 2.6 No record of the verdict
+### 2.7 No record of the verdict
 
 Executions are recorded; verdicts are not. What gets recorded is the tool that was called and the final argument values. Where each value came from, and which conditions were checked, are not recorded.
 
@@ -117,7 +122,7 @@ Executions are recorded; verdicts are not. What gets recorded is the tool that w
 - Blocked executions are not recorded. When only executed runs remain, what was filtered out is lost.
 - An approval record keeps the fact of approval but not what was shown, so after an incident there is no way to reconstruct what the approver signed off on.
 
-### 2.7 Internal rules scattered everywhere
+### 2.8 Internal rules scattered everywhere
 
 An agent's own rules are spread across prompts, branches in tool wrappers, and undocumented habits. The problem is not the scattering itself but the cost of change and the inability to check.
 
