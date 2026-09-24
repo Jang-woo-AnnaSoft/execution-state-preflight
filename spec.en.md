@@ -166,6 +166,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 ### 3.3 Slots on the same footing (Value, Condition, Intent)
 
 - Values, conditions, and intent are all treated as verification slots. A value is what goes into a tool argument; a condition is a fact whose truth is checked before execution (balance, permission, and so on); intent is the execution unit the user wants and the permitted range within it. Because the verdict is about the action, conditions need no separate mechanism. Counting works the same way for all three, and in the order of settling, intent comes first.
+- Confidence scores are not used. A slot's state is settled by whether it was looked up from a declared source, which is a fact rather than a probability.
 - Once the verdict is separated from execution, a slot can be in the state "condition not checked." Only then can free-text conditions become something to verify.
 
 ### 3.4 Deterministic slot counter gate
