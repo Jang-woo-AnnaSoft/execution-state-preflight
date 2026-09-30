@@ -437,17 +437,19 @@ A user may try to lift a condition the provider has prohibited. This specificati
 Whether to allow the request is decided by regulators' rules or the adopting system's policy. This specification supplies the record that decision needs. If the agreement changes, the new rule is reflected as one line in the checklist.
 
 ### 8.4 Sub-executions inside a tool
+
 - A tool may call another tool while it runs and produce a further state change. The gate does not see inside a tool, so it cannot detect this.
 - A tool's implementation detail (a lookup, a computation) and a new independent execution (producing a different state change) have to be told apart, and only the party that built the tool knows which is which.
 - Mitigation — requiring that an independently executable sub-execution pass the same boundary is a contract between the adopting system and the provider. This specification does not enforce it.
 
 ### 8.5 The calling layer
+
 - This specification rests on the calling layer not routing around the gate. If a path exists that calls a tool without passing through it, the verdict does not hold.
 - This is not enforced by code. It is kept by code review and convention in the adopting system.
 
 ### 8.6 Alternatives considered
 
-- Putting the checklist in the prompt and receiving JSON back hands the authority to decide what to ask back to the model. If the model is the one judging that a slot is empty, its report that the slot was filled cannot be verified from outside. This specification requires two things: the checklist lives outside the prompt, and code does the counting.
+- Putting the checklist in the prompt and receiving JSON back hands the authority to decide what to ask back to the model. If the model is the one judging that a slot is empty, its report that the slot was filled cannot be verified from outside. - This specification requires two things: the checklist lives outside the prompt, and code does the counting.
 
 ---
 
