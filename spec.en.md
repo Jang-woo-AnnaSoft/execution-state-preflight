@@ -447,7 +447,7 @@ Whether to allow the request is decided by regulators' rules or the adopting sys
 
 ### 8.6 Alternatives considered
 
-Putting the checklist in the prompt and receiving JSON back hands the authority to decide what to ask back to the model. If the model is the one judging that a slot is empty, its report that the slot was filled cannot be verified from outside. This specification requires two things: the checklist lives outside the prompt, and code does the counting.
+- Putting the checklist in the prompt and receiving JSON back hands the authority to decide what to ask back to the model. If the model is the one judging that a slot is empty, its report that the slot was filled cannot be verified from outside. This specification requires two things: the checklist lives outside the prompt, and code does the counting.
 
 ---
 
