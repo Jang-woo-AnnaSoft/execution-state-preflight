@@ -432,9 +432,9 @@ With authority outside the model, decisions and accountability stay with the par
 
 ### 8.3 Conflicts between requests and conditions
 
-A user may try to lift a condition the provider has prohibited. This specification does not decide that conflict. Provider conditions do not list user answers as an allowed source, so the user's request does not change the comparison result. The condition stays checked and unmet (hold), and the record shows who declared what and who requested what.
-
-Whether to allow the request is decided by regulators' rules or the adopting system's policy. This specification supplies the record that decision needs. If the agreement changes, the new rule is reflected as one line in the checklist.
+- A user may try to lift a condition the provider prohibits. This specification does not adjudicate that conflict.
+- A provider condition does not accept a user answer as a source, so the user's request does not change the comparison. The condition stays confirmed and unmet (a hold), and who declared what and who requested what is recorded.
+- Whether to allow the request is decided by a regulator's rules or the adopting system's policy. This specification provides the record needed for that decision. When the agreement changes, the changed rule becomes a line in a checklist.
 
 ### 8.4 Sub-executions inside a tool
 
