@@ -29,7 +29,7 @@ Two decision authorities move out of the model. Definition authority, the author
 
 - This is not a new architecture. It extends two assets that already exist, the tool list and the input schema, by adding items to them.
 - Format validators and tool-server validation are not replaced. This specification only produces a decision record, and both validations stay on the execution path.
-- It does not replace post-execution verification layers. Before execution, it counts whether values, conditions, and intent were confirmed from their declared sources, and judges deterministically whether the state is executable (3.5). The purpose is not blocking but reaching an executable state. The decision record becomes the grounds for execution and for later verification.
+- It does not replace a permission layer or a layer that validates after the fact. This specification counts whether the values, conditions, and intent were confirmed from declared sources before execution, and settles deterministically whether the state is executable (3.5). The aim is not to block but to reach a state in which execution can proceed. The verdict record becomes the grounds for execution and for whatever validation follows.
 
 ---
 
@@ -162,6 +162,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 - In irreversible execution, what has to be correct is not the generated text but the action taken. An action is correct when it is the action the user intended and it meets the conditions the provider requires.
 - What this specification judges is input completeness, the precondition for that correctness. Correctness can only be assessed once values, conditions, and intent are all declared and every slot is confirmed from its designated source. Whether the confirmed requirements are met is recorded separately.
 - Moving the verdict from the generated answer to the action has three consequences. An action is a fact, not a probability, so it is judged by counting, not scoring. An unconfirmed value, condition, or intent is in every case the same action, "proceeding without checking," so one counter covers all three. And an action is decided before it happens, so the verdict can come before execution.
+- This axis sits at a different layer from an actor's authority. Authority asks whether this actor may perform this action. This specification asks whether everything the execution needs has been confirmed. The two do not replace each other, and judging authority is outside the scope of this specification.
 
 ### 3.3 Slots on the same footing (Value, Condition, Intent)
 
@@ -183,6 +184,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 - The gate only checks unconfirmed slots and records the result.
 - The executing party sits outside this specification and decides separately whether to execute, consulting only the decision record.
 - A structure that branches on the return value of the verdict function is not separation. There must be no execution path that does not go through the record.
+- The gate does not judge an actor's authority. Authority is granted to an actor, so whether a grant still holds and when it is revoked have to be handled separately, and that belongs to the executing party or a policy layer. The gate compares declared conditions against the state at execution time, so an execution outside those conditions is not one whose authority expired. It was outside the scope from the start.
 
 ---
 
