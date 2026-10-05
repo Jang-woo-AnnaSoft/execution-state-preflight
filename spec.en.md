@@ -56,6 +56,16 @@ An execution is reversible when the party that ran it can restore the prior stat
 
 An undo restores the state held by the party that ran the execution. It does not restore what was left outside. That is what this decides on.
 
+### Deciding what counts as one execution unit
+
+One tool call is not necessarily one execution unit. What is judged is the state change left outside, not the call.
+
+A call that leaves no state change is not an execution unit. A call that produces more than one state change is that many execution units. Several calls that together make one state change are one execution unit. Each execution unit passes the gate on its own (3.4).
+
+One delegation can produce several execution units. It is not one gate per delegation but one gate per state change.
+
+Which state changes count as execution units is declared by the party that built the tool. A state change nobody declared does not become an execution unit, so the gate never sees it. This is a residual risk of the same kind as 8.1.
+
 ### 1.2 Slot reduction rules
 
 - Domains with immediate execution only: no trigger slot.
@@ -308,6 +318,7 @@ user_answer → instruction → pre_set_data → measured_data → prior_state
 - Principles (prompt): items whose violation code can detect. The prompt is a way to reduce how often the gate catches something, and when it fails, the verdict still filters it out. An item whose violation cannot be observed from outside cannot live in the prompt. It has to become a slot, with a source and a slot state, before it can be observed.
 - Code (gate): a procedure that is the same whoever the party is: counting, comparing, recording. It does not change as checklists grow.
 - Prompts get diluted as a conversation grows long, and there is no way to confirm whether something was dropped. Principles are applied again in every tool-related exchange.
+- When a checklist changes, any earlier verdict based on it no longer holds. A change of state and a change of condition are different. The first is handled by re-checking at trigger time; the second requires a new verdict rather than a re-check. The decision record carries which version of the checklist the verdict was made against.
 
 ### 6.2 Principles
 
