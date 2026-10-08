@@ -27,9 +27,10 @@ Two decision authorities move out of the model. Definition authority, the author
 
 ### 0.1 Relationship to existing assets
 
-- This is not a new architecture. It extends two assets that already exist, the tool list and the input schema, by adding items to them.
-- Format validators and tool-server validation are not replaced. This specification only produces a decision record, and both validations stay on the execution path.
-- It does not replace a permission layer or a layer that validates after the fact. This specification counts whether the values, conditions, and intent were confirmed from declared sources before execution, and settles deterministically whether the state is executable (3.5). The aim is not to block but to reach a state in which execution can proceed. The verdict record becomes the grounds for execution and for whatever validation follows.
+- This is not a new architecture. It extends two assets that already exist: the tool list and the input schema.
+- It does not replace format validators or the validation a tool server performs. This specification only produces a verdict record; both of those stay on the execution path.
+- **It does not replace a permission layer. Authority is granted to a party, so whether a grant still holds and when it is revoked have to be handled separately, and that belongs to the executing party or a policy layer. What this specification looks at is not a party's authority but the state at execution time (3.2, 3.5).**
+- It does not replace a layer that validates after the fact either. This specification counts whether the values, conditions, and intent were confirmed from declared sources before execution, and settles deterministically whether the state is executable (3.5). The aim is not to block but to reach a state in which execution can proceed. The verdict record becomes the grounds for execution and for whatever validation follows.
 
 ---
 
