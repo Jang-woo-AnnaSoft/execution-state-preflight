@@ -57,7 +57,7 @@ An execution is reversible when the party that ran it can restore the prior stat
 
 An undo restores the state held by the party that ran the execution. It does not restore what was left outside. That is what this decides on.
 
-### Deciding what counts as one execution unit
+#### Deciding what counts as one execution unit
 
 One tool call is not necessarily one execution unit. What is judged is the state change left outside, not the call.
 
@@ -185,7 +185,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 
 - The verdict involves no model reasoning and no scoring.
 - An external validator tallies slot states and, when Unknown Count == 0, judges the check complete. A complete check does not mean the requirements are met.
-- The gate runs once per execution unit. When one instruction produces several state changes, each is its own execution unit and each passes the gate. A state change that was not declared does not become an execution unit.
+- The gate runs once per execution unit(1.1).
 
 ### 3.5 Changing what is computed (whether to execute → unconfirmed slots)
 
