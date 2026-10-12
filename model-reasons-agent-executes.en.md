@@ -57,7 +57,7 @@ So the record holds more than what was executed. It holds what was meant to happ
 
 Schema validation, tool-server checks, permission layers, and prompts stay as they are. Nothing is being replaced. The point is to build the place that was missing. The appendix sets out what changes compared with current practice.
 
-Spec: <https://github.com/Jang-woo-AnnaSoft/execution-state-preflight/blob/main/spec.en.md>
+Spec: [*Taking Definition and Verdict Authority Out of the Model*](./spec.en.md)
 
 ---
 
