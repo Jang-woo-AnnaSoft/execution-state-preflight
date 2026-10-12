@@ -3,7 +3,7 @@
 Copyright © 2026 AnnaSoft Inc. (Republic of Korea)
 
 ## Commercial Licensing
-A commercial license is required only for organizations with annual revenue of USD 1 billion or more that commercially deploy products or services based on this work. All other use is permitted free of charge.
+A commercial license is required only for organizations with annual revenue of USD 100 milion or more that commercially deploy products or services based on this work. All other use is permitted free of charge.
 
 ## Warranty
 
