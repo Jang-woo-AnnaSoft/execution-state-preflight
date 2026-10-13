@@ -1,6 +1,6 @@
 # What the model makes up must not reach the agent
 
-Everyone agrees that a value the model made up should not go straight into a real system call. That is why we ask people to approve, validate schemas, and add guardrails. But all of these look at the value after it has arrived, and only at the value. An account number the user typed and one the model made up are the same string. From the value alone, neither the user, a validator, nor another model can tell them apart.
+Everyone agrees that a value the model made up should not go straight into a real system call. That is why we ask people to approve, validate schemas, and add guardrails. But all of these look at the value after it has arrived, and only at the value.
 
 Models reason. That is their job. The trouble starts when reasoning fills a blank that has no source. If the tool, the criteria, or a value an agent executes with was filled in that way, it was made up, and the execution has no grounds.
 
