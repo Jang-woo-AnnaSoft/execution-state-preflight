@@ -1,5 +1,7 @@
 # What the model makes up must not reach the agent
 
+Everyone agrees that a value the model made up should not go straight into a real system call. That is why we ask people to approve, validate schemas, and add guardrails. But all of these look at the value after it has arrived, and only at the value. An account number the user typed and one the model made up are the same string. From the value alone, neither the user, a validator, nor another model can tell them apart.
+
 Models reason. That is their job. The trouble starts when reasoning fills a blank that has no source. If the tool, the criteria, or a value an agent executes with was filled in that way, it was made up, and the execution has no grounds.
 
 ## Today the model and the agent are treated as one
@@ -34,7 +36,7 @@ So the model's assumptions decide which tool to use, which criteria to pass, and
 
 **Declare the checklist.** If the model decides what has to be checked, that checklist is reasoning too. What gets asked and what gets skipped changes from run to run, and a missing item doesn't look missing. It looks like it was never there. So the criteria are declared before execution, outside the model, by whoever is responsible for them. Providers write the conditions for their tools. Users write the scope of what they delegate.
 
-**Check the source.** Checking a value after it arrives is too late. An account number the user typed and one the model made up are the same string. From the value alone, neither the user, a validator, nor another model can tell them apart. Asking the model to label where each value came from doesn't help, because the model writes the label too.
+**Check the source.** Looking at a value after it arrives can't separate what was made up from what wasn't. Asking the model to label where each value came from doesn't help, because the model writes the label too.
 
 So the agent doesn't take a value and validate it. It takes a pointer to where the value is supposed to be, and checks that location itself, in a defined source. The sources are what the user said, settings the user approved in advance, and system measurements. A value found in none of them stays unknown, and while anything is unknown, the execution is not in an executable state.
 
@@ -57,7 +59,7 @@ So the record holds more than what was executed. It holds what was meant to happ
 
 Schema validation, tool-server checks, permission layers, and prompts stay as they are. Nothing is being replaced. The point is to build the place that was missing. The appendix sets out what changes compared with current practice.
 
-**Specification**: [*Taking Definition and Verdict Authority Out of the Model*](./spec.en.md)
+**Specification**: <https://github.com/Jang-woo-AnnaSoft/execution-state-preflight/blob/main/spec.en.md>
 
 ---
 
