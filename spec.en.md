@@ -21,6 +21,8 @@ Existing work raises model accuracy and validates input arguments with schemas a
 | **Who judges that what was filled is everything** | The model hands over a neat, completed form and a person clicks through (2.2). | Counting code does. People receive blanks, not a filled-in form, and only the items only they can answer come back to them (3.5). |
 | **Who decides to execute** | Validation is a branch inside the execution flow, so it can be skipped, and the skip leaves no trace. | The verdict ends in a record. An external executing party reads that record and makes its own decision. No execution path bypasses the record. |
 
+The default changes. Today, an execution that nothing prohibits goes ahead. Nobody can write down everything that should be prohibited, so whatever is left unwritten stays permitted. Under this specification, an execution reaches an executable state only within the intent and permitted range the user stated or approved (in the instruction, in answers, or in pre-set settings; 5.2), and only when everything it needs is confirmed and no confirmed condition prohibits it. That nothing prohibited it is not grounds for execution.
+
 The model's output is not grounds for execution. It is input for preparing execution. The model does not do less work: value extraction, conversation, and tool candidate matching stay with the model.
 
 Two decision authorities move out of the model. Definition authority, the authority to decide what gets checked, goes to whoever declares the checklist. Verdict authority, the authority to judge whether every checklist item has been checked, goes to the counting code. The verdict ends in a record, and execution is left to an external party that reads that record.
@@ -65,7 +67,7 @@ A call that leaves no state change is not an execution unit. A call that produce
 
 One delegation can produce several execution units. It is not one gate per delegation but one gate per state change.
 
-Which state changes count as execution units is declared by the party that built the tool. A state change nobody declared does not become an execution unit, so the gate never sees it. This is a residual risk of the same kind as 8.1.
+Which state changes count as execution units is declared by the party that built the tool. A state change nobody declared does not become an execution unit, so the gate never sees it. Here the change of default in Section 0 does not hold: whatever nothing prohibits still runs. This is a residual risk of the same kind as 8.1.
 
 ### 1.2 Slot reduction rules
 
@@ -240,7 +242,7 @@ Providers already describe conditions in the tool description. The description a
 - [Verify]: attached to a condition. Creates a user approval slot.
 - [Notice]: attached to a constraint. The user must be informed before execution.
 
-A condition can also declare how it is to be checked (by user approval, or by looking up and comparing a particular system state). Conditions declared by the provider serve only as grounds not to execute. Passing a condition does not justify execution. Using the labels as an enforced checklist makes the parsing contract part of the gate: the declaring party is trusted, the syntax is fixed, and parsing is deterministic.
+A condition can also declare how it is to be checked (by user approval, or by looking up and comparing a particular system state). Conditions declared by the provider serve only as grounds not to execute. Passing a condition does not justify execution. The grounds for execution come from the intent and permitted range the user stated or approved (Section 0). Provider conditions only add reasons not to execute within that range. Using the labels as an enforced checklist makes the parsing contract part of the gate: the declaring party is trusted, the syntax is fixed, and parsing is deterministic.
 
 ### 4.3 User Checklist: varies per user and environment.
 
@@ -487,6 +489,7 @@ Provenance-based gates have been explored in injection defense, and the blank pr
 
 - This specification is not a technique for removing hallucination. The model's output remains, as it is, the input for preparing execution.
 - Its goal is not to block execution, but to establish what execution needs and settle an executable state. Safety follows from that.
+- It changes the default. Instead of running whatever is not prohibited, only what is confirmed within the range the user stated or approved reaches an executable state.
 - The black box is not fully opened. What is opened is what went into the verdict and what came out. After an incident, what you usually need is not the model's internal state but where the values came from, so this scope answers a good share of the questions.
 
 The authority to decide what gets checked and the authority to judge whether it was checked belong outside the model. Things went wrong not because these authorities were in the model, but because they were nowhere. The model filled the empty place. What narrows is the model's authority. What widens is what the model can be used for.
