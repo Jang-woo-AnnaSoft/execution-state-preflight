@@ -83,7 +83,7 @@ Which state changes count as execution units is declared by the party that built
 
 ## 2. Problem definition
 
-Premise: the model is an engine that fills blanks. This is not a defect but trained behavior, so neither prohibitions nor better performance will remove it. Models have been rewarded for finishing the task[(arXiv:2509.04664)](https://arxiv.org/abs/2509.04664). So in conversation they fill the blank rather than say "I don't know," and in execution they look for another way rather than stop. These are two symptoms of the same cause. **It does not presume malice or error. Malice requires breaking something declared, and error requires missing a settled answer. Where nothing was declared, neither exists.** The items below are the failures that appear when this property meets the way systems are built.
+Premise: the model is an engine that fills blanks. This is not a defect but trained behavior, so neither prohibitions nor better performance will remove it. Models have been rewarded for finishing the task ([arXiv:2509.04664](https://arxiv.org/abs/2509.04664)). So in conversation they fill the blank rather than say "I don't know," and in execution they look for another way rather than stop. These are two symptoms of the same cause. **It does not presume malice or error. Malice requires breaking something declared, and error requires missing a settled answer. Where nothing was declared, neither exists.** The items below are the failures that appear when this property meets the way systems are built.
 
 ### 2.1 Confusing inference with execution authority
 
