@@ -51,6 +51,22 @@ Tool selection can't be proven by source checks the way argument values can. It 
 | Values | Proposes values and where they are | Checked directly in what the user said, pre-approved settings, or system measurements |
 | Execution | Produces a call | The decision record. Executable only when nothing is unknown |
 
+## Stopping is not a failure
+
+That nothing prohibited an action is not grounds for it. Only what's confirmed, within what the user stated or approved, can run. So sometimes things will stop.
+
+Model developers do train agents to stop and confirm before irreversible actions. But the decision to stop still sits inside the model, and the model is rewarded for finishing. A completed task scores; a stopped one counts as a failure. So when something is blocked, it tends to find another way through, like cancelling an existing booking to make a new one.
+
+It's the same structure as the paper cited earlier:
+
+| | Facing a question it can't answer | Facing an execution that's blocked |
+|---|---|---|
+| How it's scored today | "I don't know" scores 0; a guess scores 1 if right | Stopping is a failure; finishing another way is a success |
+| So the model | guesses | tries something it wasn't asked to do |
+| The fix | Give credit for "I don't know" (the paper) | Don't count a stop with a recorded reason as a failure (the spec) |
+
+The paper fixes it on the model side. The spec fixes it on the execution side: the line for when to stop is drawn outside the model, and what stops because it wasn't confirmed is recorded, with its reason, as a normal outcome.
+
 ## The verdict ends in a record
 
 The record holds the intent and purpose the user stated, the source of every value used, the conditions checked, the items left unknown, and the criteria nobody declared. Intent the user stated is kept apart from intent that was interpreted. Whoever calls the tool reads that record and nothing else.
@@ -58,7 +74,6 @@ The record holds the intent and purpose the user stated, the source of every val
 So the record holds more than what was executed. It holds what was meant to happen, on what grounds the execution was judged executable, and what could not be confirmed.
 
 Schema validation, tool-server checks, permission layers, and prompts stay as they are. Nothing is being replaced. The point is to build the place that was missing. The appendix sets out what changes compared with current practice.
-
 
 **Specification**: [*Taking Definition and Verdict Authority Out of the Model*](./spec.en.md)
 
