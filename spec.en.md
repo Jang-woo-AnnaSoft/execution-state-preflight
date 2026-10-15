@@ -23,8 +23,6 @@ Existing work raises model accuracy and validates input arguments with schemas a
 
 The default changes. Today, an execution that nothing prohibits goes ahead. Nobody can write down everything that should be prohibited, so whatever is left unwritten stays permitted. Under this specification, an execution reaches an executable state only within the intent and permitted range the user stated or approved (in the instruction, in answers, or in pre-set settings; 5.2), and only when everything it needs is confirmed and no confirmed condition prohibits it. That nothing prohibited it is not grounds for execution.
 
-Stopping is not a failure. Today, stopping counts as a failure and finishing by any other route counts as a success, so when something is blocked, the agent looks for a way around it that nobody asked for (1.1). Under this specification, an execution that does not run because something was not confirmed is a normal outcome, recorded with its reason (6.4), and the blank goes back to whoever can fill it (4.5).
-
 The model's output is not grounds for execution. It is input for preparing execution. The model does not do less work: value extraction, conversation, and tool candidate matching stay with the model.
 
 Two decision authorities move out of the model. Definition authority, the authority to decide what gets checked, goes to whoever declares the checklist. Verdict authority, the authority to judge whether every checklist item has been checked, goes to the counting code. The verdict ends in a record, and execution is left to an external party that reads that record.
