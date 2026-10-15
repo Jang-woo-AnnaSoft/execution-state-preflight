@@ -23,6 +23,8 @@ Existing work raises model accuracy and validates input arguments with schemas a
 
 The default changes. Today, an execution that nothing prohibits goes ahead. Nobody can write down everything that should be prohibited, so whatever is left unwritten stays permitted. Under this specification, an execution reaches an executable state only within the intent and permitted range the user stated or approved (in the instruction, in answers, or in pre-set settings; 5.2), and only when everything it needs is confirmed and no confirmed condition prohibits it. That nothing prohibited it is not grounds for execution.
 
+Stopping is not a failure. Today, stopping counts as a failure and finishing by any other route counts as a success, so when something is blocked, the agent looks for a way around it that nobody asked for (1.1). Under this specification, an execution that does not run because something was not confirmed is a normal outcome, recorded with its reason (6.4), and the blank goes back to whoever can fill it (4.5).
+
 The model's output is not grounds for execution. It is input for preparing execution. The model does not do less work: value extraction, conversation, and tool candidate matching stay with the model.
 
 Two decision authorities move out of the model. Definition authority, the authority to decide what gets checked, goes to whoever declares the checklist. Verdict authority, the authority to judge whether every checklist item has been checked, goes to the counting code. The verdict ends in a record, and execution is left to an external party that reads that record.
@@ -66,6 +68,8 @@ One tool call is not necessarily one execution unit. What is judged is the state
 A call that leaves no state change is not an execution unit. A call that produces more than one state change is that many execution units. Several calls that together make one state change are one execution unit. Each execution unit passes the gate on its own (3.4).
 
 One delegation can produce several execution units. It is not one gate per delegation but one gate per state change.
+
+An alternative taken when an execution is blocked or fails (withdrawing from another account, reducing the amount, cancelling an existing booking to book again) is not a continuation of the original execution but a new execution unit. If it is not within the range the user stated or approved, it is not attempted.
 
 Which state changes count as execution units is declared by the party that built the tool. A state change nobody declared does not become an execution unit, so the gate never sees it. Here the change of default in Section 0 does not hold: whatever nothing prohibits still runs. This is a residual risk of the same kind as 8.1.
 
@@ -198,6 +202,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 - The executing party sits outside this specification and decides separately whether to execute, consulting only the decision record.
 - A structure that branches on the return value of the verdict function is not separation. There must be no execution path that does not go through the record.
 - The gate does not judge an actor's authority. Authority is granted to an actor, so whether a grant still holds and when it is revoked have to be handled separately, and that belongs to the executing party or a policy layer. The gate compares declared conditions against the state at execution time, so an execution outside those conditions is not one whose authority expired. It was outside the scope from the start.
+- The grounds for execution have no validity period. What the user declared (instruction, answers, pre-set settings) holds until the user changes it, and a change is a new declaration that is judged again (6.1, 6.3). A changed checklist is judged again as well (6.1). System state is never carried over: it is measured again at trigger time (4.5), and the gap between that measurement and execution is closed at execution (8.3). The validity period of an actor's authority is a separate matter and outside the scope of this specification.
 
 ---
 
@@ -321,7 +326,7 @@ user_answer → instruction → pre_set_data → measured_data → prior_state
 - Principles (prompt): items whose violation code can detect. The prompt is a way to reduce how often the gate catches something, and when it fails, the verdict still filters it out. An item whose violation cannot be observed from outside cannot live in the prompt. It has to become a slot, with a source and a slot state, before it can be observed.
 - Code (gate): a procedure that is the same whoever the party is: counting, comparing, recording. It does not change as checklists grow.
 - Prompts get diluted as a conversation grows long, and there is no way to confirm whether something was dropped. Principles are applied again in every tool-related exchange.
-- When a checklist changes, any earlier verdict based on it no longer holds. A change of state and a change of condition are different. The first is handled by re-checking at trigger time; the second requires a new verdict rather than a re-check. The decision record carries which version of the checklist the verdict was made against.
+- When a checklist changes, any earlier verdict based on it no longer holds. A change of state and a change of condition are different. The first is handled by re-checking at trigger time; the second requires a new verdict rather than a re-check. The decision record carries which version of the checklist the verdict was made against. The same goes for the pre-set settings (pre_set_data) used in the verdict. A user changing a setting is a new declaration, and earlier verdicts based on that setting no longer hold.
 
 ### 6.2 Principles
 
@@ -446,24 +451,31 @@ With authority outside the model, decisions and accountability stay with the par
 - Separating the verdict from execution exposes an execution without a verdict as an execution without grounds. It does not expose an execution grounded on a forged decision record.
 - This specification does not define how hooks are implemented. If a hook calls a model to decide, that decision is probabilistic, and the gate does not check what the hook returns.
 
-### 8.3 Conflicts between requests and conditions
+### 8.3 The gap between check and execution
+
+- A gap remains between the measurement at trigger time and the actual execution. The gate does not execute, so it cannot close this gap.
+- The gap has to be closed at execution: the tool handles the condition at the moment it executes (conditional execution), or uses an idempotency key and confirms with a measurement afterwards.
+- If a tool cannot guarantee the condition at execution time, the provider declares that. The user is informed in advance through [Notice], and whether to accept the risk is the adopting system's policy.
+- What the system cannot guarantee is not replaced with user confirmation. The user cannot verify the state at that moment, so the confirmation becomes a click-through (2.2).
+
+### 8.4 Conflicts between requests and conditions
 
 - A user may try to lift a condition the provider prohibits. This specification does not adjudicate that conflict.
 - A provider condition does not accept a user answer as a source, so the user's request does not change the comparison. The condition stays confirmed and unmet (a hold), and who declared what and who requested what is recorded.
 - Whether to allow the request is decided by a regulator's rules or the adopting system's policy. This specification provides the record needed for that decision. When the agreement changes, the changed rule becomes a line in a checklist.
 
-### 8.4 Sub-executions inside a tool
+### 8.5 Sub-executions inside a tool
 
 - A tool may call another tool while it runs and produce a further state change. The gate does not see inside a tool, so it cannot detect this.
 - A tool's implementation detail (a lookup, a computation) and a new independent execution (producing a different state change) have to be told apart, and only the party that built the tool knows which is which.
 - Mitigation — requiring that an independently executable sub-execution pass the same boundary is a contract between the adopting system and the provider. This specification does not enforce it.
 
-### 8.5 The calling layer
+### 8.6 The calling layer
 
 - This specification rests on the calling layer not routing around the gate. If a path exists that calls a tool without passing through it, the verdict does not hold.
 - This is not enforced by code. It is kept by code review and convention in the adopting system.
 
-### 8.6 Alternatives considered
+### 8.7 Alternatives considered
 
 - Putting the checklist in the prompt and receiving JSON back hands the authority to decide what to ask back to the model. If the model is the one judging that a slot is empty, its report that the slot was filled cannot be verified from outside. - This specification requires two things: the checklist lives outside the prompt, and code does the counting.
 
