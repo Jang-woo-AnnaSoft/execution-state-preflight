@@ -360,6 +360,7 @@ The two items below are different in kind. They concern tool selection, so viola
 - Runs that were not executed are recorded too.
 - Which slot failed, and how, is recorded along with it.
 - Records for the same execution unit accumulate under one key. Both instruction time and trigger time must be kept.
+- An agent session starts without memory of earlier runs. A stopped execution continues from the records under its key, not from the model's memory.
 
 Field names and structure are up to the adopting system. The decision record must hold each slot's state, source, and kind; the route each UNKNOWN took; unknown_count; and the unmet items. When no verdict has been made yet, unknown_count is stored as a distinct value, not as 0.
 
