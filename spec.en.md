@@ -14,7 +14,7 @@ Existing work raises model accuracy and validates input arguments with schemas a
 
 | Axis | Existing | This specification |
 | --- | --- | --- |
-| **Who sets the rules** | Nobody, so the model sets them on every call. What to ask and what to skip changes from call to call, and since nothing is kept as a rule, the rules cannot be listed (2.3). | Parties with definition authority (provider, user, adopting system) declare them in external checklists. They change without a deploy, live in a fixed place, and can be listed. |
+| **Who sets the rules** | Nobody, so the model sets them on every call. What to ask and what to skip changes from call to call, and since nothing is kept as a rule, the rules cannot be listed (2.3). | Parties with definition authority (provider, user, adopting system) declare them in external checklists. They change without a deploy, live in a fixed place, and can be listed. Whoever owns a rule changes it as a single line of plain language, not code; developers only maintain the verdict structure (7.2). |
 | **What gets checked** | Arguments only. Structured Outputs and Tools schemas check data type and format; there is no field for conditions or intent (2.5). | Values, conditions (balance, permission), and intent become slots on the same footing. Because the verdict is about the action, conditions need no separate mechanism, and confidence scores are not used (3.3). |
 | **Do missing rules show up** | An undeclared item is missing from the record too, so it looks like an item that never existed rather than one that was missed (2.7). | An item that cannot be checked stays UNKNOWN and routes to definition repair (4.5). The gap is not filled, but the record shows who failed to declare what. |
 | **Is there a reason to trust a filled value** | A looked-up value and an invented one are the same string, so neither the user nor the validator can tell them apart (2.4). | A value filled in by the model does not settle the slot. If every designated source has been looked up and nothing is found, the slot is fixed at UNKNOWN (5.2). |
@@ -191,7 +191,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 
 - The verdict involves no model reasoning and no scoring.
 - An external validator tallies slot states and, when Unknown Count == 0, judges the check complete. A complete check does not mean the requirements are met.
-- The gate runs once per execution unit(1.1).
+- The gate runs once per execution unit (1.1).
 
 ### 3.5 Changing what is computed (whether to execute → unconfirmed slots)
 
@@ -422,7 +422,7 @@ With authority outside the model, decisions and accountability stay with the par
 ### 7.2 What adoption brings
 
 - Conditions become something to verify. A validator that only looked at values now walks the conditions too.
-- Rules become data. A tool provider's conditions, your own rules, and rules from policy bodies, companies or regulators all register as a line in a checklist, change without a deploy, and can be listed in full.
+- Rules become data. A tool provider's conditions, your own rules, and rules from policy bodies, companies or regulators all register as a line in a checklist, change without a deploy, and can be listed in full. Rules are changed by whoever is responsible for them, and developers maintain the verdict structure. A rule declared as a single line of plain language that the gate cannot yet check does not pass: it stays unknown and routes to definition repair (6.3).
 - Adding a tool does not change the execution path. A new tool adds a declaration, not new execution logic.
 - Scaling cost is fixed and independent of model performance. Adding tools and conditions, or swapping the model, leaves the gate code unchanged.
 - Questions don't multiply; they become visible. Values and conditions were always the user's to decide. Only the blanks go back to the user, and items that keep coming up are promoted to pre-set settings.
@@ -478,7 +478,8 @@ With authority outside the model, decisions and accountability stay with the par
 
 ### 8.7 Alternatives considered
 
-- Putting the checklist in the prompt and receiving JSON back hands the authority to decide what to ask back to the model. If the model is the one judging that a slot is empty, its report that the slot was filled cannot be verified from outside. - This specification requires two things: the checklist lives outside the prompt, and code does the counting.
+- Putting the checklist in the prompt and receiving JSON back hands the authority to decide what to ask back to the model. If the model is the one judging that a slot is empty, its report that the slot was filled cannot be verified from outside.
+- This specification requires two things: the checklist lives outside the prompt, and code does the counting.
 
 ---
 
