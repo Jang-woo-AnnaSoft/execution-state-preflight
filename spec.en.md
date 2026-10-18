@@ -356,8 +356,8 @@ The two items below are different in kind. They concern tool selection, so viola
 
 - Build the checklist and count UNKNOWN slots. When Unknown Count == 0, judge the check complete. What is counted is whether checks happened.
 - Compare each confirmed slot with its declared requirement, and record the ones that fall short as unmet. A requirement is the standard the checklist declares on the slot (for a value, whether it is required; for a condition, what prohibits or permits). This covers a confirmed condition that prohibits execution (hold) and a required value confirmed as NULL. Unmet items are not counted. The comparison must be deterministic. A condition that cannot be compared stays UNKNOWN and routes to definition repair.
-- Walk the search order in 5.2, and check that a value actually exists at the location the slot points to.
-- Route each UNKNOWN slot to one of the three routes in 4.5, and record the route taken on that slot in the decision record.
+- Walk the search order in 5.2, and check that a value actually exists at the location the slot points to. If it does not match, that source has not confirmed the slot, and the lookup moves to the next one.
+- Route each UNKNOWN slot to one of the three routes in 4.5, and record the route taken on that slot in the decision record. What the model receives is the list of blanks produced by the ask-the-user route (4.6).
 - Read labels, expand them into slots, and include them in the verdict.
 - Bind each approval to a {slot_id, value} pair, invalidate it when the value changes, and record in the approval record the set of slots that were shown with it.
 - Record the verdict. The gate's output is the decision record.
