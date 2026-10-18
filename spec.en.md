@@ -16,7 +16,7 @@ Existing work raises model accuracy and validates input arguments with schemas a
 | --- | --- | --- |
 | **Who sets the rules** | Nobody, so the model sets them on every call. What to ask and what to skip changes from call to call, and since nothing is kept as a rule, the rules cannot be listed (2.3). | Parties with definition authority (provider, user, adopting system) declare them in external checklists. They change without a deploy, live in a fixed place, and can be listed. Whoever owns a rule changes it as a single line of plain language, not code; developers only maintain the verdict structure (7.2). |
 | **What gets checked** | Arguments only. Structured Outputs and Tools schemas check data type and format; there is no field for conditions or intent (2.5). | Values, conditions (balance, permission), and intent become slots on the same footing. Because the verdict is about the action, conditions need no separate mechanism, and confidence scores are not used (3.3). |
-| **Do missing rules show up** | An undeclared item is missing from the record too, so it looks like an item that never existed rather than one that was missed (2.7). | An item that cannot be checked stays UNKNOWN and routes to definition repair (4.5). The gap is not filled, but the record shows who failed to declare what. |
+| **Do missing rules show up** | An undeclared item is missing from the record too, so it looks like an item that never existed rather than one that was missed (2.7). | An item that cannot be checked stays UNKNOWN and routes to definition repair (4.5). The gap is not filled, but the record shows who failed to declare what. The model may report a condition missing from the checklist, but the report does not affect execution (4.7). |
 | **Is there a reason to trust a filled value** | A looked-up value and an invented one are the same string, so neither the user nor the validator can tell them apart (2.4). | A value filled in by the model does not settle the slot. If every designated source has been looked up and nothing is found, the slot is fixed at UNKNOWN (5.2). |
 | **Who judges that what was filled is everything** | The model hands over a neat, completed form and a person clicks through (2.2). | Counting code does. People receive blanks, not a filled-in form, and only the items only they can answer come back to them (3.5). |
 | **Who decides to execute** | Validation is a branch inside the execution flow, so it can be skipped, and the skip leaves no trace. | The verdict ends in a record. An external executing party reads that record and makes its own decision. No execution path bypasses the record. |
@@ -283,6 +283,12 @@ Items are counted the same way, but resolve differently when unconfirmed. An imp
 - Nothing is asked that does not need asking. Items the system can measure never reach the user (previous section), and a value that came up earlier in the conversation is looked up rather than asked again (5.3, 6.2).
 - The gate stands only in front of irreversible execution (1). Reversible calls such as reads do not go through this at all.
 - This part gets better as models get better. Because the verdict sits outside the model, a gain in capability goes into the quality of the asking rather than into more authority.
+
+### 4.7 Omission reports
+
+- The model can report a condition that isn't in the checklist but seems relevant to this execution. An undeclared condition leaves no trace in the record either (2.7), so the model's reasoning is used to bring that gap to light.
+- A report does not affect execution. It does not create or fill a slot, and it does not enter the verdict.
+- The report goes to whoever declared that checklist, and whether to add it as a rule is theirs to decide.
 
 ---
 
