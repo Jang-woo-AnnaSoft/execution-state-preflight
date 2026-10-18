@@ -10,6 +10,8 @@
 
 ## 0. How this differs from existing approaches
 
+A model cannot be relied on to say "I don't know" or "this failed." Something outside it has to say that instead.
+
 Existing work raises model accuracy and validates input arguments with schemas and hard-coded guardrails. This specification proposes taking back the authority the model has been carrying because no standard existed. What has to be filled in is for the provider to say; filling the blanks that remain is for the user. Without that division, the model took on both. Until now, definition, verdict, and execution all happened in one place: the model. Nothing was recorded. So execution had no grounds.
 
 | Axis | Existing | This specification |
