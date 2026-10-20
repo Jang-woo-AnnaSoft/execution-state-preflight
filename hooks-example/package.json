@@ -1,0 +1,21 @@
+{
+  "name": "repeat-run-experiment",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Repeat-run test for the execution-state-preflight specification (section 6.2)",
+  "main": "runner.js",
+  "scripts": {
+    "check": "node selftest.js && node provider-test.js && node gate-test.js",
+    "selftest": "node selftest.js",
+    "providertest": "node provider-test.js",
+    "gatetest": "node gate-test.js",
+    "models": "node runner.js --check",
+    "smoke": "node runner.js --repeats 1 --arms A,C",
+    "run1": "node runner.js --variant plain",
+    "run2": "node runner.js --variant labelled"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "*"
+  },
+  "license": "SEE LICENSE IN ../LICENSE.md"
+}

@@ -1,0 +1,53 @@
+{
+  "_README": [
+    "Model registry. VERIFY EVERY model string against your own account before spending:",
+    "model ids change, and which ones you can reach depends on your access.",
+    "The runner refuses an id it was not given here, and refuses a key that is not set,",
+    "so a stale entry fails before the first paid call rather than halfway through a run.",
+    "",
+    "provider: \"anthropic\" uses the SDK. \"openai\" speaks the chat-completions shape over",
+    "HTTP and works against any host that serves it, which is how Meta's Llama models are",
+    "reached (Meta publishes no first-party API). Point base_url at whoever serves them.",
+    "",
+    "json_mode applies to the openai shape only and is OFF on purpose. Turning it on for",
+    "some entries makes arm C's locator more reliable for those entries for a reason that",
+    "has nothing to do with the gate. If you enable it, enable it nowhere else or say so.",
+    "",
+    "No sampling parameters are sent to anyone. See the header of providers.js."
+  ],
+
+  "models": {
+    "opus": {
+      "provider": "anthropic",
+      "model": "claude-opus-5-5",
+      "vendor": "Anthropic"
+    },
+    "sonnet": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-5-5",
+      "vendor": "Anthropic"
+    },
+
+    "gpt": {
+      "provider": "openai",
+      "model": "gpt-6-astra",
+      "vendor": "OpenAI",
+      "base_url": "https://api.openai.com/v1",
+      "env_key": "OPENAI_API_KEY",
+      "_verify": "OpenAI's docs recommend GPT-6 Astra for production API use but do not print the id string on that page. Confirm in the model catalog; 'chat-latest' is an alias that moves under you and is a poor choice for a repeat-run experiment."
+    },
+
+    "llama": {
+      "provider": "openai",
+      "model": "llama-3.3-70b-versatile",
+      "vendor": "Meta",
+      "base_url": "https://api.groq.com/openai/v1",
+      "env_key": "GROQ_API_KEY",
+      "_verify": "Served by Groq, not Meta. The newest Llama generation listed there at the time of writing. Confirm tool/function calling is supported for the id you pick: without it, arms A and B cannot run and only arm C is measurable.",
+      "_alternatives": {
+        "together": { "base_url": "https://api.together.xyz/v1", "env_key": "TOGETHER_API_KEY" },
+        "fireworks": { "base_url": "https://api.fireworks.ai/inference/v1", "env_key": "FIREWORKS_API_KEY" }
+      }
+    }
+  }
+}
