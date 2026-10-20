@@ -230,7 +230,7 @@ Every value, condition, and intent item is registered in an external checklist, 
 ### 4.1 Fixed Checklist: settles the execution unit. Applies to every tool call.
 
 - Tool match validity: does this tool actually provide the requested state change?
-- Timing: immediate, at a set time, or when a specific event occurs?
+- Timing: immediate, at a set time, or when a specific event occurs? A time contained in the action is an argument, not a timing. Only a call that is itself postponed is scheduled or conditional.
 - Intent: the purpose of use and the desired state change.
 
 **Role of the fixed checklist: the minimum needed to settle the execution unit. The tool match depends on it, so it comes before the intent in 4.3.**
