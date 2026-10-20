@@ -81,6 +81,8 @@ Which state changes count as execution units is declared by the party that built
 - Systems with a single tool: no tool-matching item in the intent slot.
 - When the same party owns the agent and the tools: the agent's own checklist is still needed, and the per-tool checklist goes where the input schema goes.
 
+There is no reduction rule for the user checklist. The fixed checklist settles the execution unit, and provider conditions only add reasons not to execute; the permitted range is answered here and nowhere else. That question is present in every deployment that executes.
+
 ---
 
 ## 2. Problem definition
