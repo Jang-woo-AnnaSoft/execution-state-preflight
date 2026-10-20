@@ -533,13 +533,36 @@ async function lookupField(h, fieldName, ctx) {
   if (fromInstruction?.[LOOKUP_HOOK_FAILED]) return lookupFailureRecord(fieldName, fromInstruction);
   if (fromInstruction !== undefined) {
     const seg = instruction?.[fromInstruction?.segment_index];
-    // The skeleton checks only the span's shape and bounds. Comparing the span's content against value is the adopting system's job.
     const sp = fromInstruction?.span;
     const spanValid = Array.isArray(sp) && sp.length === 2 &&
       Number.isInteger(sp[0]) && Number.isInteger(sp[1]) &&
       sp[0] >= 0 && sp[0] < sp[1] && sp[1] <= (seg?.text?.length ?? -1);
     if (seg?.trust === "user" && spanValid) {
-      return fresh({ name: fieldName, value: fromInstruction.value, status: "known", source: "instruction" });
+      // The span is the hook's claim about WHERE the value is. The gate checks whether
+      // the value is actually there. Without this, a generated value acquires
+      // source: "instruction" and the record asserts a provenance that does not exist.
+      // The policy knob is WHICH comparison, never WHETHER there is one.
+      const atSpan = seg.text.slice(sp[0], sp[1]);
+      const support = await safeHook(h.spanSupportsValue, [fromInstruction.value, atSpan, fieldName],
+        lookupFailed("instruction"));
+      if (support?.[LOOKUP_HOOK_FAILED]) return lookupFailureRecord(fieldName, support);
+      const supported = support === true || support?.supported === true;
+      if (supported) {
+        return fresh({
+          name: fieldName, value: fromInstruction.value, status: "known", source: "instruction",
+          // WHERE, not just "instruction". A record that names a source without
+          // saying where in it cannot be re-checked by anyone but this gate, so
+          // the auditor would have to take the gate's word — which is the thing
+          // this specification refuses to do for the model.
+          located_at: { segment_index: fromInstruction.segment_index, span: [sp[0], sp[1]] },
+          // A derived match ("tomorrow" → a date) is recorded as derived. The span then
+          // points at supporting text rather than stating the value, and the record says so.
+          ...(support?.derived === true
+            ? { derived: true, note: `derived from instruction text "${atSpan}"` }
+            : {}),
+        });
+      }
+      // The span does not say the value. This source did not settle the slot; the search goes on.
     }
   }
 
@@ -607,13 +630,37 @@ function measureFromEnvironment(fieldName, ctx) {
 //   Found → { value, segment_index, span: [start, end] }  /  not found or extraction failed → undefined
 //   NOTE: undefined moves on to pre_set_data; a throw settles the field unknown. Do not throw for "not found".
 //   segment_index = the segment the value came from. span = the character range within that segment's text (half-open).
-//   A missing or out-of-bounds span is rejected. The skeleton checks shape and bounds only.
+//   A missing or out-of-bounds span is rejected, and the text at the span is compared against value
+//   by spanSupportsValue. A span that does not say the value does not settle the slot.
 //   BREAKS: misreport a trusted segment and the trust check is defeated.
-// POLICY: the comparison method (literal match / compare after normalization) and whether derived values
-//   ("tomorrow" → a date) count as known belong to the adopting system.
-//   BREAKS: with derived values, span points at supporting text rather than proving the value.
 function extractFromInstruction(fieldName, instruction) {
   return undefined;
+}
+
+// [OPTIONAL] Does the text at the span state this as the value FOR THIS SLOT?
+// CONTRACT: true | { supported: true, derived?: boolean } | false. A throw is a lookup failure.
+//
+// Equality is NECESSARY AND NOT SUFFICIENT, and the default only does equality — which is why
+// it is on UNSAFE_DEFAULT_HOOKS. The span proves WHERE the text is, not what role it plays:
+//
+//     "Arrange the pickup. Nothing after 8pm, and public places only."
+//
+// A faithful extractor can return time="8pm" with a correct span. Trusted segment, valid span,
+// the text really does say "8pm" — every check passes, and the gate schedules the pickup AT the
+// limit the user set, at a place called "public places". Worse than a fabricated value: the
+// record is TRUE. An auditor re-verifying it confirms it. The record is true and the execution
+// is wrong. A limit, a negation, an example and a prohibition all carry value-shaped tokens.
+//
+// A sentence that constrains belongs to the user checklist (scope), not to the value lookup.
+// The gate cannot tell them apart from the text alone; this hook must. The default cannot, so
+// a system that relies on it is running without this check — strict mode refuses it.
+// POLICY: an adopting system supplies a role-aware comparator. For a derived value
+//   ("tomorrow" → a date) it returns derived: true, so the record shows the span supported the
+//   value rather than stating it. A bare true for a derived value makes the record claim the
+//   instruction said something it did not.
+function spanSupportsValue(value, textAtSpan) {
+  const norm = s => String(s).toLowerCase().replace(/[.,!?;:'"()\[\]]/g, " ").replace(/\s+/g, " ").trim();
+  return norm(value) === norm(textAtSpan);
 }
 
 // 4-1. User Checklist — same principle as fields. Not verified for non-immediate work (deferred): it would be stale at trigger time.
@@ -649,7 +696,13 @@ async function runPreflight(h, input) {
   }
 }
 
-async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, fixedPreSet, measured_data, priorExecutionState, agentPolicy, userChecklist, userAnswers, checklistAnswers, intent_attempt, tool_attempt }) {
+// NOTE: there is no agentPolicy input. The gate compares declared conditions against the state of the
+//   world at execution time; it does not judge the actor's permission, which belongs to the executing
+//   party or the policy layer. An input the gate accepts but never compares is the exact shape this
+//   specification exists to rule out, so it is absent rather than carried unread.
+//   A policy that must gate execution is declared as a checklist item: it becomes a slot and is
+//   compared like any other.
+async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, fixedPreSet, measured_data, priorExecutionState, userChecklist, userAnswers, checklistAnswers, intent_attempt, tool_attempt }) {
   const checklist = userChecklist ?? [];
 
   // Asks already spent on the Fixed checklist. Absent or malformed = 0.
@@ -804,7 +857,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   // Step 2: Provider Checklist — separate enforceable from advisory
   const advisoryNotes = await h.getAdvisoryNotes(mcpTool);
 
-  const ctx = { userAnswers, checklistAnswers, instruction, preSetData, measured_data, priorExecutionState, agentPolicy,
+  const ctx = { userAnswers, checklistAnswers, instruction, preSetData, measured_data, priorExecutionState,
                 phase,   // The basis for applyFieldPolicy's per-phase judgment
                 fieldSchemas: mcpTool?.inputSchema?.properties ?? {} };
 
@@ -904,10 +957,12 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   // NOTE: passing here is a preliminary decision. requiredFields is a snapshot and may differ at trigger time.
   if (phase === "at_instruction") {
     const unknownNow = fields.filter(f => f.status === "unknown");
-    const blocking = unknownNow.filter(f => f.pending_at_trigger !== true);
-    const pendingCount = unknownNow.length - blocking.length;
+    // Same split as the immediate path: a crashed lookup hook is not a blank the user can fill.
+    const failedNow = unknownNow.filter(f => f.lookup_failed === true);
+    const blocking = unknownNow.filter(f => f.pending_at_trigger !== true && f.lookup_failed !== true);
+    const pendingCount = unknownNow.length - blocking.length - failedNow.length;
 
-    if (blocking.length > 0) {
+    if (blocking.length > 0 || failedNow.length > 0) {
       // Block the scheduling itself (fail-closed). This is the last moment the user is present.
       // POLICY: can be changed to "schedule anyway, flagged unresolved" — a choice that accepts failure at trigger time.
       return {
@@ -920,10 +975,17 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
         gate: {
           unknown_fields: blocking.map(f => ({ name: f.name, note: f.note ?? null })),
           unverified_checklist: [],       // Not performed. Not "all verified" (see count: null above)
+          ...(failedNow.length ? {
+            kind: "lookup_failed",
+            lookup_failed_fields: failedNow.map(f => ({ name: f.name, note: f.note ?? null })),
+          } : {}),
           _diag: { phase, pending_at_trigger: pendingCount, lookup_failures: lookupFailures(fields) },
         },
-        execution_decision: "ask_user",
-        reason: await h.formatReason("ask_user", { unknown_fields: blocking, unverified_checklist: [] }),
+        execution_decision: failedNow.length ? "hold" : "ask_user",
+        reason: failedNow.length
+          ? `hold: lookup hook failed — ${failedNow.map(f => f.name).join(", ")} ` +
+            `(definition/implementation gap; no user answer settles these)`
+          : await h.formatReason("ask_user", { unknown_fields: blocking, unverified_checklist: [] }),
         timestamp: h.now(),
       };
     }
@@ -938,7 +1000,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       gate: null,                         // The gate stands only at trigger time
       execution_decision: "deferred",
       reason: `deferred: c1_when_case is "${fixed.c1_when_case}" — awaiting trigger (pending_at_trigger=${pendingCount})`,
-      deferred_input: await h.buildDeferredInput({ instruction, mcpTool, preSetData, agentPolicy, userChecklist: checklist, userAnswers, checklistAnswers }),
+      deferred_input: await h.buildDeferredInput({ instruction, mcpTool, preSetData, userChecklist: checklist, userAnswers, checklistAnswers }),
       timestamp: h.now(),
     };
   }
@@ -957,8 +1019,14 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   }
 
   // Step 5: tally what is unmet — both fields and checklist. advisory_notes is not tallied.
-  const unknownFields = fields.filter(f => f.status === "unknown");
-  const unknown_count = unknownFields.length;
+  // A field whose lookup hook threw is separated out here. It is unknown, but it is not a blank:
+  // no user answer fixes a hook that crashed, and asking sends the user a question that will come
+  // back identically next run while the one person who can fix it never hears about it.
+  // Per 4.5 this is the definition-repair route, not the user-query route.
+  const allUnknown = fields.filter(f => f.status === "unknown");
+  const failedLookups = allUnknown.filter(f => f.lookup_failed === true);
+  const unknownFields = allUnknown.filter(f => f.lookup_failed !== true);
+  const unknown_count = allUnknown.length;   // total. gate is authoritative for what blocks
   const unverifiedItems = finalUserChecklist.filter(i => i.status !== "verified");
   const unverified_checklist_count = unverifiedItems.length;
 
@@ -971,13 +1039,21 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
 
   // Step 6-a: gate decision. gate is authoritative, reason is a derived rendering.
   // NOTE: no per-Tool risk branching. delete_all_records and list_records pass the same gate.
-  // NOTE: ctx.agentPolicy is read nowhere. Consume it or remove it.
   const gate = {
     unknown_fields: unknownFields.map(f => ({ name: f.name, note: f.note ?? null })),
     unverified_checklist: unverifiedItems.map(i => ({ id: i.id, description: i.description, note: i.note ?? null })),
     _diag: { lookup_failures: lookupFailures([...fields, ...extra_fields]), slot_branch: slotSet.branch ?? null },
   };
-  const valueGateClean = gate.unknown_fields.length === 0 && gate.unverified_checklist.length === 0;
+  // A broken lookup is a hold addressed to whoever owns the hook, and it outranks the question
+  // to the user: with a crashed extractor the other blanks are not known to be blanks either.
+  // kind is set so a consumer can tell "the user didn't say" from "our extractor is broken"
+  // without reading _diag, which is diagnostics and not part of the contract.
+  if (failedLookups.length > 0) {
+    gate.kind = "lookup_failed";
+    gate.lookup_failed_fields = failedLookups.map(f => ({ name: f.name, note: f.note ?? null }));
+  }
+  const valueGateClean = failedLookups.length === 0 &&
+    gate.unknown_fields.length === 0 && gate.unverified_checklist.length === 0;
 
   // Step 6-b: whole-object validation. Run only on an otherwise clean gate — with unknowns outstanding
   //   the object is knowingly incomplete and the violation says nothing.
@@ -992,7 +1068,9 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     gate.payload_violation = payload_violation;
   }
 
-  const execution_decision = !valueGateClean ? "ask_user" : (payload_violation ? "hold" : "execute");
+  const execution_decision = failedLookups.length > 0
+    ? "hold"                                                   // nothing for the user to answer
+    : (!valueGateClean ? "ask_user" : (payload_violation ? "hold" : "execute"));
 
   return {
     fixed, action_key, phase, fields, extra_fields,
@@ -1002,24 +1080,30 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     call_arguments,                  // The exact object executeIfReady sends
     gate,
     execution_decision,
-    reason: payload_violation
-      ? `hold: payload invalid — ${payload_violation}`
-      : await h.formatReason(execution_decision, gate),
+    reason: failedLookups.length > 0
+      ? `hold: lookup hook failed — ${failedLookups.map(f => f.name).join(", ")} ` +
+        `(definition/implementation gap; no user answer settles these)`
+      : payload_violation
+        ? `hold: payload invalid — ${payload_violation}`
+        : await h.formatReason(execution_decision, gate),
     timestamp: h.now(),
   };
 }
 
 // [OPTIONAL] Rendering only. Not part of the gate decision, adds no information.
 function formatReason(execution_decision, gate) {
-  return `${execution_decision}: unknown_fields=${gate?.unknown_fields?.length ?? 0}, unverified_checklist=${gate?.unverified_checklist?.length ?? 0}`;
+  const lf = gate?.lookup_failed_fields?.length ?? 0;
+  return `${execution_decision}: unknown_fields=${gate?.unknown_fields?.length ?? 0}, ` +
+    `unverified_checklist=${gate?.unverified_checklist?.length ?? 0}` +
+    (lf ? `, lookup_failed=${lf}` : "");
 }
 
 // [OPTIONAL] POLICY: preserve = intent at instruction time (instruction/userChecklist/userAnswers).
-//       re-fetch = reality at trigger time (mcpTool schema/preSetData/agentPolicy).
+//       re-fetch = reality at trigger time (mcpTool schema/preSetData).
 //       measured_data and checklistAnswers must not be preserved (stale measurements; conditions are a trigger-time decision).
 // NOTE: preserving is freezing. user_answer is the first source and beats the measurement at trigger time.
 //   Values that go stale should not be asked for — pass them through with pending_at_trigger.
-function buildDeferredInput({ instruction, mcpTool, preSetData, agentPolicy, userChecklist, userAnswers }) {
+function buildDeferredInput({ instruction, mcpTool, preSetData, userChecklist, userAnswers }) {
   return { instruction, userChecklist, userAnswers };
 }
 
@@ -1157,12 +1241,15 @@ const REQUIRED_HOOKS = [
 // Hooks that have a default implementation whose default is "do not verify". Unwired, the gate is weak.
 // NOTE: applyFieldPolicy's default refuses prior_state, but still validates nothing. It stays on this list for that.
 // NOTE: unwired, validatePayload lets a value that fills its slot while violating the schema through.
-const UNSAFE_DEFAULT_HOOKS = ["applyFieldPolicy", "validateFieldSchema", "verifyUserChecklistItem", "validatePayload"];
+// NOTE: spanSupportsValue's default does equality, which its contract says is not sufficient.
+//   Unwired, a limit or a negation containing a value-shaped token settles a slot (see 8.x).
+const UNSAFE_DEFAULT_HOOKS = ["applyFieldPolicy", "validateFieldSchema", "verifyUserChecklistItem",
+                              "validatePayload", "spanSupportsValue"];
 
 const defaultHooks = {
   classifyWhenCase, extractUserActionName, confirmToolNameMatchesIntent,
   getRequiredFields, getCandidateSlots, materializeSlots, getAdvisoryNotes,
-  extractFromInstruction, measureFromEnvironment,
+  extractFromInstruction, spanSupportsValue, measureFromEnvironment,
   applyFieldPolicy, validateFieldSchema, validatePayload, verifyUserChecklistItem,
   formatReason, buildDeferredInput, buildActionKey,
 };
