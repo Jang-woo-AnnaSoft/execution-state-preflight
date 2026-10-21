@@ -1010,12 +1010,43 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
 
   // Step 4: verify the User Checklist (immediate = right before execution, so check now)
   // Hook failure and anything other than verified demote to unverified. The hook cannot erase the id.
+  //
+  // The hook is handed the RESOLVED fields. The most common user item is a limit on a
+  // value ("nothing after 8pm", "public places only"), and comparing one needs the value
+  // the lookup actually settled on — which may have come from any of the five sources.
+  // Without this the hook would have to redo the cascade itself, so such an item was not
+  // implementable at all.
+  const checklistCtx = { ...ctx, fields, extra_fields };
+
+  // A limit cannot be compared while the slot it limits is still UNKNOWN. That is not a
+  // question for the user — they declared the rule; what is missing is the value, and the
+  // value is already in the blank list. So an item waiting on an unknown slot is recorded
+  // and NOT counted, and it becomes evaluable on the next round once the slot is filled.
+  //   The gate verifies the claim rather than trusting it: the item must name a slot, and
+  //   that slot must actually be unknown here. Otherwise "waiting" would be a bypass.
+  const unknownNames = new Set(fields.filter(f => f.status === "unknown").map(f => f.name));
   const finalUserChecklist = [];
   for (const item of checklist) {
-    const out = await safeHook(h.verifyUserChecklistItem, [item, ctx],
+    const targets = Array.isArray(item.constrains) ? item.constrains : [];
+    const waitingOn = targets.filter(n => unknownNames.has(n));
+    if (waitingOn.length > 0) {
+      finalUserChecklist.push({
+        ...item, id: item.id, status: "pending_on_slot", source: null, waiting_on: waitingOn,
+        note: `cannot be compared yet: ${waitingOn.join(", ")} unknown`,
+      });
+      continue;
+    }
+    const out = await safeHook(h.verifyUserChecklistItem, [item, checklistCtx],
       e => ({ status: "unverified", source: null, note: `checklist verification hook failed: ${e?.message ?? String(e)}` }));
-    const verified = out?.status === "verified";
-    finalUserChecklist.push({ ...item, ...(out ?? {}), id: item.id, status: verified ? "verified" : "unverified" });
+    // Three outcomes, not two. "unmet" is a condition that WAS checked and prohibits
+    // execution — the specification's hold. Collapsing it into "unverified" makes the
+    // record say "not checked" about something that was checked and violated, and sends
+    // the user a question they cannot answer: they declared the rule and broke it.
+    //   A source is required for unmet, for the same reason a known value needs one.
+    const st = out?.status === "verified" ? "verified"
+             : (out?.status === "unmet" && out?.source) ? "unmet"
+             : "unverified";
+    finalUserChecklist.push({ ...item, ...(out ?? {}), id: item.id, status: st });
   }
 
   // Step 5: tally what is unmet — both fields and checklist. advisory_notes is not tallied.
@@ -1027,7 +1058,11 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   const failedLookups = allUnknown.filter(f => f.lookup_failed === true);
   const unknownFields = allUnknown.filter(f => f.lookup_failed !== true);
   const unknown_count = allUnknown.length;   // total. gate is authoritative for what blocks
-  const unverifiedItems = finalUserChecklist.filter(i => i.status !== "verified");
+  // Counted: only what was NOT checked. pending_on_slot waits on a blank that is already
+  // counted; unmet was checked and is recorded as unmet, outside the count (spec 6.3).
+  const unverifiedItems = finalUserChecklist.filter(
+    i => i.status !== "verified" && i.status !== "pending_on_slot" && i.status !== "unmet");
+  const unmetItems = finalUserChecklist.filter(i => i.status === "unmet");
   const unverified_checklist_count = unverifiedItems.length;
 
   // Step 6: assemble the call from settled values. Slots are what must be settled, arguments are what
@@ -1052,6 +1087,10 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     gate.kind = "lookup_failed";
     gate.lookup_failed_fields = failedLookups.map(f => ({ name: f.name, note: f.note ?? null }));
   }
+  // A checked condition that prohibits execution is recorded, not asked about.
+  if (unmetItems.length > 0) {
+    gate.unmet = unmetItems.map(i => ({ id: i.id, description: i.description, note: i.note ?? null }));
+  }
   const valueGateClean = failedLookups.length === 0 &&
     gate.unknown_fields.length === 0 && gate.unverified_checklist.length === 0;
 
@@ -1068,9 +1107,15 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     gate.payload_violation = payload_violation;
   }
 
+  if (unmetItems.length > 0 && valueGateClean) {
+    // Everything was checked; a condition the user declared prohibits this execution.
+    gate.kind = "unmet";
+  }
   const execution_decision = failedLookups.length > 0
     ? "hold"                                                   // nothing for the user to answer
-    : (!valueGateClean ? "ask_user" : (payload_violation ? "hold" : "execute"));
+    : (!valueGateClean ? "ask_user"
+      : (unmetItems.length > 0 ? "hold"                        // checked, and prohibited
+        : (payload_violation ? "hold" : "execute")));
 
   return {
     fixed, action_key, phase, fields, extra_fields,
@@ -1080,7 +1125,9 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     call_arguments,                  // The exact object executeIfReady sends
     gate,
     execution_decision,
-    reason: failedLookups.length > 0
+    reason: unmetItems.length > 0 && valueGateClean
+      ? `hold: unmet — ${unmetItems.map(i => `${i.id} (${i.note ?? "prohibited"})`).join("; ")}`
+      : failedLookups.length > 0
       ? `hold: lookup hook failed — ${failedLookups.map(f => f.name).join(", ")} ` +
         `(definition/implementation gap; no user answer settles these)`
       : payload_violation
