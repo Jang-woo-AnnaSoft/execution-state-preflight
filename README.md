@@ -38,6 +38,13 @@ Not a new layer. It is what the verify stage already does to outputs, done to in
 
 A concrete case: an agent is arranging a pickup. The seller never gave a time. The buyer's message says "9pm at my place." The agent is not uncertain — the information is right there — so it does not ask, and it books 9pm. The shape is valid, every required argument is filled, the schema validates.
 
+**This is not hypothetical.** [A reported Meta Muse incident](./case-muse-marketplace.en.md)
+on Facebook Marketplace followed this shape: the buyer proposed an evening window,
+the agent agreed to it, and the seller — who had never stated he was available —
+learned about it fifty minutes after the buyer had left. That write-up maps the
+message log onto the checklists and is explicit about which parts this gate would
+not have caught.
+
 **The input was wrong, and an exit code cannot see that.** The value is plausible, so nothing fails. You find out at delivery, or you don't. Every iteration in between is wasted. Check the inputs first and that loop never starts: one blank goes back to the user, and the answer ends it in one pass.
 
 **The record answers what traceability is for.** Today's records are good at who did it, when, what happened, and whether the checks passed — down to which agent wrote the row. All of it permitted, all of it logged. What they have no field for is where each value came from. So a run that used the buyer's terms and a run that used the seller's are **the same run in the log**. Not a wrong record — no such field.
@@ -103,6 +110,7 @@ This is not a wall in front of your agent. It fills, with a stated source, the b
 | [**The specification**](./spec.en.md) · [ko](./spec.ko.md) | **the standard.** What counts as confirmed, who judges, what is recorded |
 | **The skeleton** (`execution-state-preflight.js`) | hook contracts, the record shape, and where it falls short of the specification — in the source comments, beside the code they describe |
 | [**Hook examples**](./hooks-example/) | six hooks actually written, the traps in each, a conformance test that needs no API key, and a repeat-run experiment |
+| [**A case report**](./case-muse-marketplace.en.md) | a reported incident mapped onto the checklists, including what this would not have caught |
 
 Read in that order if you are deciding whether this is worth doing. Start at the hook examples if you already are.
 
