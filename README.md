@@ -38,14 +38,9 @@ Not a new layer. It is what the verify stage already does to outputs, done to in
 
 A concrete case: an agent is arranging a pickup. The seller never gave a time. The buyer's message says "9pm at my place." The agent is not uncertain — the information is right there — so it does not ask, and it books 9pm. The shape is valid, every required argument is filled, the schema validates.
 
-**This is not hypothetical.** [A reported Meta Muse incident](./case-muse-marketplace.en.md)
-on Facebook Marketplace followed this shape: the buyer proposed an evening window,
-the agent agreed to it, and the seller — who had never stated he was available —
-learned about it fifty minutes after the buyer had left. That write-up maps the
-message log onto the checklists and is explicit about which parts this gate would
-not have caught.
-
 **The input was wrong, and an exit code cannot see that.** The value is plausible, so nothing fails. You find out at delivery, or you don't. Every iteration in between is wasted. Check the inputs first and that loop never starts: one blank goes back to the user, and the answer ends it in one pass.
+
+**That case is not hypothetical.** [A reported Meta Muse incident](./case-muse-marketplace.en.md) on Facebook Marketplace took this shape: the buyer proposed an evening window, the agent agreed to it in the seller's name, and the seller — who had never said he was available — heard about it fifty minutes after the buyer had come and gone. That write-up maps the reported message log onto the three checklists, and is explicit about which parts of it this gate would **not** have caught.
 
 **The record answers what traceability is for.** Today's records are good at who did it, when, what happened, and whether the checks passed — down to which agent wrote the row. All of it permitted, all of it logged. What they have no field for is where each value came from. So a run that used the buyer's terms and a run that used the seller's are **the same run in the log**. Not a wrong record — no such field.
 
