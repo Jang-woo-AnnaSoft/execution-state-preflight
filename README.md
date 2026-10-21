@@ -133,7 +133,9 @@ The rules an action needs, split by who defines them. This split is the whole de
 
 **Provider** — required fields, types, pre-execution checks, prohibited conditions. Per tool. Splits again on enforceability: `inputSchema.required` can be gated; `description` is prose and cannot be, so it is recorded as advisory and handed to the model as context.
 
-**User** — intent, context, execution limits, pre-execution checks, preferences. Changes with the user's environment rather than with the tool.
+**User** — intent, context, execution limits, pre-execution checks, preferences. Changes with the user's environment rather than with the tool. **This is the one with no reduction rule** (spec 1.2): the fixed checklist settles what the action is and provider conditions add reasons not to run it, so the permitted range is answered here and nowhere else.
+
+A limit is not a value. "Nothing after 8pm" contains a time and settles none — it constrains the `time` slot rather than filling it. So a user item names the slot it constrains, and while that slot is still unknown the item is recorded as pending rather than asked about: the user declared the rule, and what is missing is the value, which is already in the blank list.
 
 Who defines an item and what can resolve it are different questions. A provider declares that the balance must be sufficient; a system measurement resolves whether it is.
 
@@ -254,7 +256,7 @@ The two gates split cleanly — they share only `fixed`, `action_key`, and `phas
 - **Flat arguments assumed.** Nested schemas and key-mapping tools need an adapter.
 - **Verdict and execution are not separated here, and that is on purpose.** The specification requires the gate to record slot states, routes and counts while the executing party decides for itself and writes its own record (3.5). This skeleton writes `execution_decision` into the gate's own record and `executeIfReady` follows it, so the example runs end to end in one process. **That is for demonstration, not a design to copy.** A conforming system loads the record by `action_key` and phase, and decides separately.
 
-The skeleton differs from the specification in a few other places too — the missing `null` state, the routes for unresolved items. Each gap is marked in the source beside the code it affects. **The specification is the standard; the skeleton is not being revised to meet it.**
+The skeleton differs from the specification in one other place — it has no `null` state, so a confirmed absence cannot be told from a lookup that never finished. The gap is marked in the source beside the code it affects. **The specification is the standard; the skeleton is not being revised to meet it.**
 
 ---
 
