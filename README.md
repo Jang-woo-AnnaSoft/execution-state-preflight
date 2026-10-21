@@ -83,7 +83,9 @@ This takes back the authority the model has been filling in because nobody decla
 
 ## What this repo is
 
-A verification layer that runs before an MCP tool call.
+A verification layer that runs before a tool call — any tool. MCP is the easy case to point at, because the boundary between the agent and the tool is written down as a protocol. The same boundary exists in a function call, an internal API, a shell command, or a job you enqueue. It is just not written down.
+
+**If you build the agent and the tool together, you are still the tool provider.** Sharing an owner removes the protocol, not the role. The conditions that say when this tool must not run still have to be declared somewhere — they go where the input schema would go. The failure mode of same-ownership is not that the declaration lands in the wrong place; it is that **nobody plays the provider role at all**, and the conditions are never written down.
 
 Three checklists say what has to be true before a call goes out. Two gates check them and write a verdict. Neither gate produces a value or a justification, and neither one executes or blocks — they look things up and record what they found.
 
@@ -229,7 +231,9 @@ Hooks are the work, and they are where it is easiest to go wrong. [**Hook exampl
 
 Apply this only to irreversible actions. Not everything has to be in place.
 
-Not every deployment needs all three checklists. Immediate execution only, a single tool, no user conditions to check — take the part that matches. If the agent and the tool have the same owner, the per-tool checklist goes where the MCP input schema would go.
+Not every deployment needs all three checklists. Immediate execution only, a single tool, no user conditions to check — take the part that matches.
+
+If the agent and the tool have the same owner, the per-tool checklist goes where the input schema would go — in an MCP server that is `inputSchema`, and in a plain function it is wherever that function's contract lives. You still write it. One team on both sides is the case where it is easiest to skip, and skipping it is how the conditions end up in a prompt.
 
 Gate 1 is often better handled as a principle given to the model than as code here. Asking the user is handled by built-in functionality in most agent frameworks now.
 
@@ -253,15 +257,17 @@ The skeleton differs from the specification in a few other places too — the mi
 
 ## Why this exists
 
-MCP's input schema defines the shape of the values a tool needs. It does not say why a value is needed, who asked for the execution, or whether the execution is allowed right now. That is not an MCP problem — it shows up anywhere natural language turns into execution. MCP is just easy to point at, because the boundary is written down as a protocol. When one owner has both sides, the boundary is invisible and the rules end up scattered across prompts and code.
+A tool's input schema defines the shape of the values it needs. It does not say why a value is needed, who asked for the execution, or whether the execution is allowed right now. MCP makes this easy to see, because there the schema is a protocol you can read — but the gap is not MCP's. It shows up anywhere natural language turns into execution: a function call, an internal API, a queued job. When one owner has both sides, the boundary is invisible and the rules end up scattered across prompts and code.
 
 The first version of the argument was posted [If unsure, ask. Never guess. — AI Agent Pre-Execution Checklist](https://discuss.huggingface.co/t/if-unsure-ask-never-guess-ai-agent-pre-execution-checklist/176632).
 
 ---
 
-## A proposal for MCP
+## A proposal for tool providers (and for MCP)
 
 The provider checklist can carry *how* each condition gets checked, not just what it is. If tool providers put that check method into the input schema, the rules currently sitting in `description` as prose become conditions you can actually evaluate before running, instead of hints the model may or may not honor.
+
+MCP is where this would travel furthest, because the schema crosses an owner boundary and a declaration there reaches every client. But the same move is available to anyone who owns a tool, protocol or not: write the condition and its check method next to the signature, not in the prompt.
 
 Contact: [hello@anna.software](mailto:hello@anna.software)
 
