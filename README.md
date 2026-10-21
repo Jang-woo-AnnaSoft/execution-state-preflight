@@ -6,19 +6,21 @@ Check where an agent's input values came from before the tool call, and write it
 
 ## Where this sits
 
-If you are already running an agent loop, this is one addition to it, not a replacement.
+If you are already running an agent loop under a governance framework, this is one addition to both — not a replacement for either, and not an alternative to governance.
 
-Loop engineering — orient, act, verify, record, repeat — has settled on three things:
+**Governance** settles **who may act, and under what process.** Risk tiering, approval paths, access control, audit logging, model risk policy. It is the layer that says this application is high-risk, that a person signs off here, that activity must be logged for traceability.
+
+**Loop engineering** settles **whether the work came out right.** Orient, act, verify, record, repeat. Three things are agreed:
 
 - **Whoever wrote it does not grade it.** The maker and the checker are separated.
 - **Done is an exit code, not a claim.** A completion condition written as prose is not a condition.
 - **The record is append-only, and when a check did not run, that is recorded too.**
 
-All three are rules about **what the model produced**. They check the artifact, prove its completion in code, and record the verdict on it.
+Governance is about the actor and the process. Loop engineering is about the output. **Neither is about the inputs.**
 
-The start is not treated that way. The loop never asks which values it started from.
+Governance confirms the actor was permitted. Loop engineering proves the artifact passed. Neither asks which values the execution started from.
 
-> **The end is proven. The start is declared.**
+> **The actor is authorized. The output is proven. The start is declared.**
 
 ### The addition
 
@@ -38,10 +40,17 @@ A concrete case: an agent is arranging a pickup. The seller never gave a time. T
 
 **The input was wrong, and an exit code cannot see that.** The value is plausible, so nothing fails. You find out at delivery, or you don't. Every iteration in between is wasted. Check the inputs first and that loop never starts: one blank goes back to the user, and the answer ends it in one pass.
 
-**The record answers both ends.** Today's records are good at who did it, when, what happened, and whether the checks passed — down to which agent wrote the row. What they have no field for is where each value came from. So a run that used the buyer's terms and a run that used the seller's are **the same run in the log**. Not a wrong record — no such field.
+**The record answers what traceability is for.** Today's records are good at who did it, when, what happened, and whether the checks passed — down to which agent wrote the row. All of it permitted, all of it logged. What they have no field for is where each value came from. So a run that used the buyer's terms and a run that used the seller's are **the same run in the log**. Not a wrong record — no such field.
+
+That matters most where a governance framework already requires traceability, because the question an audit asks is not whether the call was permitted:
+
+> **Permission answers "was this allowed?" Provenance answers "was this asked for?"**
+
+An access log answers the first. Nothing in the current stack answers the second, and the gap is where insider risk sits — inside what was permitted.
 
 | | now | with this |
 |---|---|---|
+| **who** was allowed to act | identity, permission, access control | unchanged |
 | on what grounds it **ended** | exit code | unchanged |
 | on what grounds it **started** | — | a declared source per value |
 
@@ -196,6 +205,11 @@ const state = await preflight.runPreflightAndRecord({
 });
 
 // Decide on the allow condition, never on a count.
+//
+// NOTE: this branch is NOT the separation the specification asks for (3.5). A conforming
+// executor loads the record by action_key + phase and decides for itself; under the
+// specification nothing executes from the gate's own record. It is wired this way here only
+// so the example runs end to end. Do not carry this line into a real system.
 if (state.execution_decision === "execute") {
   await preflight.executeIfReady(state, mcpTool, callMcpTool);
 } else {
@@ -231,8 +245,9 @@ The two gates split cleanly — they share only `fixed`, `action_key`, and `phas
 - **No per-tool risk weighting.** `delete_all_records` and `list_records` pass the same gate.
 - **No locking.** Concurrent preflight and execution on the same `action_key` is the caller's problem.
 - **Flat arguments assumed.** Nested schemas and key-mapping tools need an adapter.
+- **Verdict and execution are not separated here, and that is on purpose.** The specification requires the gate to record slot states, routes and counts while the executing party decides for itself and writes its own record (3.5). This skeleton writes `execution_decision` into the gate's own record and `executeIfReady` follows it, so the example runs end to end in one process. **That is for demonstration, not a design to copy.** A conforming system loads the record by `action_key` and phase, and decides separately.
 
-The skeleton also differs from the specification in several places — the verdict living in the gate's own record, the missing `null` state, routes for unresolved items. Each gap is marked in the source beside the code it affects. **The specification is the standard; the skeleton is not being revised to meet it.**
+The skeleton differs from the specification in a few other places too — the missing `null` state, the routes for unresolved items. Each gap is marked in the source beside the code it affects. **The specification is the standard; the skeleton is not being revised to meet it.**
 
 ---
 
