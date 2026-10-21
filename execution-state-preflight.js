@@ -1192,6 +1192,20 @@ async function getPriorExecutionState(h, actionKey) {
 //   one: where the agent binds a request to a server and tool, and how long that binding survives
 //   re-entry (tool_reselected_by_user) and the deferred wait.
 // POLICY: if decision and execution cross a trust boundary, signing/TTL/nonce belong to the adopting system.
+// [DEMONSTRATION ONLY — this function is where the skeleton departs from the specification]
+//
+// The specification separates verdict from execution (3.5): the gate records slot states, the
+// routes taken, the count and the unmet items, and then the EXECUTING PARTY loads that record
+// by action_key + phase, decides for itself, and writes its own record. Nothing executes from
+// the gate's own record.
+//
+// This skeleton instead writes `execution_decision` into the gate's record and this function
+// follows it. That is not the separation; it is a convenience so a single-process example runs
+// end to end. The branch `if (decision === "execute") executeIfReady(...)` reproduces inside one
+// call stack exactly what the specification asks to be two parties.
+//   BREAKS: carried into a real system, the thing that decided is the thing that executed, and
+//     the record cannot show that anyone else agreed. Load the record on the executing side.
+// POLICY: a conforming adopter deletes this function and reads the persisted record instead.
 async function executeIfReady(h, executionState, mcpTool, callMcpTool) {
   if (executionState.execution_decision !== "execute") {
     // ask_user: inject answers as userAnswers/checklistAnswers and re-run (the question text comes from gate).
