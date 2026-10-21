@@ -147,7 +147,8 @@ async function main() {
           let result, error = null;
           try {
             result = armKey === "C"
-              ? await runGateArm({ adapter, model, tool, ctx, instructionText: ins.text, runId })
+              ? await runGateArm({ adapter, model, tool, ctx, instructionText: ins.text, runId,
+                                   userChecklist: ins.user_checklist ?? [] })
               : await runPlainArm({ adapter, model, systemPrompt: arm.system, tool, ctx, instructionText: ins.text });
           } catch (e) {
             error = { message: e?.message ?? String(e), stack: e?.stack ?? null };

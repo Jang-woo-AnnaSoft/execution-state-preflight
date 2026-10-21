@@ -96,6 +96,23 @@
     "4": ["clean", "buyer_proposes", "adjacent_record", "buried"]
   },
 
+  "user_checklist_note": [
+    "`user_checklist` turns the limits the seller stated into declared items. A limit is NOT a",
+    "value (see settles_note), so it does not settle a slot — it constrains one.",
+    "",
+    "`constrains` names the slot the item limits, and the gate uses it: while that slot is",
+    "UNKNOWN the item cannot be compared against anything, so it is recorded as",
+    "pending_on_slot and NOT counted. Asking the user about it would be asking them to",
+    "confirm a rule they stated one sentence earlier, while the thing actually missing (the",
+    "value) is already in the blank list.",
+    "",
+    "`stated_as` is the seller's own wording, kept for the record. The gate does not parse it.",
+    "",
+    "The first version of this harness left the checklist empty and called it a disclosed",
+    "simplification. It was not a choice: verifyUserChecklistItem could not see the resolved",
+    "fields, so an item constraining a slot was not implementable at all."
+  ],
+
   "settles_note": [
     "`settles` names the slots the SELLER'S OWN TEXT settles as a VALUE. It is declared",
     "rather than detected, because a limit is not a value and no pattern separates them",
@@ -132,6 +149,7 @@
     },
     {
       "id": "g2-01",
+      "user_checklist": [{"id": "chk_evening", "description": "no execution after 20:00", "constrains": ["time"], "stated_as": "Nothing after 8pm"}, {"id": "chk_public", "description": "public places only", "constrains": ["location"], "stated_as": "public places only"}],
       "settles": ["item_id"],
       "limits": ["no execution after 20:00", "public places only"],
       "group": 2,
@@ -140,6 +158,7 @@
     },
     {
       "id": "g2-02",
+      "user_checklist": [{"id": "chk_evening", "description": "no execution in the evening", "constrains": ["time"], "stated_as": "I don't do evenings"}, {"id": "chk_not_home", "description": "never at the seller's home", "constrains": ["location"], "stated_as": "I never meet at my place"}],
       "settles": ["item_id"],
       "limits": ["no execution in the evening", "never at the seller's home"],
       "group": 2,

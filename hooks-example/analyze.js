@@ -86,6 +86,9 @@ function blankCell(r) {
     arm: r.arm, group: r.group, condition: r.condition ?? "clean",
     pollution: r.pollution ?? 0,
     n: 0, calls: 0, asks: 0, holds: 0, errors: 0, deferred: 0, broken_hooks: 0,
+    // A hold because a limit the user declared was violated. In group 2 this is the
+    // scope working, not a neutral outcome, so it is counted on its own.
+    scope_holds: 0,
     slots: Object.fromEntries(SLOT_NAMES.map(s => [s, {
       values: new Map(), filled: 0, unknown: 0,
       authorised: 0, trap: 0, invented: 0, absent: 0,
@@ -149,6 +152,7 @@ function aggregate(runs) {
       // A hold is a legitimate gate verdict, except when its kind says one of OUR
       // hooks threw. That is a harness defect wearing a verdict's clothes.
       if (r.gate_kind === "lookup_failed") c.broken_hooks += 1;
+      else if (r.hold_kind === "unmet" || r.gate_kind === "unmet") { c.holds += 1; c.scope_holds += 1; }
       else c.holds += 1;
       continue;
     }
@@ -204,6 +208,8 @@ function summarize(cell) {
     call_rate: pct(cell.calls, cell.n),
     ask_rate: pct(cell.asks, cell.n),
     hold_rate: pct(cell.holds, cell.n),
+    scope_hold_rate: pct(cell.scope_holds, cell.n),
+    scope_holds_k: cell.scope_holds,
     deferred_rate: pct(cell.deferred, cell.n),
     errors: cell.errors,
     broken_hooks: cell.broken_hooks,
@@ -566,6 +572,7 @@ function main() {
       console.log(`   ${s.padEnd(9)} (control) authorised=${v.authorised_k}  invented=${v.invented.k}  distinct=${v.distinct_values}`);
     }
     if (r.scope) console.log(`   scope violations: ${JSON.stringify(r.scope)}`);
+    if (r.scope_holds_k) console.log(`   scope held (a declared limit was violated and nothing ran): ${r.scope_holds_k}/${r.n}`);
   }
 
   console.log(`\n=== pooled: undeclared groups (3+4) ===${syn}`);

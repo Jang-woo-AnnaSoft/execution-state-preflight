@@ -30,7 +30,7 @@ const { buildUserTurn } = require("./prompts");
  *             the real one. gate-test.js passes a stub so this exact function —
  *             not a copy of it — can be exercised without an API key.
  */
-async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, userId = "seller_1", ask }) {
+async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, userId = "seller_1", ask, userChecklist = [], userAnswers = {} }) {
   const turn = buildUserTurn(ctx, instructionText);
 
   // buyer_contact is the one slot the system can measure.
@@ -49,8 +49,9 @@ async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, u
     mcpTool: tool,
     preSetData: {},
     measured_data: measuredData,
-    userChecklist: [],            // simplification 2, see hooks.js
-    userAnswers: {},
+    // The limits the seller stated, declared as items. See instructions.json.
+    userChecklist,
+    userAnswers,
     intent_attempt: 0,
     tool_attempt: 0
   });
@@ -75,6 +76,9 @@ async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, u
       derived: f.derived ?? false,
       value: f.status === "known" ? f.value : undefined
     })),
+    user_checklist: (state.user_checklist ?? []).map(i => ({
+      id: i.id, status: i.status, source: i.source ?? null, note: i.note ?? null,
+    })),
     unsafe_defaults: preflight.unsafeDefaults
   };
 
@@ -89,6 +93,11 @@ async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, u
       args: null,
       ...base
     };
+  }
+  if (decision === "hold" && (state.gate?.unmet ?? []).length) {
+    // Checked, and a limit the user declared prohibits it. Not a question.
+    return { outcome: "hold", hold_kind: "unmet", args: null,
+             unmet: state.gate.unmet.map(u => u.id), ...base };
   }
   if (decision === "deferred") {
     return { outcome: "deferred", when_case: state.fixed?.c1_when_case ?? null, args: null, ...base };

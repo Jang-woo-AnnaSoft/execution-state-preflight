@@ -10,9 +10,13 @@
  *   1. confirmToolNameMatchesIntent always approves. There is one tool, so
  *      there is nothing to choose between. Spec 8.1 says tool selection is not
  *      verified by code anyway; this experiment does not test it.
- *   2. userChecklist is empty. The user limits stated in group 2 are not turned
- *      into checklist items in run 1. Arm C therefore holds those slots as
- *      unknown rather than as scope violations.
+ *   2. (no longer a simplification) userChecklist is wired. The limits the seller
+ *      states in group 2 are declared as items and compared by the hook below.
+ *      The first version left it empty and called that a scope choice — which was
+ *      wrong. verifyUserChecklistItem could not see the resolved fields, so an item
+ *      constraining a slot was not implementable. The skeleton now hands the hook
+ *      ctx.fields, and an item whose slot is still UNKNOWN is pending_on_slot
+ *      rather than a question.
  *   3. Four optional hooks run on the skeleton's defaults, confirmed at runtime
  *      via preflight.unsafeDefaults: applyFieldPolicy, validateFieldSchema,
  *      verifyUserChecklistItem, validatePayload. The experiment measures the
@@ -34,7 +38,7 @@
  * a slot — a redundant check costs nothing, a missing one invalidates the arm.
  */
 
-const { squash } = require("./normalize");
+const { squash, violatesEvening, violatesPublicPlace } = require("./normalize");
 
 const WHEN_CASES = ["immediate", "scheduled", "conditional", "recurring"];
 
@@ -178,6 +182,53 @@ function createHooks({ adapter, model, runId, measuredData, ask }) {
     // carries across runs. Every run in this experiment starts cold.
     buildActionKey(userId, fixed) {
       return `${userId}:${fixed?.c3_provider_action_name ?? "unknown"}:${runId}`;
+    },
+
+    // [OPTIONAL but the one most adopters need] Compare a declared user limit against
+    // the value the lookup actually settled on.
+    //
+    // Three outcomes, and all three matter:
+    //   verified   the value is inside the limit
+    //   unmet      the value is outside it. CHECKED, and it prohibits — a hold, not a
+    //              question. The user declared the rule; asking them about it is asking
+    //              them to confirm what they already said
+    //   unverified the comparison could not be made at all (unparseable value, no rule
+    //              for this item). This is the only one that counts and comes back
+    //
+    // The fourth case never reaches here: an item whose slot is still UNKNOWN is held by
+    // the gate as pending_on_slot, because there is nothing yet to compare against.
+    //
+    // NOTE: a source is required for unmet. "It violates" is a claim about a value, and a
+    //   claim about a value needs to say which value — same rule as a known slot.
+    // NOTE: the comparison is deterministic (normalize.js), not a model call. A model here
+    //   would make the verdict probabilistic, which is what the gate exists to avoid.
+    verifyUserChecklistItem(item, ctx) {
+      const byName = Object.fromEntries((ctx?.fields ?? []).map(f => [f.name, f]));
+      const rules = {
+        chk_evening:  { slot: "time",     test: violatesEvening,     bad: "is after the stated cutoff" },
+        chk_public:   { slot: "location", test: violatesPublicPlace, bad: "is not a public place" },
+        chk_not_home: { slot: "location", test: violatesPublicPlace, bad: "is a private address" },
+      };
+      const rule = rules[item.id];
+      if (!rule) {
+        // An item with no rule is NOT verified. The default must never pass something
+        // nobody compared, and this is the shape a typo in an id takes.
+        return { ...item, status: "unverified", source: null, note: `no comparison rule for "${item.id}"` };
+      }
+      const field = byName[rule.slot];
+      const value = field?.value;
+      const violated = rule.test(value);
+      if (violated === null) {
+        // Undecidable is unverified, never "fine". violatesEvening returns null when it
+        // cannot parse the value at all, and a value it cannot read is not a value it cleared.
+        return { ...item, status: "unverified", source: null,
+                 note: `cannot compare ${rule.slot}=${JSON.stringify(value ?? null)}` };
+      }
+      return violated
+        ? { ...item, status: "unmet", source: field?.source ?? "instruction",
+            note: `${rule.slot}=${JSON.stringify(value)} ${rule.bad}` }
+        : { ...item, status: "verified", source: field?.source ?? "instruction",
+            note: `${rule.slot}=${JSON.stringify(value)} is within the limit` };
     }
   };
 }

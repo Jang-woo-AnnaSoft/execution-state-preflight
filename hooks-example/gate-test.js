@@ -18,6 +18,8 @@
  *                                      → the slot must NOT become known
  */
 
+const fs = require("fs");
+const path = require("path");
 const { runGateArm } = require("./arm-gate");
 const { buildTool } = require("./tool");
 const { buildUserTurn } = require("./prompts");
@@ -84,6 +86,8 @@ async function runCase(name, instructionText, plan) {
     ctx,
     instructionText,
     runId: name,
+    userChecklist: plan.userChecklist ?? [],
+    userAnswers: plan.userAnswers ?? {},
     ask: makeStub({ ...plan, extraction: plan.buildExtraction(turn.segments) })
   });
   const byName = Object.fromEntries((result.fields ?? []).map(f => [f.name, f]));
@@ -210,6 +214,73 @@ async function main() {
     });
     check("misclassified → deferred, not execute", result.decision, "deferred");
     check("and arm C reports it as its own outcome", result.outcome, "deferred");
+  }
+
+  console.log("\n--- case 7: a user limit, across the three rounds it actually takes ---");
+  {
+    // A limit is not a value. The seller said what must NOT happen and named no time or
+    // place, so the slots are unknown AND two rules are outstanding. Each round below is
+    // a verdict an adopter's hook has to produce; getting any of them wrong is visible
+    // to the user as a question they should never have been asked.
+    const spec = JSON.parse(fs.readFileSync(path.join(__dirname, "instructions.json"), "utf8"));
+    const ins = spec.instructions.find(i => i.id === "g2-01");
+    const checklist = ins.user_checklist;
+    const locate_id = segs => ({
+      item_id: locate(segs, "LST-2291"),
+      time: { found: false }, location: { found: false }, buyer_contact: { found: false },
+    });
+
+    // Round 1 — limits stated, values missing. The rules cannot be compared against
+    // anything yet, so they must NOT be counted and must NOT be asked about.
+    {
+      const { result } = await runCase("c7a", ins.text, {
+        userChecklist: checklist, buildExtraction: locate_id });
+      const byId = Object.fromEntries(result.user_checklist.map(i => [i.id, i.status]));
+      check("r1 decision", result.decision, "ask_user");
+      check("r1 asks for the values", (result.blanks ?? []).sort().join(","), "location,time");
+      check("r1 evening rule pends", byId.chk_evening, "pending_on_slot");
+      check("r1 public rule pends", byId.chk_public, "pending_on_slot");
+      check("r1 asks about NO rule", result.unverified_checklist_count ?? 0, 0);
+    }
+
+    // Round 2 — the user answers inside the limits. Everything compares and it runs.
+    {
+      const { result } = await runCase("c7b", ins.text, {
+        userChecklist: checklist, buildExtraction: locate_id,
+        userAnswers: { time: "Saturday 2pm", location: "Hongdae station lockers" } });
+      const byId = Object.fromEntries(result.user_checklist.map(i => [i.id, i.status]));
+      check("r2 decision", result.decision, "execute");
+      check("r2 evening verified", byId.chk_evening, "verified");
+      check("r2 public verified", byId.chk_public, "verified");
+      check("r2 source recorded", result.user_checklist[0].source, "user_answer");
+    }
+
+    // Round 3 — the user answers OUTSIDE their own limits. Checked, and prohibited.
+    // This must be a hold. Reported as unverified it would read as "not checked", and
+    // the user would be asked to confirm a rule they declared and then broke.
+    {
+      const { result } = await runCase("c7c", ins.text, {
+        userChecklist: checklist, buildExtraction: locate_id,
+        userAnswers: { time: "Saturday 9pm", location: "my place" } });
+      const byId = Object.fromEntries(result.user_checklist.map(i => [i.id, i.status]));
+      check("r3 decision", result.decision, "hold");
+      check("r3 is an unmet hold", result.hold_kind, "unmet");
+      check("r3 evening unmet", byId.chk_evening, "unmet");
+      check("r3 public unmet", byId.chk_public, "unmet");
+      check("r3 asks nothing", result.unverified_checklist_count ?? 0, 0);
+      check("r3 unmet is on the record", (result.unmet ?? []).sort().join(","), "chk_evening,chk_public");
+    }
+
+    // An item nobody wrote a rule for must not pass. A typo in an id looks like this.
+    {
+      const { result } = await runCase("c7d", ins.text, {
+        userChecklist: [{ id: "chk_typo", description: "whatever", constrains: [] }],
+        buildExtraction: locate_id,
+        userAnswers: { time: "Saturday 2pm", location: "Hongdae station lockers" } });
+      const byId = Object.fromEntries(result.user_checklist.map(i => [i.id, i.status]));
+      check("unknown item is not verified", byId.chk_typo, "unverified");
+      check("and it blocks", result.decision, "ask_user");
+    }
   }
 
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
