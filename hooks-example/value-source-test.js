@@ -69,22 +69,23 @@ const PROVIDER_CONDITIONS = [
     constrains: [SLOT] },
 ];
 
-// ── Storage. The signature the skeleton calls: persist(key, record), load(key). ───
-// The load side filters to executed records, which is the port's contract: 5.2 inherits only from an
-// execution the record confirms happened, and the skeleton does not enforce that here (see part 5).
+// ── Storage. THE EXAMPLE'S OWN ADAPTER, wrapped only to count the calls. ─────────
+// Not a local reimplementation. hooks.js is the file an adopter copies, and its adapter was broken
+// for a while — persist took the record without the key, so every write landed under one bucket and
+// load always returned null, leaving prior_state permanently dead. Every suite stayed green, because
+// each test brought an adapter of its own and none of them read a record back.
+//   So this wraps hooks.createStorage rather than replacing it. If its signature drifts again, part 4
+//   fails here instead of passing against a copy that happens to be correct.
+const { createStorage: exampleStorage } = require("./hooks");
+
 function createStorage() {
-  const m = new Map();
+  const inner = exampleStorage();
   let loads = 0;
   return {
-    async persist(key, record) { const a = m.get(key) ?? []; a.push(record); m.set(key, a); },
-    async load(key) {
-      loads += 1;
-      const a = m.get(key) ?? [];
-      for (let i = a.length - 1; i >= 0; i--) if (a[i].execution_decision === "executed") return a[i];
-      return null;
-    },
+    persist: (key, record) => inner.persist(key, record),
+    load: (key) => { loads += 1; return inner.load(key); },
     _loads: () => loads,
-    _all: key => (m.get(key) ?? []),
+    _dump: () => inner.dump(),
   };
 }
 

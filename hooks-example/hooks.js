@@ -233,20 +233,46 @@ function createHooks({ adapter, model, runId, measuredData, ask }) {
   };
 }
 
-/** In-memory storage. Each run gets its own. */
+/**
+ * In-memory storage. Each run gets its own.
+ *
+ * CONTRACT: the skeleton calls `persist(key, record)` and `load(key)` — two arguments
+ * on the write. The first version of this file took `persist(record)` and derived the
+ * key from `record.action_key`, so every write landed under "UNKEYED" with the KEY
+ * STRING as the value, and `load` always returned null.
+ *
+ * It passed every suite. gate-test.js never read storage back, and the experiment
+ * builds a unique action_key per run so prior_state was never expected to find
+ * anything. A dead source is indistinguishable from an empty one: the lookup simply
+ * moves to the next source, which is fail-closed and therefore silent.
+ *
+ * An adopter who copied it would have prior_state permanently dead and no way to tell.
+ *
+ * value-source-test.js part 4 wraps THIS adapter and runs the round trip through it, so the
+ * signature is now checked by something. Each test writing its own adapter is how the bug above
+ * survived: the suites were green and the file an adopter copies was the broken one.
+ */
 function createStorage() {
   const m = new Map();
   return {
-    async persist(record) {
-      const k = record?.action_key ?? "UNKEYED";
+    async persist(key, record) {
+      const k = key ?? record?.action_key ?? "UNKEYED";
       const arr = m.get(k) ?? [];
       arr.push(record);
       m.set(k, arr);
       return record;
     },
-    async load(actionKey) {
-      const arr = m.get(actionKey) ?? [];
-      return arr.length ? arr[arr.length - 1] : null;
+    // CONTRACT: the most recent EXECUTED record, and nothing else. Spec 5.2 inherits a value only
+    // from an execution the record confirms happened, so a hold or a deferred record is not a
+    // baseline. Returning the last record of any kind hands one back — and while the skeleton
+    // checks execution_decision at the prior_state source and would ignore it, an adapter that
+    // relies on being double-checked downstream is not the adapter to copy.
+    async load(key) {
+      const arr = m.get(key) ?? [];
+      for (let i = arr.length - 1; i >= 0; i--) {
+        if (arr[i]?.execution_decision === "executed") return arr[i];
+      }
+      return null;
     },
     dump() {
       return Object.fromEntries(m);
