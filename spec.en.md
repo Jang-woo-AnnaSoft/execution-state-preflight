@@ -243,7 +243,9 @@ Every value, condition, and intent item is registered in an external checklist, 
 - Conditions that prohibit or permit execution: ownership, access permission, checks before execution or termination, safety, permitted execution modes (whether split execution is allowed, and so on).
 - Declaration of the state change that execution causes.
 
-**Role of the provider checklist: declares the conditions under which this tool must not run. The declaring party is whoever built the tool, and that role does not disappear when the agent and the tool are built by the same side. What disappears is the protocol; the failure mode of shared ownership is not that the declaration lands somewhere else, but that nobody makes it.**
+**What is required, what needs checking, and what only needs to be announced are written as distinct kinds.**
+
+Role of the provider checklist: declares the conditions under which this tool must not run. The declaring party is whoever built the tool, and that role does not disappear when the agent and the tool are built by the same side.
 
 #### 4.2.1 Description labels
 
