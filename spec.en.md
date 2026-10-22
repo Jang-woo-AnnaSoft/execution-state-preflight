@@ -188,6 +188,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 ### 3.3 Slots on the same footing (Value, Condition, Intent)
 
 - Values, conditions, and intent are all treated as verification slots. A value is what goes into a tool argument; a condition is a fact whose truth is checked before execution (balance, permission, and so on); intent is the execution unit the user wants and the permitted range within it. Because the verdict is about the action, conditions need no separate mechanism. Counting works the same way for all three, and in the order of settling, intent comes first.
+- Conditions divide into three by what they ask for: do not do this, get approval first, and tell me. A value is a number or a string and has a format; a condition has this distinction instead. The distinction is independent of who declared it. Declared by the provider or by the user, a condition is one of the three, and the labels in 4.2.1 are their names.
 - Confidence scores are not used. A slot's state is settled by whether it was looked up from a declared source, which is a fact rather than a probability.
 - Once the verdict is separated from execution, a slot can be in the state "condition not checked." Only then can free-text conditions become something to verify.
 
@@ -243,9 +244,7 @@ Every value, condition, and intent item is registered in an external checklist, 
 - Conditions that prohibit or permit execution: ownership, access permission, checks before execution or termination, safety, permitted execution modes (whether split execution is allowed, and so on).
 - Declaration of the state change that execution causes.
 
-**What is required, what needs checking, and what only needs to be announced are written as distinct kinds.**
-
-Role of the provider checklist: declares the conditions under which this tool must not run. The declaring party is whoever built the tool, and that role does not disappear when the agent and the tool are built by the same side.
+**Role of the provider checklist: declares the conditions under which this tool must not run. The declaring party is whoever built the tool, and that role does not disappear when the agent and the tool are built by the same side.**
 
 #### 4.2.1 Description labels
 
