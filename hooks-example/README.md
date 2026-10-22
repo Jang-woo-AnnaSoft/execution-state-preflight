@@ -297,6 +297,7 @@ node payment-limit-test.js        # 한 적용 사례 전체
 npm install
 
 # 1) API 호출 없이 하네스를 검사한다. 돈 쓰기 전에 반드시.
+#    선언 목록 + 적합성 + 값·조건 + 적용 사례, 일곱 스위트를 모두 돈다.
 npm run check
 
 # 2) models.json 의 모델 ID를 본인 계정 기준으로 확인하고 키를 넣는다
