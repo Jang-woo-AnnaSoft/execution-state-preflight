@@ -104,7 +104,7 @@ This is not a wall in front of your agent. It fills, with a stated source, the b
 | [**The short version**](./model-reasons-agent-executes.en.md) | the goal, the two methods, how this differs from current practice |
 | [**The specification**](./spec.en.md) · [ko](./spec.ko.md) | **the standard.** What counts as confirmed, who judges, what is recorded |
 | **The skeleton** (`execution-state-preflight.js`) | hook contracts, the record shape, and where it falls short of the specification — in the source comments, beside the code they describe |
-| [**Hook examples**](./hooks-example/) | six hooks actually written, the traps in each, a conformance test that needs no API key, and a repeat-run experiment |
+| [**Hook examples**](./hooks-example/) | what has to be declared and how much of this you have to keep, each shown by putting a piece in and taking it out; the hooks written out with the trap in each; eight suites that need no API key; and a repeat-run experiment |
 | [**A case report**](./case-muse-marketplace.en.md) | a reported incident mapped onto the checklists, including what this would not have caught |
 
 Read in that order if you are deciding whether this is worth doing. Start at the hook examples if you already are.
@@ -234,7 +234,9 @@ if (state.execution_decision === "execute") {
 
 Check `preflight.unsafeDefaults` after construction. If it is non-empty, the gate is running weak.
 
-Hooks are the work, and they are where it is easiest to go wrong. [**Hook examples**](./hooks-example/) has six written out, the traps in each, and a conformance test you can run before spending anything.
+**You do not have to run all of this.** Taken literally as a framework it is a stiffer pipeline than most systems need, and an adopting system that already has tool selection, a conversation layer and a job-id scheme should not grow a second copy of any of them. What this code is for is narrower: one working method for verifying a source, and one for stopping the model from filling a blank. The specification is the standard; this is one way of meeting it.
+
+Which is why [**Hook examples**](./hooks-example/) leads with the two questions that come first — what has to be declared, and how much of this you have to keep — each answered by putting a piece in and then taking it out, so the difference is the argument rather than a sentence claiming the piece matters. The hooks are written out there too, with the trap in each. Eight suites, no API key, nothing to spend.
 
 ---
 
