@@ -6,7 +6,7 @@
   "main": "runner.js",
   "scripts": {
     "declarations": "node declaration-test.js",
-    "check": "node declaration-test.js && node selftest.js && node provider-test.js && node gate-test.js && node value-source-test.js && node provider-conditions-test.js && node payment-limit-test.js",
+    "check": "node declaration-test.js && node policy-test.js && node selftest.js && node provider-test.js && node gate-test.js && node value-source-test.js && node provider-conditions-test.js && node payment-limit-test.js",
     "selftest": "node selftest.js",
     "providertest": "node provider-test.js",
     "gatetest": "node gate-test.js",
@@ -16,7 +16,8 @@
     "models": "node runner.js --check",
     "smoke": "node runner.js --repeats 1 --arms A,C",
     "run1": "node runner.js --variant plain",
-    "run2": "node runner.js --variant labelled"
+    "run2": "node runner.js --variant labelled",
+    "policy": "node policy-test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "*"
