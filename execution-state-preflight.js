@@ -447,6 +447,27 @@ function validatePayload(args, inputSchema, ctx) {
   return null;
 }
 
+// [NOT IMPLEMENTED] Spec 6.3 lists "read labels, expand them into slots, reflect them in the verdict"
+//   among the gate's responsibilities. This skeleton does not do it. The description comes back as one
+//   string and lands in advisory_notes, recorded and handed to the model as context, never compared.
+//   A conforming adopter splits the three labels here and materializes condition slots from them:
+//     [Required] — confirmed only from the declared system source; a user answer is not an allowed
+//                  source for it (4.2.1). With no means declared, the slot has no resolution route
+//                  and goes to definition_repair (4.5c) — the correct outcome, not a defect.
+//     [Verify]   — creates a user approval slot (4.2.1), so it resolves through ask_user (4.5a).
+//     [Notice]   — attached to a constraint, not a condition. Not a gate but a disclosure obligation
+//                  before execution. Gate it and "the user was told" becomes grounds for executing,
+//                  which 4.2.1 rules out.
+//   Direction is fixed by 5.1: a slot is promoted by being CHECKED, never by being SATISFIED, and
+//   met/unmet is recorded separately. So a parsed condition can only ever block.
+//   BREAKS: let a satisfied condition promote a slot and one upstream edit to the description —
+//     a condition that is always true — becomes a fail-open switch for every call.
+//   NOTE: how the declaration arrives does not matter here. Labels parsed from a description and
+//     conditions handed in as a structured field produce the same comparison; the parsing contract
+//     (4.2.1: trusted declarer, fixed syntax, deterministic parsing) attaches only to the former.
+//     Three fixed tokens settle the last two of those by design.
+//   NOTE: hooks-example/tool.js writes all three labels and nothing in that example reads them.
+//     It demonstrates the declaring side only.
 function getAdvisoryNotes(mcpTool) {
   // Natural language is not enforceable, so it stays out of the gate. Records and LLM context only.
   // POLICY: whether to enforce is the adopting system's call.
