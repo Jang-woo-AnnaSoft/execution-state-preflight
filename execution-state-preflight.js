@@ -109,9 +109,16 @@
  *   // The exact object executeIfReady sends, assembled from settled values only. null on deferred/hold.
  * @property {string} advisory_notes    // Provider description — recorded only, not part of the gate
  * @property {UserChecklistItem[]} user_checklist
+ * @property {Object[]|null} [provider_checklist]
+ *   // The provider's declared conditions, each with its label and the route it took. The gated half
+ *   // of the provider checklist; advisory_notes is the half that is only recorded.
+ *   // Statuses: checked | unmet | unverified | pending_on_slot | disclosure_required.
+ *   // There is no "verified" here — see [PROVIDER CONDITIONS].
  * @property {number|null} unknown_count  // Over fields (slots) only. extra_fields are never counted.
  *   // null if no decision was made — distinct from 0 (all known)
  * @property {number|null} unverified_checklist_count
+ * @property {number|null} unverified_provider_count
+ *   // Provider conditions not compared. pending_on_slot and disclosure_required are not counted.
  * @property {GateResult|null} gate     // The authoritative decision. Consumers read this, not reason.
  * @property {"execute"|"ask_user"|"hold"|"deferred"|"executed"|"failed"} execution_decision
  *   // deferred: the normal wait for non-immediate work (distinct from hold). Only "executed" counts as baseline.
@@ -447,31 +454,90 @@ function validatePayload(args, inputSchema, ctx) {
   return null;
 }
 
-// [NOT IMPLEMENTED] Spec 6.3 lists "read labels, expand them into slots, reflect them in the verdict"
-//   among the gate's responsibilities. This skeleton does not do it. The description comes back as one
-//   string and lands in advisory_notes, recorded and handed to the model as context, never compared.
-//   A conforming adopter splits the three labels here and materializes condition slots from them:
-//     [Required] — confirmed only from the declared system source; a user answer is not an allowed
-//                  source for it (4.2.1). With no means declared, the slot has no resolution route
-//                  and goes to definition_repair (4.5c) — the correct outcome, not a defect.
-//     [Verify]   — creates a user approval slot (4.2.1), so it resolves through ask_user (4.5a).
-//     [Notice]   — attached to a constraint, not a condition. Not a gate but a disclosure obligation
-//                  before execution. Gate it and "the user was told" becomes grounds for executing,
-//                  which 4.2.1 rules out.
-//   Direction is fixed by 5.1: a slot is promoted by being CHECKED, never by being SATISFIED, and
-//   met/unmet is recorded separately. So a parsed condition can only ever block.
-//   BREAKS: let a satisfied condition promote a slot and one upstream edit to the description —
-//     a condition that is always true — becomes a fail-open switch for every call.
-//   NOTE: how the declaration arrives does not matter here. Labels parsed from a description and
-//     conditions handed in as a structured field produce the same comparison; the parsing contract
-//     (4.2.1: trusted declarer, fixed syntax, deterministic parsing) attaches only to the former.
-//     Three fixed tokens settle the last two of those by design.
-//   NOTE: hooks-example/tool.js writes all three labels and nothing in that example reads them.
-//     It demonstrates the declaring side only.
+// Spec 6.3 lists "read labels, expand them into slots, reflect them in the verdict" among the gate's
+//   responsibilities. That is getProviderConditions + verifyProviderCondition, below. This hook is the
+//   OTHER half: whatever the description says that nobody turned into a declaration.
+//   What is still not done here is parsing a condition out of prose, and that is 4.2.1's parsing
+//   contract — trusted declarer, fixed syntax, deterministic parsing — which the specification leaves
+//   to the adopting system rather than to the gate. An adopter who parses labels out of a description
+//   hands the result to getProviderConditions, where it is compared like any other declaration.
+//   BREAKS: lower the bar and the description becomes an input the gate interprets, so a reworded
+//     sentence upstream silently changes what is enforced.
+//   NOTE: prose that stays here reaches the model as context and nothing more. A restricting condition
+//     left in this string is enforced only if the model reads it, which is the arrangement this
+//     specification exists to replace — so a condition that matters belongs in a declaration.
 function getAdvisoryNotes(mcpTool) {
   // Natural language is not enforceable, so it stays out of the gate. Records and LLM context only.
   // POLICY: whether to enforce is the adopting system's call.
   return mcpTool.description ?? "";
+}
+
+// ────────────────────────────────────────────────────────────────
+// [PROVIDER CONDITIONS] The gated half of the provider checklist (spec 4.2, 4.2.1).
+//
+// A condition must be counted and must never be sent. fields and extra_fields are both assembled
+// into call_arguments at Step 6, so a condition cannot live there — it would reach the tool as an
+// argument. This list is to conditions what user_checklist is to user items.
+//
+// INVARIANT: the provider loop writes only to its own array. It never touches fields, extra_fields,
+//   call_arguments or user_checklist. That is what keeps direction one-way (5.1): a slot is promoted
+//   by being CHECKED, never by being SATISFIED. A condition that holds removes a reason to block and
+//   supplies no grounds to execute — those come from the user's declared intent (4.2.1, Section 0).
+//   BREAKS: let a checked condition settle a slot or satisfy a user item and one upstream edit —
+//     a condition rewritten as always-true — becomes a fail-open switch for every call.
+//
+// Item shape (the adopting system owns the field names; these are what the gate reads):
+//   { id, label: "Required"|"Verify"|"Notice", description, constrains: string[] }
+// How the declaration arrives does not matter. Labels parsed out of a description and conditions
+//   handed over as a structured field produce the same comparison; the parsing contract
+//   (4.2.1: trusted declarer, fixed syntax, deterministic parsing) attaches only to the former,
+//   and three fixed tokens settle the last two of those by design.
+const PROVIDER_LABELS = new Set(["required", "verify", "notice"]);
+
+// [REQUIRED-SAFETY] The sources that can confirm a [Required] condition. 4.2.1: "confirmed only from
+//   the declared SYSTEM source". Of the five sources in 5.2 exactly one is a system source:
+//     measured_data  — system state read on the spot, and 5.2 requires the read to be a live measurement
+//     user_answer    — the user's words
+//     instruction    — the user's words, typed earlier. This is the vector 8.4 is about
+//     pre_set_data   — the user's words, approved and stored earlier (5.2)
+//     prior_state    — inherited, and 5.2 only counts it once the user confirms it, as user_answer
+//   So four of the five are the user speaking at different times, and none of them satisfies a
+//   provider condition. A whitelist, not a blacklist: a source added later is refused until someone
+//   decides it is a system source.
+//   BREAKS: allow instruction and "the CFO approved this on a call" clears a limit by being typed
+//     into the request — the exact conflict 8.4 says the comparison must not move on.
+const SYSTEM_SOURCES = new Set(["measured_data"]);
+
+// Fixed tokens, so this is matching and not interpretation. Accepts "[Required]" and "required".
+// An unrecognized label is NOT ignored: it routes to definition_repair.
+//   BREAKS: treat an unknown label as "no condition" and a typo in a declaration silently deletes it,
+//     which is the one failure this whole list exists to prevent.
+function normalizeProviderLabel(label) {
+  if (typeof label !== "string") return null;
+  const t = label.trim().toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+  return PROVIDER_LABELS.has(t) ? t : null;
+}
+
+// [UNSAFE DEFAULT] Returns no conditions for every tool. Unwired, the provider checklist is empty
+//   and the gate is back to arguments only.
+// NOTE: reached only after the tool determination gate, so the tool is settled here and an empty
+//   list legitimately means "this tool declares no conditions" — unlike getRequiredFields, where a
+//   missing schema and required: [] had to be told apart.
+function getProviderConditions(mcpTool) {
+  return [];
+}
+
+// [UNSAFE DEFAULT] Verifies nothing.
+// CONTRACT: { status: "checked" | "unmet" | "unverified", source, note? }. Do not throw.
+//   "checked" — compared against a declared source and it does not prohibit. Promotes nothing.
+//   "unmet"   — compared, and it prohibits. A source is required, for the reason a known value needs
+//               one: without it, "prohibited" is a claim rather than a finding.
+//   "unverified" — not compared. Routed by label, not by guesswork: [Verify] to the user,
+//               [Required] to definition_repair (4.5c).
+// There is deliberately no "verified" status. A user item can end verified because the user is the
+//   one who declared it; a provider condition is a reason not to execute and nothing more (4.2.1).
+function verifyProviderCondition(condition, ctx) {
+  return { status: "unverified", source: null, note: "verifyProviderCondition not wired" };
 }
 
 // 4. Per-field lookup chain
@@ -708,6 +774,7 @@ async function runPreflight(h, input) {
       fixed: null, action_key: null, phase: null, fields: null, advisory_notes: "",
       user_checklist: input?.userChecklist ?? [],
       unknown_count: null, unverified_checklist_count: null,
+      provider_checklist: null, unverified_provider_count: null,
       gate: null,
       execution_decision: "hold",
       // NOTE: the internal error message is carried verbatim. Filter what reaches the user in formatReason.
@@ -745,6 +812,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     return {
       fixed: null, action_key: null, phase: null, fields: null, advisory_notes: "", user_checklist: checklist,
       unknown_count: null, unverified_checklist_count: null,
+      provider_checklist: null, unverified_provider_count: null,
       gate: null,   // Not a question. There is nothing for the user to answer
       execution_decision: "hold",
       reason: `checklist item without id at index: ${unidentified.join(", ")}`,
@@ -771,6 +839,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       user_checklist: checklist,
       unknown_count: null,
       unverified_checklist_count: null,
+      provider_checklist: null, unverified_provider_count: null,
       gate: {
         // A hold that carries a gate. Distinct from the backstop's gate: null, which has no way back.
         kind: exhausted ? "intent_undetermined_exhausted" : "intent_undetermined",
@@ -808,6 +877,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       advisory_notes: "",
       user_checklist: checklist,
       unknown_count: null, unverified_checklist_count: null,
+      provider_checklist: null, unverified_provider_count: null,
       call_arguments: null,
       gate: { kind: "action_key_failed", _diag: { detail: keyFailure } },
       execution_decision: "hold",
@@ -848,6 +918,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       user_checklist: checklist,       // Echo of the raw input. Not a verification result
       unknown_count: null,             //   "no decision made" is expressed by count: null
       unverified_checklist_count: null,
+      provider_checklist: null, unverified_provider_count: null,
       gate: {
         // A hold that carries a gate, as in Step 1-a. Distinct from the backstop's gate: null.
         kind: toolExhausted ? "tool_undetermined_exhausted" : "tool_undetermined",
@@ -877,6 +948,16 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
 
   // Step 2: Provider Checklist — separate enforceable from advisory
   const advisoryNotes = await h.getAdvisoryNotes(mcpTool);
+  // Declared conditions. Obtained from the tool, not from input: the provider declares these, and
+  //   per 4.4 the provider checklist comes from the tool's own declarations once the tool is settled.
+  //   A failure here returns one item with a null label, which routes to definition_repair. Fail-closed:
+  //   a crashed condition fetch must not look like a tool that declares no conditions.
+  const rawProviderConditions = await safeHook(h.getProviderConditions, [mcpTool],
+    e => [{ id: null, label: null, note: `getProviderConditions failed: ${e?.message ?? String(e)}` }]);
+  //   Normalized here rather than at the loop: the at_instruction records carry this array too, and a
+  //   hook that returns a non-array would otherwise put null in provider_checklist, which already means
+  //   "no decision made". Two meanings on one value is how a record stops being readable.
+  const providerConditions = Array.isArray(rawProviderConditions) ? rawProviderConditions : [];
 
   const ctx = { userAnswers, checklistAnswers, instruction, preSetData, measured_data, priorExecutionState,
                 phase,   // The basis for applyFieldPolicy's per-phase judgment
@@ -894,6 +975,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       advisory_notes: advisoryNotes,
       user_checklist: checklist,
       unknown_count: null, unverified_checklist_count: null,
+      provider_checklist: null, unverified_provider_count: null,
       call_arguments: null,
       gate: {
         kind: "schema_unsupported",
@@ -924,6 +1006,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       advisory_notes: advisoryNotes,
       user_checklist: checklist,
       unknown_count: null, unverified_checklist_count: null,
+      provider_checklist: null, unverified_provider_count: null,
       call_arguments: null,
       gate: {
         kind: "schema_unsupported",
@@ -947,6 +1030,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       user_checklist: checklist,
       unknown_count: null,          // No slot list to count against
       unverified_checklist_count: null,
+      provider_checklist: null, unverified_provider_count: null,
       call_arguments: null,
       gate: {
         kind: conflict ? "branch_conflict" : "branch_unresolved",
@@ -992,6 +1076,8 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
         user_checklist: checklist,        // Raw input. Not verified at this phase
         unknown_count: unknownNow.length, // Total (including pending). gate is authoritative for what blocks
         unverified_checklist_count: null, // No decision made. Not 0
+        provider_checklist: providerConditions,  // Raw declarations. Conditions are trigger-time (4.5)
+        unverified_provider_count: null,         // Not performed at this phase
         call_arguments: null,             // Assembled at trigger time only
         gate: {
           unknown_fields: blocking.map(f => ({ name: f.name, note: f.note ?? null })),
@@ -1017,6 +1103,8 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       user_checklist: checklist,          // Carried unverified, as things to confirm at trigger time
       unknown_count: unknownNow.length,   // Only pending remains. May not be 0
       unverified_checklist_count: null,
+      provider_checklist: providerConditions,  // Raw declarations. Conditions are trigger-time (4.5)
+      unverified_provider_count: null,         // Not performed at this phase
       call_arguments: null,               // Re-assembled at trigger time
       gate: null,                         // The gate stands only at trigger time
       execution_decision: "deferred",
@@ -1046,9 +1134,29 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   //   The gate verifies the claim rather than trusting it: the item must name a slot, and
   //   that slot must actually be unknown here. Otherwise "waiting" would be a bypass.
   const unknownNames = new Set(fields.filter(f => f.status === "unknown").map(f => f.name));
+  // Every name this run actually looked up. A constrains entry outside this set names nothing, so
+  //   the item cannot be compared against it — 6.3: a condition that cannot be compared stays
+  //   unknown. Without this check a one-character typo in constrains produces a CLEAN verdict: the
+  //   name is not in unknownNames, so nothing is pending, and the hook compares against a value the
+  //   item was never about. The record then says the rule was confirmed.
+  //   BREAKS: skip it and "nothing after 8pm" misspelt comes out verified with count 0.
+  //   The addressee follows the declarer (7.1): a user item goes back to the user as a blank, and a
+  //   provider condition is a broken declaration and goes to definition_repair (see Step 4-b).
+  const lookedUpNames = new Set([...fields, ...extra_fields].map(f => f.name));
+  const missingTargets = targets => targets.filter(n => !lookedUpNames.has(n));
   const finalUserChecklist = [];
   for (const item of checklist) {
     const targets = Array.isArray(item.constrains) ? item.constrains : [];
+    const unknownTargets = missingTargets(targets);
+    if (unknownTargets.length > 0) {
+      // The user declared this rule against something that is not a slot of this call. No comparison
+      //   is possible, and the fix is theirs: restate the limit. It counts, so it does not pass.
+      finalUserChecklist.push({
+        ...item, id: item.id, status: "unverified", source: null,
+        note: `constrains names nothing that was looked up: ${unknownTargets.join(", ")}`,
+      });
+      continue;
+    }
     const waitingOn = targets.filter(n => unknownNames.has(n));
     if (waitingOn.length > 0) {
       finalUserChecklist.push({
@@ -1070,6 +1178,94 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     finalUserChecklist.push({ ...item, ...(out ?? {}), id: item.id, status: st });
   }
 
+  // Step 4-b: verify the Provider Checklist — the conditions the provider declared on this tool.
+  // Same counting, different routing, and one status fewer. See [PROVIDER CONDITIONS] above.
+  const finalProviderChecklist = [];
+  for (const cond of providerConditions) {
+    const label = normalizeProviderLabel(cond?.label);
+    const base = { ...cond, id: cond?.id ?? null, label: cond?.label ?? null };
+
+    if (label === null) {
+      // Not a condition we can act on, and not one we may drop. The declaration itself is the gap.
+      finalProviderChecklist.push({ ...base, status: "unverified", source: null,
+        route: "definition_repair",
+        note: base.note ?? `unrecognized label: ${JSON.stringify(cond?.label ?? null)}` });
+      continue;
+    }
+
+    if (label === "notice") {
+      // [Notice] is attached to a constraint, not a condition (4.2.1). It is a disclosure obligation
+      //   before execution, not a gate. Gate it and "the user was told" becomes grounds for executing,
+      //   which 4.2.1 rules out, and 2.2 says that confirmation degrades into a click-through anyway.
+      // Unlike advisory_notes this is structured and identified, and it is surfaced in gate.disclosures
+      //   so the executing party cannot miss it. It is still not enforced: whether a sentence reached a
+      //   human is not observable here.
+      //   POLICY: gating this on an acknowledgement passed back by the caller is the adopting system's
+      //     call — 8.3 leaves accepting that risk to its policy.
+      finalProviderChecklist.push({ ...base, status: "disclosure_required", source: null, route: null });
+      continue;
+    }
+
+    // A condition cannot be compared while the slot it constrains is still UNKNOWN. Same reasoning as
+    //   the user items above, and the same verification: the item must name the slot, and that slot
+    //   must really be unknown here.
+    const targets = Array.isArray(cond.constrains) ? cond.constrains : [];
+    // A constrains entry that names nothing is a broken declaration, and the provider wrote it, so
+    //   it goes back to the provider whatever the label says. The user cannot answer for a field
+    //   name in someone else's declaration.
+    const unknownTargets = missingTargets(targets);
+    if (unknownTargets.length > 0) {
+      finalProviderChecklist.push({ ...base, status: "unverified", source: null,
+        route: "definition_repair",
+        note: `constrains names nothing that was looked up: ${unknownTargets.join(", ")}` });
+      continue;
+    }
+    const waitingOn = targets.filter(n => unknownNames.has(n));
+    if (waitingOn.length > 0) {
+      finalProviderChecklist.push({ ...base, status: "pending_on_slot", source: null, route: null,
+        waiting_on: waitingOn,
+        note: `cannot be compared yet: ${waitingOn.join(", ")} unknown` });
+      continue;
+    }
+
+    const out = await safeHook(h.verifyProviderCondition, [cond, checklistCtx],
+      e => ({ status: "unverified", source: null, note: `provider condition hook failed: ${e?.message ?? String(e)}` }));
+
+    // Both outcomes need a source. 5.1 settles a state by whether it was looked up from a declared
+    //   source, so "checked" with no source is the hook asserting it rather than evidencing it — the
+    //   claim 2.4 says cannot be told from a real one. Symmetry with unmet is the point: name only one
+    //   of them and the undefended one becomes the way through.
+    let st = (out?.status === "checked" && out?.source) ? "checked"
+           : (out?.status === "unmet" && out?.source) ? "unmet"
+           : "unverified";
+    let note = out?.note ?? null;
+    if (out?.status === "checked" && !out?.source) {
+      note = `a condition reported checked must name the source it was checked from (5.1)`;
+    } else if (out?.status === "unmet" && !out?.source) {
+      note = `a condition reported unmet must name the source it was checked from (5.1)`;
+    }
+
+    // [Required] is confirmed only from a declared system source (4.2.1). Enforced here rather than
+    //   left to the hook: 8.4 turns on a user's request not being an allowed source for a provider
+    //   condition, and a rule kept only by hook discipline is a rule the gate does not actually hold.
+    //   The test is SYSTEM_SOURCES, not "is it user_answer". Four of the five sources are the user
+    //   speaking at different times, so naming one of them leaves the other three open.
+    if (label === "required" && st !== "unverified" && !SYSTEM_SOURCES.has(out?.source)) {
+      st = "unverified";
+      note = `[Required] is confirmed only from a declared system source (4.2.1); hook returned ` +
+             `${JSON.stringify(out?.status)} from ${JSON.stringify(out?.source ?? null)}`;
+    }
+
+    // The label decides the route, so nothing here is a judgment call. [Verify] creates a user
+    //   approval slot; [Required] cannot be answered by the user and is a gap in the declaration
+    //   or the lookup path (4.5c).
+    const route = st === "unverified"
+      ? (label === "verify" ? "ask_user" : "definition_repair")
+      : null;
+
+    finalProviderChecklist.push({ ...base, ...(out ?? {}), id: base.id, label: base.label, status: st, route, note });
+  }
+
   // Step 5: tally what is unmet — both fields and checklist. advisory_notes is not tallied.
   // A field whose lookup hook threw is separated out here. It is unknown, but it is not a blank:
   // no user answer fixes a hook that crashed, and asking sends the user a question that will come
@@ -1085,6 +1281,16 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     i => i.status !== "verified" && i.status !== "pending_on_slot" && i.status !== "unmet");
   const unmetItems = finalUserChecklist.filter(i => i.status === "unmet");
   const unverified_checklist_count = unverifiedItems.length;
+
+  // Provider conditions, split by where the work goes rather than by status alone (7.1).
+  // disclosure_required and pending_on_slot are counted by neither: the first is not a gate, and the
+  // second waits on a blank already in the count.
+  const providerUnmet = finalProviderChecklist.filter(c => c.status === "unmet");
+  const providerUnverified = finalProviderChecklist.filter(c => c.status === "unverified");
+  const providerRepair = providerUnverified.filter(c => c.route === "definition_repair");
+  const providerAsk = providerUnverified.filter(c => c.route === "ask_user");
+  const providerDisclosures = finalProviderChecklist.filter(c => c.status === "disclosure_required");
+  const unverified_provider_count = providerUnverified.length;
 
   // Step 6: assemble the call from settled values. Slots are what must be settled, arguments are what
   //   gets sent — an optional value the user stated belongs only in the second set.
@@ -1108,12 +1314,44 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     gate.kind = "lookup_failed";
     gate.lookup_failed_fields = failedLookups.map(f => ({ name: f.name, note: f.note ?? null }));
   }
-  // A checked condition that prohibits execution is recorded, not asked about.
-  if (unmetItems.length > 0) {
-    gate.unmet = unmetItems.map(i => ({ id: i.id, description: i.description, note: i.note ?? null }));
+  // A provider condition the gate could not compare is the provider's gap, not a question for the
+  // user — 4.5(c), the same route as a crashed lookup but a different addressee, which is why the
+  // two keep separate fields (7.1: a parser problem belongs to the implementer, an undeclared or
+  // unreadable condition to whoever declared it).
+  if (providerRepair.length > 0) {
+    if (!gate.kind) gate.kind = "definition_repair";
+    gate.definition_repair = providerRepair.map(c =>
+      ({ id: c.id, label: c.label, description: c.description, note: c.note ?? null }));
   }
-  const valueGateClean = failedLookups.length === 0 &&
-    gate.unknown_fields.length === 0 && gate.unverified_checklist.length === 0;
+  // [Verify] conditions still waiting on the user's approval. A blank like any other.
+  if (providerAsk.length > 0) {
+    gate.unverified_provider = providerAsk.map(c =>
+      ({ id: c.id, label: c.label, description: c.description, note: c.note ?? null }));
+  }
+  // [Notice] items. Never counted, never a reason to hold — there is nothing to satisfy, and gating
+  // one would make "the user was told" grounds for executing, which 4.2.1 rules out.
+  //   This is a HAND-OFF, not a check. The gate cannot observe whether a sentence reached a human, so
+  //   it states the obligation and the executing party discharges it (3.5). A consumer that ignores
+  //   this field executes without a disclosure the provider required — the gate records that it said
+  //   so, and nothing more.
+  //   POLICY: whether to require an acknowledgement before executing is the adopting system's call.
+  //     8.3 leaves accepting that kind of risk to its policy.
+  if (providerDisclosures.length > 0) {
+    gate.disclosures = providerDisclosures.map(c =>
+      ({ id: c.id, description: c.description, declared_by: "provider", required_before_execution: true }));
+  }
+  // A checked condition that prohibits execution is recorded, not asked about. One list for both
+  // declarers, each entry tagged: the verdict is the same, the addressee is not (7.1).
+  const allUnmet = [
+    ...unmetItems.map(i => ({ id: i.id, description: i.description, note: i.note ?? null, declared_by: "user" })),
+    ...providerUnmet.map(c => ({ id: c.id, description: c.description, note: c.note ?? null, declared_by: "provider", label: c.label })),
+  ];
+  if (allUnmet.length > 0) {
+    gate.unmet = allUnmet;
+  }
+  const valueGateClean = failedLookups.length === 0 && providerRepair.length === 0 &&
+    gate.unknown_fields.length === 0 && gate.unverified_checklist.length === 0 &&
+    providerAsk.length === 0;
 
   // Step 6-b: whole-object validation. Run only on an otherwise clean gate — with unknowns outstanding
   //   the object is knowingly incomplete and the violation says nothing.
@@ -1124,33 +1362,49 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   const payload_violation = typeof payloadOut === "string" ? payloadOut : null;
   if (payload_violation) {
     // Not a question. Every slot is settled and the object is still illegal.
-    gate.kind = "payload_invalid";
+    if (!gate.kind) gate.kind = "payload_invalid";
     gate.payload_violation = payload_violation;
   }
 
-  if (unmetItems.length > 0 && valueGateClean) {
-    // Everything was checked; a condition the user declared prohibits this execution.
-    gate.kind = "unmet";
-  }
-  const execution_decision = failedLookups.length > 0
-    ? "hold"                                                   // nothing for the user to answer
-    : (!valueGateClean ? "ask_user"
-      : (unmetItems.length > 0 ? "hold"                        // checked, and prohibited
-        : (payload_violation ? "hold" : "execute")));
+  // An unmet condition is a hold whether or not blanks remain. It was compared against SETTLED
+  // values — a condition whose target is still unknown is pending_on_slot, and one whose target
+  // names nothing is unverified — so filling the remaining blanks cannot turn it met. Asking then
+  // sends the user to fill in a form for an execution that is already prohibited, and 4.5 says a
+  // hold does not go back to asking.
+  //   The blanks are still in the record; what changes is that they are not asked about.
+  //   BREAKS: ask anyway and the user answers three questions to be told no at the end.
+  if (allUnmet.length > 0 && !gate.kind) gate.kind = "unmet";
+
+  // kind precedence, most-doubt-casting first. Each is set only if nothing earlier claimed it, and
+  // every field stays present, so a consumer reading one kind never loses the rest:
+  //   lookup_failed     the extractor crashed, so no other blank is known to be a blank either
+  //   definition_repair a declaration could not be read
+  //   unmet             everything readable was read, and a declared condition prohibits this
+  //   payload_invalid   every slot settled and the object is still illegal
+  // BREAKS: overwrite unconditionally — as this did — and the kind reported depends on the order
+  //   the branches happen to run in.
+  const execution_decision =
+    (failedLookups.length > 0 || providerRepair.length > 0 || allUnmet.length > 0 || payload_violation)
+      ? "hold"                                                 // nothing here a user answer settles
+      : (!valueGateClean ? "ask_user" : "execute");
 
   return {
     fixed, action_key, phase, fields, extra_fields,
     advisory_notes: advisoryNotes,   // Recorded only. Not part of the gate
     user_checklist: finalUserChecklist,
-    unknown_count, unverified_checklist_count,
+    provider_checklist: finalProviderChecklist,
+    unknown_count, unverified_checklist_count, unverified_provider_count,
     call_arguments,                  // The exact object executeIfReady sends
     gate,
     execution_decision,
-    reason: unmetItems.length > 0 && valueGateClean
-      ? `hold: unmet — ${unmetItems.map(i => `${i.id} (${i.note ?? "prohibited"})`).join("; ")}`
+    reason: allUnmet.length > 0 && valueGateClean
+      ? `hold: unmet — ${allUnmet.map(i => `${i.id} [${i.declared_by}] (${i.note ?? "prohibited"})`).join("; ")}`
       : failedLookups.length > 0
       ? `hold: lookup hook failed — ${failedLookups.map(f => f.name).join(", ")} ` +
         `(definition/implementation gap; no user answer settles these)`
+      : providerRepair.length > 0
+      ? `hold: provider condition not comparable — ${providerRepair.map(c => c.id ?? "(unidentified)").join(", ")} ` +
+        `(definition_repair; no user answer settles these)`
       : payload_violation
         ? `hold: payload invalid — ${payload_violation}`
         : await h.formatReason(execution_decision, gate),
@@ -1161,9 +1415,15 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
 // [OPTIONAL] Rendering only. Not part of the gate decision, adds no information.
 function formatReason(execution_decision, gate) {
   const lf = gate?.lookup_failed_fields?.length ?? 0;
+  const pv = gate?.unverified_provider?.length ?? 0;
+  const dr = gate?.definition_repair?.length ?? 0;
+  const ds = gate?.disclosures?.length ?? 0;
   return `${execution_decision}: unknown_fields=${gate?.unknown_fields?.length ?? 0}, ` +
     `unverified_checklist=${gate?.unverified_checklist?.length ?? 0}` +
-    (lf ? `, lookup_failed=${lf}` : "");
+    (pv ? `, unverified_provider=${pv}` : "") +
+    (dr ? `, definition_repair=${dr}` : "") +
+    (lf ? `, lookup_failed=${lf}` : "") +
+    (ds ? `, disclosures=${ds}` : "");
 }
 
 // [OPTIONAL] POLICY: preserve = intent at instruction time (instruction/userChecklist/userAnswers).
@@ -1207,19 +1467,38 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.8",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.9",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
     //   1.8: fixed.c3_match added. Older records record no approval, only refusals.
     //   Pre-1.6 records may carry comparison_key fields; the skeleton neither writes nor reads them.
     //   1.7: fields[] may carry lookup_failed / _diag_note; gate._diag may carry lookup_failures
+    //   1.9: provider_checklist / unverified_provider_count added; gate may carry definition_repair,
+    //        unverified_provider and disclosures, and gate.unmet entries now carry declared_by.
+    //        On a pre-1.9 record the absence of provider_checklist means the field did not exist,
+    //        NOT that the tool declared no conditions.
     //   Readers must not assume fixed slots are strings, nor that c2_source exists on older records
+    // NOTE: this object is a whitelist, not a spread of executionState. A field computed by the gate
+    //   and left out here is computed and then dropped — it reaches no consumer and no later run.
+    //   BREAKS: add a gate output without adding it here and the verdict silently loses it.
+    // [NOT IMPLEMENTED] Spec 6.1 asks the record to carry WHICH VERSION of the checklist the verdict
+    //   was made against, because a changed checklist voids earlier verdicts based on it. This
+    //   skeleton records no version and compares none.
+    //   POLICY: the adopting system manages this. The practical exposure is narrow — conditions are
+    //     never inherited (5.2) and are re-read at trigger time (4.5), so a stale checklist does not
+    //     produce a wrong verdict today. What is lost is reconstructing a PAST verdict: given a rule
+    //     that has since changed, the record cannot say which wording was in force.
+    //   An adopter that needs it puts a version on each item and carries it through: the gate passes
+    //     unrecognized item fields along untouched, so the version lands in user_checklist and
+    //     provider_checklist without the gate having to know about it.
     action_key,
     phase: executionState.phase ?? null,   // Instruction-time and trigger-time records accumulate under the same key
     fixed: executionState.fixed,
     fields: executionState.fields,
     advisory_notes: executionState.advisory_notes ?? "",   // Not part of the gate. Recorded for audit
     user_checklist: executionState.user_checklist,
+    provider_checklist: executionState.provider_checklist ?? null,   // null = no decision made, not []
     unknown_count: executionState.unknown_count,
     unverified_checklist_count: executionState.unverified_checklist_count ?? null,
+    unverified_provider_count: executionState.unverified_provider_count ?? null,
     gate: executionState.gate ?? null,
     call_arguments: executionState.call_arguments ?? null,   // The exact payload executeIfReady sends
     execution_decision: executionState.execution_decision,
@@ -1325,12 +1604,19 @@ const REQUIRED_HOOKS = [
 // NOTE: unwired, validatePayload lets a value that fills its slot while violating the schema through.
 // NOTE: spanSupportsValue's default does equality, which its contract says is not sufficient.
 //   Unwired, a limit or a negation containing a value-shaped token settles a slot (see 8.x).
+// NOTE: getProviderConditions returns [] for every tool, so unwired the provider checklist is back to
+//   arguments only and a declared condition is silently absent.
+// NOTE: verifyProviderCondition verifies nothing. Unwired it is safe in DIRECTION — a provider condition
+//   can only block, so it never opens anything — but every declared condition then lands as unverified
+//   and routes to definition_repair, which holds. Weak, not fail-open, and loud rather than silent.
 const UNSAFE_DEFAULT_HOOKS = ["applyFieldPolicy", "validateFieldSchema", "verifyUserChecklistItem",
-                              "validatePayload", "spanSupportsValue"];
+                              "validatePayload", "spanSupportsValue",
+                              "getProviderConditions", "verifyProviderCondition"];
 
 const defaultHooks = {
   classifyWhenCase, extractUserActionName, confirmToolNameMatchesIntent,
   getRequiredFields, getCandidateSlots, materializeSlots, getAdvisoryNotes,
+  getProviderConditions, verifyProviderCondition,
   extractFromInstruction, spanSupportsValue, measureFromEnvironment,
   applyFieldPolicy, validateFieldSchema, validatePayload, verifyUserChecklistItem,
   formatReason, buildDeferredInput, buildActionKey,
@@ -1462,10 +1748,14 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *       What the three states distinguish is whether the check happened, not whether the requirement is met.
  *
  * Principles: Separation → Validation → Enforcement → Traceability
- *   Separation   trust-labeled segments; fixed checklist (C1/C2/C3) kept apart from value lookup
+ *   Separation   trust-labeled segments; fixed checklist (C1/C2/C3) kept apart from value lookup;
+ *                three lists kept apart by declarer — fields (arguments), user_checklist,
+ *                provider_checklist. Only the first is ever sent to the tool.
  *   Validation   lookupField → applyFieldPolicy → validateFieldSchema
+ *   Direction    a user item may end verified; a provider condition may only block. Satisfying one
+ *                promotes nothing, so an always-true condition is never a fail-open switch
  *   Binding      gate → execution_decision → executeIfReady (the record is read, not re-derived)
- *   Traceability source / origin_source / recordExecutionState
+ *   Traceability source / origin_source / declared_by on unmet / recordExecutionState
  *
  * - Position:   sits in front of a validator (Pydantic)
  * - Design:     intent and context are judged by fixed, tool-independent questions (guarding against unrequested execution)
