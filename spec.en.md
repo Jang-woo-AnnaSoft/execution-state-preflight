@@ -10,7 +10,7 @@
 
 ## 0. How this differs from existing approaches
 
-A model cannot be relied on to say "I don't know" or "this failed." Something outside it has to say that instead.
+A model cannot be relied on to say "I don't know" or "this failed." It does not recognize what it does not know, so something outside it has to say that instead. What it can say is where it looked and what came back. That is a statement about an action it performed, not about its own state. Confirmation is reported; non-confirmation is counted outside.
 
 Existing work raises model accuracy and validates input arguments with schemas and hard-coded guardrails. This specification proposes taking back the authority the model has been carrying because no standard existed. What has to be filled in is for the provider to say; filling the blanks that remain is for the user. Without that division, the model took on both. Until now, definition, verdict, and execution all happened in one place: the model. Nothing was recorded. So execution had no grounds.
 
@@ -19,7 +19,7 @@ Existing work raises model accuracy and validates input arguments with schemas a
 | **Who sets the rules** | Nobody, so the model sets them on every call. What to ask and what to skip changes from call to call, and since nothing is kept as a rule, the rules cannot be listed (2.3). | Parties with definition authority (provider, user, adopting system) declare them in external checklists. They change without a deploy, live in a fixed place, and can be listed. Whoever owns a rule changes it as a single line of plain language, not code; developers only maintain the verdict structure (7.2). |
 | **What gets checked** | Arguments only. Structured Outputs and Tools schemas check data type and format; there is no field for conditions or intent (2.5). | Values, conditions (balance, permission), and intent become slots on the same footing. Because the verdict is about the action, conditions need no separate mechanism, and confidence scores are not used (3.3). |
 | **Do missing rules show up** | An undeclared item is missing from the record too, so it looks like an item that never existed rather than one that was missed (2.7). | An item that cannot be checked stays UNKNOWN and routes to definition repair (4.5). The gap is not filled, but the record shows who failed to declare what. The model may report a condition missing from the checklist, but the report does not affect execution (4.7). |
-| **Is there a reason to trust a filled value** | A looked-up value and an invented one are the same string, so neither the user nor the validator can tell them apart (2.4). | A value filled in by the model does not settle the slot. If every designated source has been looked up and nothing is found, the slot is fixed at UNKNOWN (5.2). |
+| **Is there a reason to trust a filled value** | A looked-up value and an invented one are the same string, so neither the user nor the validator can tell them apart (2.4). | A value filled in by the model does not settle the slot. What is not there is written down as not there, and a check that has not finished is counted as UNKNOWN by code (5.1, 5.2). |
 | **Who judges that what was filled is everything** | The model hands over a neat, completed form and a person clicks through (2.2). | Counting code does. People receive blanks, not a filled-in form, and only the items only they can answer come back to them (3.5). |
 | **Who decides to execute** | Validation is a branch inside the execution flow, so it can be skipped, and the skip leaves no trace. | The verdict ends in a record. An external executing party reads that record and makes its own decision. No execution path bypasses the record. |
 
@@ -278,7 +278,7 @@ Items are counted the same way, but resolve differently when unconfirmed. An imp
   - (b) System lookup (system_lookup): items only the system can answer. The user is not asked again.
   - (c) Definition repair (definition_repair): the condition itself was never declared, or the middleware cannot interpret it. No user answer fills this; it is a gap on the provider's or the implementer's side. A failed lookup hook also belongs here.
 - Hold is not a resolution route. It is the case where the condition was checked and it prohibits execution: the slot is KNOWN, does not go back to asking, and is recorded as unmet. Hold is a finished check (insufficient balance); definition repair is a missing check (an undeclared condition). Merge the two into "cannot resolve" and you lose the information about where the work should go.
-- The ask-the-user route has a ceiling. When it is reached, the slot stays UNKNOWN, resolution moves to conversation outside this logic, and reaching the ceiling is itself written to the decision record. The adopting system sets the ceiling. Without one, an unanswerable item is asked again forever, and the record cannot tell that apart from the user giving up.
+- Resolution routes have a ceiling, both asking the user and the system lookup. A route that reaches its ceiling has finished and is not tried again. What the slot becomes when no route remains is settled by 5.1. The adopting system sets the ceiling.
 - What is confirmed by asking the user is confirmed at instruction time. Everything else is checked again at trigger time.
 
 ### 4.6 Carrying out the ask
@@ -304,16 +304,17 @@ Items are counted the same way, but resolve differently when unconfirmed. An imp
 ### 5.1 Three-state slot model
 
 - KNOWN: the data source was confirmed by whitelist lookup, or approval is complete.
-- NULL (no result): the lookup ran and confirmed there is nothing.
+- NULL (no result): written down by whoever performed the check. Either there is no source to check, or the check ran and there was nothing. The first case is a gap in the declaration, so definition repair is a route that remains (4.5c). It can be written from the first round, and the slot is NULL once every declared check has reported this and no route remains.
+- A source that reports it cannot answer has not confirmed the slot. A lookup that ran but was not valid for the question is not a confirmation of "nothing there." A source's availability is declared as a condition rather than becoming a fourth state, so that it too has a source of its own.
 - UNKNOWN: a required check has not finished yet. This is what remains after the lookup ends, not something the model reports about itself.
 - UNKNOWN does not mean "question for the user." Asking the user is only one of the three routes in 4.5.
 - Why NULL is its own state: the way to stop invention is not to prohibit it, but to offer "nothing there" as a normal thing to write down.
-- A source that reports it cannot answer has not confirmed the slot. A lookup that ran but was not valid for the question is not a confirmation of “nothing there,” and the search moves to the next source. A source’s availability is declared as a condition rather than becoming a fourth state, so that it too has a source of its own.
+- NULL can be reported; UNKNOWN cannot. A model does not recognize what it does not know (2.3), so it cannot tell you that it does not know. What it can tell you is where it looked and what came back, which is a statement about an action it performed rather than about its own state. So confirmation is reported and non-confirmation is counted. A design that asks the model for UNKNOWN hands the verdict back to the model (8.7).
 - The three states distinguish whether the check happened. Whether requirements are met is not a state; unmet items are recorded separately.
 
 ### 5.2 Lookup cascade
 
-The order below is a search order, not a trust tier. Once a value is confirmed at an earlier source, the lookup stops there. No per-source trust weights are computed.
+The order below is a search order, not a trust tier. Once a value is confirmed at an earlier source, the lookup stops there. No per-source trust weights are computed. When a source reports "nothing," the lookup does not stop — it moves to the next source, and the fact that this source was checked stays on the record. No report and a report of nothing are different things: the first means the source was not checked.
 
 user_answer → instruction → pre_set_data → measured_data → prior_state
 
@@ -323,7 +324,7 @@ user_answer → instruction → pre_set_data → measured_data → prior_state
 - measured_data: system state confirmed on the spot by calling a system API. The lookup must be a live measurement.
 - prior_state: a value inherited from a previous execution that the record confirms was executed. Applies to values only; conditions are not inherited. Inheritance alone does not confirm a slot. The value counts only after the user confirms it.
   - A value found at this source does not end the lookup. Once the user confirms it, it is confirmed as user_answer.
-- If no value is confirmed by the last step, the slot is fixed at UNKNOWN. Even when the model offers a value, that is only a claim about a location, and the gate checks whether a value is actually there. This structure does not assume the model is honest.
+- If no value is confirmed by the last step, the slot is UNKNOWN while a route remains and NULL when none does (5.1). Even when the model offers a value, that is only a claim about a location, and the gate checks whether a value is actually there. This structure does not assume the model is honest.
 
 ### 5.3 What instruction covers
 
@@ -344,12 +345,13 @@ user_answer → instruction → pre_set_data → measured_data → prior_state
 
 ### 6.2 Principles
 
-The six items below are examples of the preceding rules written as prompt sentences. They are not new rules, so violations are detected in the decision record. They can be added to or changed.
+The seven items below are examples of the preceding rules written as prompt sentences. They are not new rules, so violations are detected in the decision record. They can be added to or changed.
 
 - Slots come from the checklist, values from lookup, and whatever is missing from the user and from observation. Do not assemble.
 - If the timing is unclear, ask. Do not default to immediate execution.
 - Fix at instruction time only what was confirmed by asking the user. Check again at trigger time whatever was filled in by lookup.
 - Do not generate values. Search in the specified order. Point to a location, not a value.
+- If it is not at the designated place, write that it is not there; if there is no place to check, write that. Both are normal output, and both differ from writing nothing.
 - Record reusable values with the user's consent.
 - Look up recorded values instead of asking again. Do not pull them from memory in the model's context.
 
