@@ -102,6 +102,8 @@
  *   // c3_match is the Tool judgment as decided on this run. Not inherited — fixed is rebuilt every run.
  * @property {FieldRecord[]|null} fields  // The materialized SLOTS — what blocks execution.
  *   // null if no decision was made — distinct from [] ("computed, came out empty")
+ *   // Each FieldRecord carries allowed_sources: which of the five 5.2 sources were permitted for
+ *   // that slot. The route for an unknown follows from it (4.5), and it is on known records too.
  * @property {FieldRecord[]|null} [extra_fields]
  *   // Looked up through the same chain but outside the slot set: optional arguments, and values that
  *   // grounded a branch. Never counted by the gate; eligible for call_arguments when known.
@@ -130,6 +132,17 @@
 
 // 1-1. Skeleton defenses — "hooks must not throw" is a contract, not a guarantee.
 const WHEN_CASES = ["immediate", "scheduled", "conditional", "recurring"];
+// The five sources of 5.2, in search order. Not a trust ranking.
+const SOURCES = ["user_answer", "instruction", "pre_set_data", "measured_data", "prior_state"];
+
+// A declared allowed set, normalized. Absent or malformed means all five — so an adopter who
+//   declares nothing gets the behavior this skeleton had before the field existed.
+//   BREAKS: default to the empty set and every slot dies closed with no route and no blank.
+function allowedSourceSet(declared) {
+  if (!Array.isArray(declared)) return new Set(SOURCES);
+  const kept = declared.filter(x => SOURCES.includes(x));
+  return kept.length ? new Set(kept) : new Set(SOURCES);
+}
 const UNKEYED_RECORD_KEY = "__preflight_unkeyed__";   // Storage key for records with no action_key
 // Retention for this bucket is NOT the same as for keyed buckets. See [UNKEYED BUCKET POLICY] in recordExecutionState.
 
@@ -545,10 +558,16 @@ function verifyProviderCondition(condition, ctx) {
 //    BREAKS: reorder and a later intent loses to an earlier one; demoting user_answer ignores the answer just given.
 async function resolveField(h, fieldName, ctx) {
   const resolved_at = h.now();
-  const record = await lookupField(h, fieldName, ctx);
+  // Declared per slot, read once. Every return below carries it, on the known path too: a reader
+  //   who cannot see what was permitted cannot tell a value that came from the only allowed source
+  //   from one that came from a source nobody meant to permit.
+  const declared = await safeHook(h.getAllowedSources, [fieldName, ctx.mcpTool], () => null);
+  const allowed_sources = [...allowedSourceSet(declared)];
+  const record = await lookupField(h, fieldName, { ...ctx, allowed_sources });
+  const stamp = rec => ({ ...rec, allowed_sources, resolved_at });
   // BREAKS: run applyFieldPolicy here and it can set pending_at_trigger — the at_instruction gate excuses
   //   the field, and a crashed extractor gets scheduled instead of asked about.
-  if (record.lookup_failed === true) return { ...record, resolved_at };
+  if (record.lookup_failed === true) return stamp(record);
 
   // Hook failure and shape violation both demote to unknown.
   const out = await safeHook(h.applyFieldPolicy, [record, ctx],
@@ -560,15 +579,15 @@ async function resolveField(h, fieldName, ctx) {
         note: "field policy hook did not return a valid FieldRecord" };
 
   // Only known is checked. unknown is already unmet.
-  if (settled.status !== "known") return { ...settled, resolved_at };
+  if (settled.status !== "known") return stamp(settled);
   const schemaOut = await safeHook(h.validateFieldSchema, [settled.value, ctx.fieldSchemas?.[fieldName], ctx],
     e => `validation hook failed: ${e?.message ?? String(e)}`);
   const violation = typeof schemaOut === "string" ? schemaOut : null;
-  if (!violation) return { ...settled, resolved_at };
+  if (!violation) return stamp(settled);
   // A format violation is a defect, not a not-yet-arrived value. Clear the pending mark so it also blocks at instruction time.
-  return { ...settled, resolved_at, value: undefined, status: "unknown", source: null,
+  return stamp({ ...settled, value: undefined, status: "unknown", source: null,
            pending_at_trigger: false,
-           note: `schema violation (source ${settled.source ?? "unknown"}): ${violation}` };
+           note: `schema violation (source ${settled.source ?? "unknown"}): ${violation}` });
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -603,20 +622,30 @@ async function lookupField(h, fieldName, ctx) {
   // For the first four sources, this decision is itself the origin.
   const fresh = rec => ({ ...rec, origin_source: rec.source });
 
+  // Which sources may be consulted for THIS slot (4.5: the route follows from the slot's declared
+  //   allowed sources). Same shape as the fixed checklist's C2, which has had a two-source list in
+  //   resolveFixedChecklist since the start: an ordered set, first hit wins, no weights. The
+  //   difference is where it lives. C2 is the same slot on every call, so its sources belong in the
+  //   gate; these slots are the tool's arguments and vary per tool, so theirs are declared (6.1).
+  // NOTE: "may be consulted" is not "may settle". applyFieldPolicy still runs on whatever answered
+  //   and still refuses prior_state by default.
+  const allowed = allowedSourceSet(ctx.allowed_sources);
+
   // Source 1 — user_answer (injected on re-run after ask_user)
   // NOTE: filling userAnswers happens outside the skeleton.
   // BREAKS: LLM parsing output here makes the first source model output.
   // NOTE: a user_answer has no expiry and outranks a later measurement.
   // POLICY: invalidate on a change to what the value derived from, not on elapsed time.
-  if (userAnswers && fieldName in userAnswers) {
+  if (allowed.has("user_answer") && userAnswers && fieldName in userAnswers) {
     return fresh({ name: fieldName, value: userAnswers[fieldName], status: "known", source: "user_answer" });
   }
 
   // Source 2 — instruction: known only from a trusted segment with a valid span.
   //   To use a value from an untrusted segment, ask and take it back as user_answer.
   //   If instruction is a string, this entire source dies (fail-closed).
-  const fromInstruction = await safeHook(h.extractFromInstruction, [fieldName, instruction],
-    lookupFailed("instruction"));
+  const fromInstruction = allowed.has("instruction")
+    ? await safeHook(h.extractFromInstruction, [fieldName, instruction], lookupFailed("instruction"))
+    : undefined;
   if (fromInstruction?.[LOOKUP_HOOK_FAILED]) return lookupFailureRecord(fieldName, fromInstruction);
   if (fromInstruction !== undefined) {
     const seg = instruction?.[fromInstruction?.segment_index];
@@ -655,7 +684,7 @@ async function lookupField(h, fieldName, ctx) {
 
   // Source 3 — pre_set_data: accepted only with trust "user". A raw value without the wrapper is rejected.
   //   NOTE: old-schema input looks like every field being stuck at unknown. Check here first when migrating.
-  if (preSetData && fieldName in preSetData) {
+  if (allowed.has("pre_set_data") && preSetData && fieldName in preSetData) {
     const entry = preSetData[fieldName];
     if (entry && typeof entry === "object" && "value" in entry && entry.trust === "user") {
       return fresh({ name: fieldName, value: entry.value, status: "known", source: "pre_set_data" });
@@ -664,8 +693,9 @@ async function lookupField(h, fieldName, ctx) {
 
   // Source 4 — measured_data: accepted only when valid.
   // NOTE: the means of observation is not recorded. If this hook is LLM-based, it is not a measurement.
-  const fromMeasurement = await safeHook(h.measureFromEnvironment, [fieldName, ctx],
-    lookupFailed("measured_data"));
+  const fromMeasurement = allowed.has("measured_data")
+    ? await safeHook(h.measureFromEnvironment, [fieldName, ctx], lookupFailed("measured_data"))
+    : undefined;
   if (fromMeasurement?.[LOOKUP_HOOK_FAILED]) return lookupFailureRecord(fieldName, fromMeasurement);
   if (fromMeasurement !== undefined && fromMeasurement.valid) {
     return fresh({ name: fieldName, value: fromMeasurement.value, status: "known", source: "measured_data" });
@@ -677,15 +707,27 @@ async function lookupField(h, fieldName, ctx) {
   //   source is overwritten with prior_state, but origin_source is inherited.
   //   BREAKS: overwrite origin_source and the first source is erased, opening a laundering path.
   //   NOTE: old-schema records have origin_source undefined. Handling belongs in applyFieldPolicy.
-  const fromPriorState = priorExecutionState?.execution_decision === "executed"
+  const fromPriorState = allowed.has("prior_state") && priorExecutionState?.execution_decision === "executed"
     ? priorExecutionState.fields?.find(f => f.name === fieldName && f.status === "known")
     : undefined;
   if (fromPriorState) {
     return { name: fieldName, value: fromPriorState.value, status: "known", source: "prior_state",
              origin_source: fromPriorState.origin_source };
   }
-  // All empty → unknown.
+  // All empty → unknown. The allowed set rides along: the route is chosen from it (4.5), and a
+  //   record that does not carry it cannot say why nothing was asked of the user.
   return { name: fieldName, value: undefined, status: "unknown", source: null, origin_source: null };
+}
+
+// Which of the five sources may be consulted for this slot (5.2, 4.5). Returning null or anything
+//   malformed means all five, which is what this skeleton did before the hook existed.
+// CONTRACT: a subset of SOURCES, or null. Do not throw.
+// NOTE: this answers "may be consulted", not "may settle". applyFieldPolicy still judges whatever
+//   answered, and its default still refuses prior_state.
+// POLICY: this is a declaration, so it belongs with the checklist and changes without a deploy (6.1,
+//   7.2). Encoding it in a hook body instead is the scattering 2.8 describes.
+function getAllowedSources(fieldName, mcpTool) {
+  return null;
 }
 
 // [REQUIRED-SAFETY] Blocks prior_state by default (inherited values read as fresh — staleness is undetectable
@@ -961,7 +1003,8 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
 
   const ctx = { userAnswers, checklistAnswers, instruction, preSetData, measured_data, priorExecutionState,
                 phase,   // The basis for applyFieldPolicy's per-phase judgment
-                fieldSchemas: mcpTool?.inputSchema?.properties ?? {} };
+                fieldSchemas: mcpTool?.inputSchema?.properties ?? {},
+                mcpTool };
 
   // Step 2-a: candidate slots. The superset the lookup may try, not the slot list.
   let candidateFailure = null;
@@ -1273,7 +1316,14 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   // Per 4.5 this is the definition-repair route, not the user-query route.
   const allUnknown = fields.filter(f => f.status === "unknown");
   const failedLookups = allUnknown.filter(f => f.lookup_failed === true);
-  const unknownFields = allUnknown.filter(f => f.lookup_failed !== true);
+  // 4.5 splits the remainder by who can resolve it, and the slot's declared sources decide — not the
+  //   model, and not this code. A slot that does not permit user_answer is 4.5(b): the system can
+  //   answer it and the user is NOT asked again. Before this, every unknown went to the user, so a
+  //   measurement-only slot produced a question nobody could answer.
+  const askable = f => allowedSourceSet(f.allowed_sources).has("user_answer");
+  const pending = allUnknown.filter(f => f.lookup_failed !== true);
+  const unknownFields = pending.filter(askable);
+  const systemLookups = pending.filter(f => !askable(f));
   const unknown_count = allUnknown.length;   // total. gate is authoritative for what blocks
   // Counted: only what was NOT checked. pending_on_slot waits on a blank that is already
   // counted; unmet was checked and is recorded as unmet, outside the count (spec 6.3).
@@ -1314,6 +1364,14 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     gate.kind = "lookup_failed";
     gate.lookup_failed_fields = failedLookups.map(f => ({ name: f.name, note: f.note ?? null }));
   }
+  // 4.5(b): the system can answer these and the user is not asked. Same family as the two holds
+  //   below — nothing a user answer settles — but a different addressee: the lookup, not the
+  //   declaration. Separate fields so a consumer can tell retry from repair (7.1).
+  if (systemLookups.length > 0) {
+    if (!gate.kind) gate.kind = "system_lookup";
+    gate.system_lookup = systemLookups.map(f =>
+      ({ name: f.name, allowed_sources: f.allowed_sources ?? null, note: f.note ?? null }));
+  }
   // A provider condition the gate could not compare is the provider's gap, not a question for the
   // user — 4.5(c), the same route as a crashed lookup but a different addressee, which is why the
   // two keep separate fields (7.1: a parser problem belongs to the implementer, an undeclared or
@@ -1350,6 +1408,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     gate.unmet = allUnmet;
   }
   const valueGateClean = failedLookups.length === 0 && providerRepair.length === 0 &&
+    systemLookups.length === 0 &&
     gate.unknown_fields.length === 0 && gate.unverified_checklist.length === 0 &&
     providerAsk.length === 0;
 
@@ -1384,7 +1443,8 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   // BREAKS: overwrite unconditionally — as this did — and the kind reported depends on the order
   //   the branches happen to run in.
   const execution_decision =
-    (failedLookups.length > 0 || providerRepair.length > 0 || allUnmet.length > 0 || payload_violation)
+    (failedLookups.length > 0 || providerRepair.length > 0 || systemLookups.length > 0 ||
+     allUnmet.length > 0 || payload_violation)
       ? "hold"                                                 // nothing here a user answer settles
       : (!valueGateClean ? "ask_user" : "execute");
 
@@ -1417,11 +1477,13 @@ function formatReason(execution_decision, gate) {
   const lf = gate?.lookup_failed_fields?.length ?? 0;
   const pv = gate?.unverified_provider?.length ?? 0;
   const dr = gate?.definition_repair?.length ?? 0;
+  const sl = gate?.system_lookup?.length ?? 0;
   const ds = gate?.disclosures?.length ?? 0;
   return `${execution_decision}: unknown_fields=${gate?.unknown_fields?.length ?? 0}, ` +
     `unverified_checklist=${gate?.unverified_checklist?.length ?? 0}` +
     (pv ? `, unverified_provider=${pv}` : "") +
     (dr ? `, definition_repair=${dr}` : "") +
+    (sl ? `, system_lookup=${sl}` : "") +
     (lf ? `, lookup_failed=${lf}` : "") +
     (ds ? `, disclosures=${ds}` : "");
 }
@@ -1467,10 +1529,12 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.9",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.10",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
     //   1.8: fixed.c3_match added. Older records record no approval, only refusals.
     //   Pre-1.6 records may carry comparison_key fields; the skeleton neither writes nor reads them.
     //   1.7: fields[] may carry lookup_failed / _diag_note; gate._diag may carry lookup_failures
+    //   1.10: fields[] carry allowed_sources; gate may carry system_lookup (4.5b). On an older record
+    //        a missing allowed_sources means the field did not exist, not that nothing was permitted.
     //   1.9: provider_checklist / unverified_provider_count added; gate may carry definition_repair,
     //        unverified_provider and disclosures, and gate.unmet entries now carry declared_by.
     //        On a pre-1.9 record the absence of provider_checklist means the field did not exist,
@@ -1604,6 +1668,10 @@ const REQUIRED_HOOKS = [
 // NOTE: unwired, validatePayload lets a value that fills its slot while violating the schema through.
 // NOTE: spanSupportsValue's default does equality, which its contract says is not sufficient.
 //   Unwired, a limit or a negation containing a value-shaped token settles a slot (see 8.x).
+// NOTE: getAllowedSources returns null, meaning all five sources, for every slot. Unwired, every
+//   unknown is askable and 4.5(b) is not honored: a slot only the system can answer still produces a
+//   question for the user. Direction is safe (more sources consulted, none newly accepted — the
+//   policy hook still judges), but the route is wrong.
 // NOTE: getProviderConditions returns [] for every tool, so unwired the provider checklist is back to
 //   arguments only and a declared condition is silently absent.
 // NOTE: verifyProviderCondition verifies nothing. Unwired it is safe in DIRECTION — a provider condition
@@ -1611,12 +1679,13 @@ const REQUIRED_HOOKS = [
 //   and routes to definition_repair, which holds. Weak, not fail-open, and loud rather than silent.
 const UNSAFE_DEFAULT_HOOKS = ["applyFieldPolicy", "validateFieldSchema", "verifyUserChecklistItem",
                               "validatePayload", "spanSupportsValue",
-                              "getProviderConditions", "verifyProviderCondition"];
+                              "getProviderConditions", "verifyProviderCondition",
+                              "getAllowedSources"];
 
 const defaultHooks = {
   classifyWhenCase, extractUserActionName, confirmToolNameMatchesIntent,
   getRequiredFields, getCandidateSlots, materializeSlots, getAdvisoryNotes,
-  getProviderConditions, verifyProviderCondition,
+  getProviderConditions, verifyProviderCondition, getAllowedSources,
   extractFromInstruction, spanSupportsValue, measureFromEnvironment,
   applyFieldPolicy, validateFieldSchema, validatePayload, verifyUserChecklistItem,
   formatReason, buildDeferredInput, buildActionKey,
@@ -1730,6 +1799,10 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *      │ └─ anything other than status === "verified" becomes "unverified"
  *      ▼
  * Step 5-6. gate tally → assemble call_arguments (fields ∪ extra_fields, known only) → validatePayload
+ *      Each unknown takes one of 4.5's three routes, chosen from the slot's declared allowed sources:
+ *      ├─ user_answer permitted ─────────► "ask_user"  (gate.unknown_fields)
+ *      ├─ not permitted ─────────────────► "hold"      (kind: system_lookup — 4.5b, user not asked)
+ *      └─ lookup hook threw ─────────────► "hold"      (kind: lookup_failed — 4.5c)
  *      ├─ [unknown 0 AND unverified 0, payload valid] ──► "execute" ─► executeIfReady ─► record "executed"
  *      ├─ [unknown 0 AND unverified 0, payload invalid] ► "hold"     (kind: payload_invalid)
  *      └─ [otherwise] ──────────────────────────────────► "ask_user"
@@ -1748,6 +1821,8 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *       What the three states distinguish is whether the check happened, not whether the requirement is met.
  *
  * Principles: Separation → Validation → Enforcement → Traceability
+ *   Routing      an unknown's route comes from the slot's declared allowed sources, the same ordered
+ *                first-hit-wins shape C2 has had in resolveFixedChecklist from the start
  *   Separation   trust-labeled segments; fixed checklist (C1/C2/C3) kept apart from value lookup;
  *                three lists kept apart by declarer — fields (arguments), user_checklist,
  *                provider_checklist. Only the first is ever sent to the tool.
