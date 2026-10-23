@@ -286,8 +286,9 @@ THE WHOLE INVENTORY — what gets declared, by whom, and where it is covered
     declared or not · which of the three labels · allowed source
     a well-formed declaration · a reachable source                     this file, 6-10
 
-  USER — values (no list of their own: the five sources fill the
-    provider's slots)                                                  value-source-test.js
+  USER — values (no list of their own: the five sources fill the provider's slots)
+    which of the five a slot may use is declared per slot, and an unknown's route
+    follows from it — a slot that does not permit user_answer is not asked        value-source-test.js, 7
   USER — conditions (the same three labels)                            gate-test.js case 7
 
   NOT WIRED HERE, on purpose

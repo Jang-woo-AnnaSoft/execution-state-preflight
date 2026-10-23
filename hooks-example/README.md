@@ -172,12 +172,12 @@ note: [Required] is confirmed only from a declared system source (4.2.1);
 
 ## 선택 훅과 기본값
 
-골격에는 기본 구현이 있는 훅이 더 있고, 그중 일곱 개는 **기본값이 "검증하지 않음"**이다. 꽂지 않으면 `preflight.unsafeDefaults`에 이름이 올라오고, 그 목록이 **매 판정 기록에 남는다.**
+골격에는 기본 구현이 있는 훅이 더 있고, 그중 여덟 개는 **기본값이 "검증하지 않음"**이다. 꽂지 않으면 `preflight.unsafeDefaults`에 이름이 올라오고, 그 목록이 **매 판정 기록에 남는다.**
 
 ```js
 unsafeDefaults: ["applyFieldPolicy", "validateFieldSchema",
                  "verifyUserChecklistItem", "validatePayload", "spanSupportsValue",
-                 "getProviderConditions", "verifyProviderCondition"]
+                 "getProviderConditions", "verifyProviderCondition", "getAllowedSources"]
 ```
 
 `verifyUserChecklistItem`도 이 목록에 있고, 이 폴더는 **그 훅을 꽂는다**(위 참조). 꽂지 않으면 모든 항목이 미확인으로 돌아오고, 사용자 제한은 선언만 되고 대조되지 않는다.
@@ -236,6 +236,28 @@ MCP 서버를 붙여 확인하는 것은 느리고, 테스트 환경에서는 �
 그리고 **게이트가 알 수 없는 줄들이 있고, 그것들은 통과한다.** 라벨을 붙여 뒀다. 측정 훅을 모델 호출로 바꾸면 기록은 `measured_data`라고 적히고 게이트는 구분할 방법이 없다. `buildActionKey`의 범위도 게이트 안의 안전장치가 아니다 — `priorExecutionState`는 **호출자가 넘기는 것**이고, 게이트는 그 기록이 같은 행위의 것인지 보지 않는다(기록에 `action_key`가 적혀 있는데도 읽지 않는다). 그 자리들에서 무게를 지는 것은 이 코드가 아니라 **적용처의 정책**이다.
 
 마지막에 세 열이 출력된다 — **명세가 요구하는 것 · 이 골격의 방식 · 당신이 정할 것**, 그리고 이 골격이 명세를 벗어난 지점들.
+
+---
+
+## 어느 자리가 허용되는가는 선언이다
+
+`getAllowedSources`가 슬롯별로 다섯 소스 중 무엇을 **조회할 수 있는지** 선언한다. 꽂지 않으면 다섯 전부이고, 그것이 이 훅이 생기기 전 골격의 거동이다.
+
+이게 §4.5의 경로 결정 근거다. **사용자 답변이 허용 소스에 없는 슬롯은 사용자에게 가지 않는다** — 명세 4.5(b)의 "시스템만 답할 수 있는 항목. 사용자에게 되묻지 않는다". 전에는 모든 미확인이 사용자에게 갔고, 그래서 측정만으로 답할 수 있는 슬롯이 **아무도 답할 수 없는 질문**을 만들었다.
+
+```
+선언 없음 (기본=다섯)        → instruction 이 답한다, 결정 ask_user
+measured_data 만 허용         → instruction 은 조회되지 않는다
+                               결정 hold, kind=system_lookup
+                               사용자 빈칸 목록: 비어 있음
+읽을 수 없는 선언 (오타)      → 다섯 전부로 되돌아간다
+```
+
+마지막 줄이 방향이다. **빈 집합으로 기본값을 두면 모든 소스가 죽고, 경로도 빈칸도 없는 슬롯이 남는다.**
+
+`applyFieldPolicy`와 역할이 다르다. 선언은 **조회해도 되는가**를 말하고, 정책 훅은 **답한 것이 슬롯을 확정해도 되는가**를 말한다. 그래서 `prior_state`는 기본 선언에서 허용되지만 정책 훅의 기본값이 거부한다 — 둘이 겹치지 않는다.
+
+그리고 이 구조가 새것이 아니다. **고정 체크리스트의 C2가 처음부터 그렇게 돌고 있었다** — `instruction` → `pre_set_data`, 순서가 있고 앞이 맞으면 끝, 가중치 없음, `c2_source`로 어느 것이 답했는지 기록. 차이는 사는 자리다. C2는 매 호출에 같은 슬롯이라 소스가 게이트에 있어도 되고, 도구의 인자는 도구마다 달라지니 선언돼야 한다(명세 6.1).
 
 ---
 
@@ -395,7 +417,7 @@ Meta는 자체 API를 내지 않는다. Llama는 Groq·Together·Fireworks·Bedr
 | `gate-test.js` | 팔 C를 실제 골격에 통과시킨다. API 호출 없음 |
 | `provider-conditions-test.js` | 제공자 조건의 방향·경로·소스 제약·실패 방향. 15개 케이스(0–12), API 호출 없음 |
 | `payment-limit-test.js` | ERP 승인 한도 — 제공자 조건으로 선언한 실제 사례. API 호출 없음 |
-| `value-source-test.js` | 값 한 개를 다섯 자리에 번갈아 앉힌다. 저장소 왕복 포함. API 호출 없음 |
+| `value-source-test.js` | 값 한 개를 다섯 자리에 번갈아 앉힌다. 저장소 왕복과 허용 소스 포함. API 호출 없음 |
 | `declaration-test.js` | 제공자가 선언할 것들을 넣었다 뺀다. 출력이 곧 점검 목록. API 호출 없음 |
 | `policy-test.js` | 무엇을 바꿔도 되고 무엇을 빼면 깨지는지. 짝이 되는 파일. API 호출 없음 |
 

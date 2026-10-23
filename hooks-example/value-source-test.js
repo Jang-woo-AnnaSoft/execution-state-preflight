@@ -15,13 +15,14 @@
  * answered, because that is the entire difference 2.4 is about: a looked-up value and an invented one
  * are the same string, and the record is readable only if it says where the string came from.
  *
- * Six parts:
+ * Seven parts:
  *   1. the same value in each of the five seats, one at a time
  *   2. two seats at once — the order is a search order, not a ranking by trustworthiness
  *   3. pre_set_data's wrapper, which is the trap a migration falls into
  *   4. the prior_state round trip through storage, end to end
  *   5. only an executed record is a baseline
  *   6. the instruction-time record, which decides nothing and must not look as if it did
+ *   7. which seats are permitted at all, and why a slot the system alone can answer is not asked
  *
  * Part 4 is why this file exists. storage.load is never called by the gate — the caller fetches the
  * prior record with preflight.getPriorExecutionState(key) and passes it in — so until now no test
@@ -90,7 +91,7 @@ function createStorage() {
 }
 
 // ── Hooks. Each seat is wired by what is passed in, not by branching in the hooks. ─
-function createHooks({ locate, measured, acceptPriorState, whenCase }) {
+function createHooks({ locate, measured, acceptPriorState, whenCase, allowed }) {
   return {
     classifyWhenCase: () => whenCase ?? "immediate",
     extractUserActionName: () => "pay the supplier",
@@ -119,14 +120,17 @@ function createHooks({ locate, measured, acceptPriorState, whenCase }) {
     verifyProviderCondition: (c) => ({ status: "checked", source: "measured_data", note: "ok" }),
 
     buildActionKey: () => "u_1042:send_payment",   // the SAME key across runs, for part 4
+
+    // Part 7. Which seats are permitted at all.
+    ...(allowed ? { getAllowedSources: allowed } : {}),
   };
 }
 
 async function run({ locate, instruction, preSetData, measured, userAnswers, prior,
-                     acceptPriorState, whenCase, storage }) {
+                     acceptPriorState, whenCase, storage, allowed }) {
   const store = storage ?? createStorage();
   const preflight = createPreflight({
-    hooks: createHooks({ locate, measured, acceptPriorState, whenCase }),
+    hooks: createHooks({ locate, measured, acceptPriorState, whenCase, allowed }),
     storage: store,
   });
   const state = await preflight.runPreflightAndRecord({
@@ -287,6 +291,7 @@ const slotOf = state => (state.fields ?? []).find(f => f.name === SLOT) ?? {};
     check("the adapter filters it on load too", await store.load("k"), "null");
   }
 
+
   // ── 6. The instruction-time record decides nothing, and must not look as if it did. ──
   console.log("\n--- part 6: the at_instruction record ---");
   {
@@ -310,6 +315,54 @@ const slotOf = state => (state.fields ?? []).find(f => f.name === SLOT) ?? {};
     // The value settled at instruction time is still recorded, with its source, for comparison
     //   against the re-check at trigger time.
     check("the value is recorded with its source", slotOf(state).source, "instruction");
+  }
+
+  // ── 7. Which seats are permitted at all. ─────────────────────────────────────
+  // Every part above asks which seat answered. This one asks which seats were allowed to.
+  // 4.5: the route for an unknown follows from the slot's declared sources, so a slot the
+  // system alone can answer must not come back as a question — 4.5(b) says the user is not
+  // asked again. The fixed checklist has worked this way from the start: C2 has an ordered
+  // two-source list in resolveFixedChecklist. The difference is that C2 is the same slot on
+  // every call, so its sources sit in the gate, while these vary per tool and are declared.
+  console.log("\n--- part 7: which seats are permitted ---");
+  {
+    const ins = instructionHolding(ACCOUNT);
+
+    // Declaring nothing means all five, which is what this skeleton did before the hook existed.
+    const { state: open } = await run({ instruction: ins.segments, locate: ins.locate });
+    check("no declaration: instruction still answers", slotOf(open).source, "instruction");
+    check("  and all five are recorded as permitted",
+      (slotOf(open).allowed_sources ?? []).length, 5);
+
+    // Narrow the slot to a system source. The instruction holds the value and is NOT consulted.
+    const { state: sys } = await run({
+      instruction: ins.segments, locate: ins.locate,
+      allowed: () => ["measured_data"],
+    });
+    check("measured_data only: instruction not consulted", slotOf(sys).status, "unknown");
+    check("  routed to the system, not the user", sys.gate?.kind, "system_lookup");
+    check("  it holds", sys.execution_decision, "hold");
+    check("  nothing is asked of the user", (sys.gate?.unknown_fields ?? []).length, 0);
+    check("  the slot is named for the lookup", sys.gate?.system_lookup?.[0]?.name, SLOT);
+    check("  with what was permitted", (sys.gate?.system_lookup?.[0]?.allowed_sources ?? []).join(","),
+      "measured_data");
+
+    // The same narrow slot, now measured. It settles from the one allowed seat.
+    const { state: got } = await run({
+      instruction: ins.segments, locate: ins.locate,
+      measured: { [SLOT]: ACCOUNT },
+      allowed: () => ["measured_data"],
+    });
+    check("measured: settles from the allowed seat", slotOf(got).source, "measured_data");
+    check("  and executes", got.execution_decision, "execute");
+
+    // A declaration the gate cannot read is not an empty permission set. Defaulting to empty
+    //   would kill every source and leave a slot with no route and no blank.
+    const { state: junk } = await run({
+      instruction: ins.segments, locate: ins.locate,
+      allowed: () => ["typo_source"],
+    });
+    check("an unreadable declaration falls back to all five", slotOf(junk).source, "instruction");
   }
 
   console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`);

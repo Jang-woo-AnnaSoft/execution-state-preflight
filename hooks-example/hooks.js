@@ -17,12 +17,15 @@
  *      constraining a slot was not implementable. The skeleton now hands the hook
  *      ctx.fields, and an item whose slot is still UNKNOWN is pending_on_slot
  *      rather than a question.
- *   3. Four optional hooks run on the skeleton's defaults, confirmed at runtime
- *      via preflight.unsafeDefaults: applyFieldPolicy, validateFieldSchema,
- *      verifyUserChecklistItem, validatePayload. The experiment measures the
- *      value gate only, so no field policy, schema validation, checklist
- *      verification or payload validation is in force. unsafeDefaults is written
- *      into every arm C record so the published runs carry this on their face.
+ *   3. Several optional hooks run on the skeleton's defaults, and the live list is
+ *      preflight.unsafeDefaults, read at runtime rather than copied here — a count
+ *      written into a comment goes stale the next time the skeleton gains a hook.
+ *      It is written into every arm C record, so the published runs carry on their
+ *      face whichever ones were unwired. The experiment measures the value gate, so
+ *      field policy, schema validation, payload validation and the provider
+ *      conditions are all absent, and getAllowedSources is absent too: every slot
+ *      permits all five sources, which is what this skeleton did before that hook
+ *      existed. Declaring sources here would change what run 1 / run 2 measure.
  *   4. spanSupportsValue also runs on its default, which does equality only. Its
  *      contract asks the hook to judge whether the span states the value FOR THE
  *      SLOT, and equality cannot: "Nothing after 8pm" contains a time and states
