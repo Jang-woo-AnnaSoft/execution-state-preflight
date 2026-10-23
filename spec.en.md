@@ -308,6 +308,7 @@ Items are counted the same way, but resolve differently when unconfirmed. An imp
 - UNKNOWN: a required check has not finished yet. This is what remains after the lookup ends, not something the model reports about itself.
 - UNKNOWN does not mean "question for the user." Asking the user is only one of the three routes in 4.5.
 - Why NULL is its own state: the way to stop invention is not to prohibit it, but to offer "nothing there" as a normal thing to write down.
+- A source that reports it cannot answer has not confirmed the slot. A lookup that ran but was not valid for the question is not a confirmation of “nothing there,” and the search moves to the next source. A source’s availability is declared as a condition rather than becoming a fourth state, so that it too has a source of its own.
 - The three states distinguish whether the check happened. Whether requirements are met is not a state; unmet items are recorded separately.
 
 ### 5.2 Lookup cascade
