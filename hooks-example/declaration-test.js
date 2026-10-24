@@ -100,7 +100,8 @@ const UNMET = { status: "unmet", source: "measured_data", note: "limit exceeded"
     const a = await run({ schema: undefined });
     row("no inputSchema", a.gate?.kind, "schema_unsupported",
       "not received is not the same as 'takes no arguments'");
-    row("  its decision", a.execution_decision, "hold", "fail closed on a tool we cannot read");
+    row("  its decision", a.execution_decision, "definition_repair",
+      "fail closed on a tool we cannot read — a gap in its declaration, not a prohibition");
 
     const b = await run({ schema: { type: "object", properties: {}, required: [] } });
     row("required: [] declared", b.execution_decision, "execute",
@@ -148,7 +149,7 @@ const UNMET = { status: "unmet", source: "measured_data", note: "limit exceeded"
     const a = await run({ schema: { type: "object", properties: { amount: {} }, allOf: [{ required: ["amount"] }] } });
     row("allOf present", a.gate?.kind, "schema_unsupported",
       "a keyword the gate cannot read is refused, not approximated");
-    row("  its decision", a.execution_decision, "hold");
+    row("  its decision", a.execution_decision, "definition_repair");
   }
 
   heading("5. Is the FORMAT enforced? (the adopting system wires this)");
@@ -211,7 +212,7 @@ const UNMET = { status: "unmet", source: "measured_data", note: "limit exceeded"
     const C = { constrains: ["amount"] };
     const a = await run({ schema: FULL, conditions: [cond("c", "Required", C)],
       verify: () => ({ status: "checked", source: "instruction", note: "the CFO approved on a call" }) });
-    row("[Required] cleared from instruction", a.execution_decision, "hold",
+    row("[Required] cleared from instruction", a.execution_decision, "definition_repair",
       "four of the five sources are the user speaking");
     row("  refused and routed", a.provider_checklist?.[0]?.route, "definition_repair",
       "spec 8.4: a request does not move the comparison");
@@ -222,7 +223,7 @@ const UNMET = { status: "unmet", source: "measured_data", note: "limit exceeded"
 
     const c = await run({ schema: FULL, conditions: [cond("c", "Required", C)],
       verify: () => ({ status: "checked", source: null }) });
-    row("checked with no source named", c.execution_decision, "hold",
+    row("checked with no source named", c.execution_decision, "definition_repair",
       "'I checked' is a claim; 5.1 settles a state by where it was looked up");
   }
 
@@ -230,12 +231,12 @@ const UNMET = { status: "unmet", source: "measured_data", note: "limit exceeded"
   {
     const a = await run({ schema: FULL, conditions: [cond("c", "Mandatory", { constrains: ["amount"] })],
       verify: () => CHECKED });
-    row("a label that is not one of the three", a.execution_decision, "hold",
+    row("a label that is not one of the three", a.execution_decision, "definition_repair",
       "a typo must not silently delete a condition");
 
     const b = await run({ schema: FULL, conditions: [cond("c", "Required", { constrains: ["amuont"] })],
       verify: () => CHECKED });
-    row("constrains names nothing", b.execution_decision, "hold",
+    row("constrains names nothing", b.execution_decision, "definition_repair",
       "otherwise it compares against a value it was never about");
 
     const c = await run({ schema: FULL, conditions: [cond("c", "Required")], verify: () => CHECKED });
@@ -268,7 +269,7 @@ const UNMET = { status: "unmet", source: "measured_data", note: "limit exceeded"
       mcpTool: { name: "send_payment", description: "d", inputSchema: FULL },
       measured_data: {}, userChecklist: [],
     });
-    row("it throws", b.execution_decision, "hold", "a crashed fetch is not a tool with no conditions");
+    row("it throws", b.execution_decision, "definition_repair", "a crashed fetch is not a tool with no conditions");
   }
 
   // ══ The inventory ══════════════════════════════════════════════════════════════

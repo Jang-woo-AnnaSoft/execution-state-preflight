@@ -175,7 +175,7 @@ function len(x) { return (x ?? []).length; }
       const item = providerItem(r, "c_limit");
       check(`${src} refused`, item.status, "unverified");
       check(`${src} → definition_repair, not ask_user`, item.route, "definition_repair");
-      check(`${src} holds`, r.execution_decision, "hold");
+      check(`${src} → decision definition_repair`, r.execution_decision, "definition_repair");
       check(`${src} note names the rule`, /4\.2\.1/.test(item.note ?? ""), "true");
     }
     // The one source that does satisfy it, so the test is not passing by refusing everything.
@@ -190,7 +190,7 @@ function len(x) { return (x ?? []).length; }
     const noUnmet = { status: "unmet", source: null, note: "prohibited, allegedly" };
     const r = await run("c4a", { conditions: [cond("c_limit", "Required", noUnmet)] });
     check("sourceless unmet demoted", providerItem(r, "c_limit").status, "unverified");
-    check("holds", r.execution_decision, "hold");
+    check("decision definition_repair, not hold", r.execution_decision, "definition_repair");
     check("not recorded as unmet", len(r.gate?.unmet), 0);
 
     // The same rule on the other outcome. Defend one and the other becomes the way through.
@@ -234,7 +234,7 @@ function len(x) { return (x ?? []).length; }
   {
     const r = await run("c8", { conditions: [cond("c_typo", "Mandatory", CHECKED)] });
     console.log("\n--- case 8: unrecognized label ---");
-    check("holds", r.execution_decision, "hold");
+    check("decision definition_repair, not hold", r.execution_decision, "definition_repair");
     check("the _return is never consulted", providerItem(r, "c_typo").status, "unverified");
     check("routed to definition_repair", providerItem(r, "c_typo").route, "definition_repair");
     check("note names the label", /Mandatory/.test(providerItem(r, "c_typo").note ?? ""), "true");
@@ -244,7 +244,7 @@ function len(x) { return (x ?? []).length; }
   {
     const r = await run("c9", { conditionsThrow: true });
     console.log("\n--- case 9: getProviderConditions throws ---");
-    check("holds", r.execution_decision, "hold");
+    check("decision definition_repair, not hold", r.execution_decision, "definition_repair");
     check("one item recorded", len(r.provider_checklist), 1);
     check("routed to definition_repair", r.provider_checklist?.[0]?.route, "definition_repair");
     check("note names the failure", /unreachable/.test(r.provider_checklist?.[0]?.note ?? ""), "true");
@@ -279,7 +279,7 @@ function len(x) { return (x ?? []).length; }
     console.log("\n--- case 10-b: constrains names a slot that does not exist ---");
     check("the hook's \"checked\" is never reached", item.status, "unverified");
     check("routed to the provider", item.route, "definition_repair");
-    check("holds", r.execution_decision, "hold");
+    check("decision definition_repair, not hold", r.execution_decision, "definition_repair");
     check("note names the bad target", /amuont/.test(item.note ?? ""), "true");
     check("[Verify] goes to the provider too", await (async () => {
       const r2 = await run("c10c", {
@@ -304,6 +304,24 @@ function len(x) { return (x ?? []).length; }
     check("gate.kind is set", r.gate?.kind, "unmet");
     check("the blank is still recorded", r.gate?.unknown_fields?.[0]?.name, "recipient");
     check("recorded as unmet", r.gate?.unmet?.[0]?.id, "c_limit");
+  }
+
+  // ── 10-d. A finished prohibition outranks an open route. ─────────────────────
+  // One condition checked and prohibiting, another that cannot be read. The second is a route still
+  // open (definition_repair); the first is a check that finished. No repair of the second can make
+  // the first met, so the decision is hold — and the repair is still recorded for its owner (4.5).
+  {
+    const r = await run("c10e", {
+      conditions: [
+        cond("c_limit", "Required", UNMET, { constrains: ["amount"] }),
+        cond("c_typo", "Mandatory", CHECKED, { constrains: ["amount"] }),
+      ],
+      measured: { amount: 4200, recipient: "acct_1" },
+    });
+    console.log("\n--- case 10-d: unmet alongside a condition that cannot be read ---");
+    check("decision is hold", r.execution_decision, "hold");
+    check("the reason names the unmet item", /^hold: unmet/.test(r.reason ?? ""), "true");
+    check("the repair is still recorded", r.gate?.definition_repair?.[0]?.id, "c_typo");
   }
 
   // ── 11. INVARIANT: satisfying a provider condition promotes nothing. ──────────

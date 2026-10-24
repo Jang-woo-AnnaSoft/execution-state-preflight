@@ -12,6 +12,7 @@
  *   3. Provenance classification, including the case the first design could not
  *      see: the same unauthorised value filled every single time.
  *   4. The runner -> analyzer pipeline on fabricated runs.
+ *   5. Arm C's decision words reach the analyzer apart — an open route is not a hold.
  *
  * Check 3 is the one that matters. The first version of this experiment measured
  * variance, so a model that took the buyer's terms identically on every run
@@ -310,6 +311,37 @@ check("Q2 passes (C enumerable, A+B not)",    byId["opus:Q2"], true);
   // Only the group 2 instructions should disagree, and only because of limits.
   const g2 = INS.filter(i => i.limits).length * 2;
   check("only limit-bearing instructions disagree", noted <= g2, true);
+}
+
+console.log("\n--- arm C outcomes: an open route is not a hold ---");
+{
+  // Spec 4.5: hold is a check that finished and prohibits. system_lookup, definition_repair and
+  //   exhausted are routes still open or ended. They used to arrive as "hold" and were counted as
+  //   holds. In this experiment none of them is a verdict, so each marks its cell not clean.
+  const { aggregate, summarize } = require("./analyze");
+  const claims = require("./claims");
+  const base = { model_key: "m", arm: "C", group: 4, condition: "clean", args: null };
+  const cellOf = (...outcomes) => summarize(aggregate(outcomes.map(o => ({ ...base, ...o })))[0]);
+
+  const held = cellOf({ outcome: "hold", hold_kind: "unmet", gate_kind: "unmet" });
+  check("unmet hold: counted as a hold", held.hold_rate, 100);
+  check("  and the cell is clean", held.clean, true);
+  for (const [outcome, field] of [["system_lookup", "system_lookups"], ["exhausted", "exhausted"]]) {
+    const c = cellOf({ outcome, gate_kind: outcome });
+    check(`${outcome}: not a hold`, c.hold_rate, 0);
+    check(`  counted on its own`, c[field], 1);
+    check(`  the cell is not clean`, c.clean, false);
+  }
+  const rep = cellOf({ outcome: "definition_repair", gate_kind: "definition_repair" });
+  check("definition_repair (declaration gap): counted as repair", rep.repairs, 1);
+  check("  not clean", rep.clean, false);
+  const broke = cellOf({ outcome: "definition_repair", gate_kind: "lookup_failed" });
+  check("definition_repair (hook threw): broken_hooks", broke.broken_hooks, 1);
+  const odd = cellOf({ outcome: "unrecognized", gate_kind: "value_gate" });
+  check("an unknown decision word is an error, not a hold", odd.errors, 1);
+
+  check("reproducibility class: system_lookup is held", claims.outcomeClass({ outcome: "system_lookup" }), "held");
+  check("reproducibility class: definition_repair is broken", claims.outcomeClass({ outcome: "definition_repair" }), "broken");
 }
 
 fs.unlinkSync(tmp);

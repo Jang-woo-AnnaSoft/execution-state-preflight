@@ -286,8 +286,8 @@ async function main() {
     // The role exists in the ERP but not in the declared table, so there is nothing to
     // compare against. No user answer fixes that; the policy owner must add the role.
     // Earlier this went to ask_user, which was the known gap. On the provider list it is
-    // 4.5(c), and the gate holds and names the condition.
-    check("holds rather than asking", s.execution_decision, "hold");
+    // 4.5(c): the decision is definition_repair and the gate names the condition.
+    check("repair rather than asking", s.execution_decision, "definition_repair");
     check("routed to definition_repair", itemOf(s).route, "definition_repair");
     check("named as a provider gap", s.gate?.definition_repair?.[0]?.id, COND_APPROVER_LIMIT.id);
     check("nothing sent to the user", (s.gate?.unverified_provider ?? []).length, 0);
@@ -309,7 +309,7 @@ async function main() {
       erp: erpInvoice({ id: "INV-1008", amount: 18400, approverRole: "AP Clerk" }),
       override: { status: "checked", source: "user_answer", note: "CFO approved on a call" },
     });
-    check("does not execute", s.execution_decision, "hold");
+    check("does not execute — goes to repair", s.execution_decision, "definition_repair");
     check("the hook's \"checked\" is refused", itemOf(s).status, "unverified");
     check("routed to the provider, not the user", itemOf(s).route, "definition_repair");
     check("the refusal cites the rule", /4\.2\.1/.test(itemOf(s).note ?? ""), "true");

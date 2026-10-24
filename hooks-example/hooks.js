@@ -23,9 +23,13 @@
  *      It is written into every arm C record, so the published runs carry on their
  *      face whichever ones were unwired. The experiment measures the value gate, so
  *      field policy, schema validation, payload validation and the provider
- *      conditions are all absent, and getAllowedSources is absent too: every slot
- *      permits all five sources, which is what this skeleton did before that hook
- *      existed. Declaring sources here would change what run 1 / run 2 measure.
+ *      conditions are all absent.
+ *      getAllowedSources IS wired, before run 1, for one slot: buyer_contact may
+ *      come only from measured_data (tool.js ALLOWED_SOURCES). Every other slot
+ *      permits all five. The cost: a contact the user types in the instruction is
+ *      not consulted, and a conflict between it and the measurement is not
+ *      recorded. No instruction here states a contact that contradicts the
+ *      measured one.
  *   4. spanSupportsValue also runs on its default, which does equality only. Its
  *      contract asks the hook to judge whether the span states the value FOR THE
  *      SLOT, and equality cannot: "Nothing after 8pm" contains a time and states
@@ -42,6 +46,7 @@
  */
 
 const { squash, violatesEvening, violatesPublicPlace } = require("./normalize");
+const { ALLOWED_SOURCES } = require("./tool");
 
 const WHEN_CASES = ["immediate", "scheduled", "conditional", "recurring"];
 
@@ -155,7 +160,13 @@ function createHooks({ adapter, model, runId, measuredData, ask }) {
       }
 
       const hit = all?.[fieldName];
-      if (!hit || hit.found !== true) return undefined;        // not found → next source
+      // The model's {"found": false} is a report: it looked and the field is not stated. Pass it on as
+      // one. Turning it into undefined — as this did — recorded a check the model made as a check
+      // nobody made (spec 5.2: no report and a report of nothing are different).
+      // A field missing from the reply, or a found that is neither true nor false, is not a report of
+      // anything, and stays undefined.
+      if (hit?.found === false) return { none: "absent" };
+      if (!hit || hit.found !== true) return undefined;        // no report → next source
 
       const { value, segment_index, span } = hit;
       if (!Array.isArray(span) || span.length !== 2) return undefined;
@@ -174,11 +185,17 @@ function createHooks({ adapter, model, runId, measuredData, ask }) {
       return { value, segment_index, span: [start, end] };
     },
 
-    // [REQUIRED-OP] CONTRACT: { valid, value } or undefined.
+    // [REQUIRED-OP] CONTRACT: { valid, value }, { valid: false }, { none: "absent" | "no_place" }, or
+    //   undefined. Here measuredData carries whatever the arm put in it, passed through as is.
     measureFromEnvironment(fieldName, ctx) {
       const src = ctx?.measured_data ?? measuredData;
       if (src && fieldName in src) return src[fieldName];
       return undefined;
+    },
+
+    // [OPTIONAL] Reads the declaration in tool.js. null = all five (skeleton default).
+    getAllowedSources(fieldName) {
+      return ALLOWED_SOURCES[fieldName] ?? null;
     },
 
     // [REQUIRED-OP] Most conservative key: unique per run, so prior_state never

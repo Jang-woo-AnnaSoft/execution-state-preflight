@@ -109,6 +109,20 @@ const SLOTS = {
   location: "undeclared"
 };
 
+/**
+ * Which of the five sources each slot may consult (getAllowedSources). A slot left
+ * out permits all five. Kept here, next to the slot classification, because it is a
+ * declaration about the tool's arguments, not logic: the skeleton's POLICY note puts
+ * it with the checklist, out of hook bodies.
+ *
+ * buyer_contact is the slot the system measures. Without this line the user's
+ * "use the buyer's in-app chat" reached the slot first (instruction outranks
+ * measured_data), and a channel name settled a contact slot.
+ */
+const ALLOWED_SOURCES = {
+  buyer_contact: ["measured_data"]
+};
+
 function buildTool(variant = "plain") {
   return {
     name: "schedule_pickup",
@@ -130,6 +144,7 @@ module.exports = {
   buildTool,
   toAnthropicTool,
   SLOTS,
+  ALLOWED_SOURCES,
   INPUT_SCHEMA,
   PLAIN_DESCRIPTION,
   LABELLED_DESCRIPTION,

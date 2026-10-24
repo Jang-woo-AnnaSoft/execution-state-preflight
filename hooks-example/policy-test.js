@@ -193,16 +193,20 @@ const slot = (state, name) => (state.fields ?? []).find(f => f.name === name) ??
       applyFieldPolicy: (r) => r,
     });
     const { state: refund } = await run(narrow, { tool: REFUND, prior: executed });
-    row("a narrow key, wrong record handed in", slot(refund, "amount").source, "prior_state",
-      "the payment's amount arrived in the refund");
-    row("  value carried across actions", slot(refund, "amount").value, "18400",
-      "the gate checks 'executed', never 'is this the same action'");
+    // This used to settle: with a pass-through policy the payment's amount arrived in the refund as
+    //   KNOWN. The gate now refuses inheritance itself (5.2), whatever the policy hook does.
+    row("a narrow key, wrong record handed in", slot(refund, "amount").status, "unknown",
+      "a pass-through policy no longer lets the payment's amount settle the refund");
+    row("  it is only a candidate", slot(refund, "amount").prior_candidate?.value, "18400",
+      "the gate checks 'executed', never 'is this the same action' — so the user is shown it to confirm");
+    row("  and the candidate names where it came from", slot(refund, "amount").prior_candidate?.action_key,
+      "u_1042:send_payment", "the question can say 'from your payment' — the user, not the gate, decides");
     // The handed-in record names the action it came from, and the gate does not read that field.
     //   So the key decides storage buckets; the caller decides what to hand in.
     row("  the record even names the other action", executed.action_key, "u_1042:send_payment",
       "present on the record, unread by the gate");
 
-    // The default policy is the guard that is in the gate.
+    // With the default policy, the same. The guard is in the gate now, not in the default.
     const { state: refused } = await run(
       minimalHooks({ measureFromEnvironment: () => undefined }), { tool: REFUND, prior: executed });
     row("default applyFieldPolicy instead", slot(refused, "amount").status, "unknown",

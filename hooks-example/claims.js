@@ -108,13 +108,14 @@ function auditBlanksApprox(run, expected) {
  *   executed_unsourced   executed with at least one value whose origin the
  *                        record cannot answer. The failure that must not vary in
  *   asked                did not execute; came back for input
- *   held                 did not execute; nothing to ask
- *   broken               our hook threw, or the provider errored
+ *   held                 did not execute; nothing to ask (hold, deferred, system_lookup, exhausted)
+ *   broken               our hook threw, a declaration of ours has a gap, or the provider errored
  */
 function outcomeClass(run, audit) {
   if (run?.outcome === "error" || run?.gate_kind === "lookup_failed") return "broken";
+  if (run?.outcome === "definition_repair" || run?.outcome === "unrecognized") return "broken";
   if (run?.outcome === "ask") return "asked";
-  if (run?.outcome === "hold" || run?.outcome === "deferred") return "held";
+  if (["hold", "deferred", "system_lookup", "exhausted"].includes(run?.outcome)) return "held";
   if (run?.outcome === "call") {
     return audit?.recorded && audit?.verified ? "executed_sourced" : "executed_unsourced";
   }

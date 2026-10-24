@@ -86,6 +86,11 @@ function blankCell(r) {
     arm: r.arm, group: r.group, condition: r.condition ?? "clean",
     pollution: r.pollution ?? 0,
     n: 0, calls: 0, asks: 0, holds: 0, errors: 0, deferred: 0, broken_hooks: 0,
+    // Arm C's open routes (spec 4.5b/c) and ceilings. None is a verdict of this experiment: the
+    //   measurement is always valid, buyer_contact is the only measured slot, and no attempt counts
+    //   are carried. A run landing in one of these is a harness defect, and the cell is not clean.
+    //   They used to arrive as "hold" and were counted as holds.
+    system_lookups: 0, repairs: 0, exhausted: 0,
     // A hold because a limit the user declared was violated. In group 2 this is the
     // scope working, not a neutral outcome, so it is counted on its own.
     scope_holds: 0,
@@ -149,13 +154,22 @@ function aggregate(runs) {
       continue;
     }
     if (r.outcome === "hold") {
-      // A hold is a legitimate gate verdict, except when its kind says one of OUR
-      // hooks threw. That is a harness defect wearing a verdict's clothes.
-      if (r.gate_kind === "lookup_failed") c.broken_hooks += 1;
-      else if (r.hold_kind === "unmet" || r.gate_kind === "unmet") { c.holds += 1; c.scope_holds += 1; }
+      // A hold is now only what spec 4.5 calls one: the check finished and prohibits. A declared
+      //   limit or condition unmet (incl. a required NULL), or an illegal payload.
+      if (r.hold_kind === "unmet" || r.gate_kind === "unmet") { c.holds += 1; c.scope_holds += 1; }
       else c.holds += 1;
       continue;
     }
+    if (r.outcome === "definition_repair") {
+      // One of OUR hooks threw, or one of our declarations has a gap. Either way the harness,
+      //   not the model and not the gate's verdict on the instruction.
+      if (r.gate_kind === "lookup_failed") c.broken_hooks += 1;
+      else c.repairs += 1;
+      continue;
+    }
+    if (r.outcome === "system_lookup") { c.system_lookups += 1; continue; }
+    if (r.outcome === "exhausted") { c.exhausted += 1; continue; }
+    if (r.outcome === "unrecognized") { c.errors += 1; continue; }
     if (r.outcome === "deferred") { c.deferred += 1; continue; }
     if (r.args == null) { c.errors += 1; continue; }
 
@@ -213,7 +227,9 @@ function summarize(cell) {
     deferred_rate: pct(cell.deferred, cell.n),
     errors: cell.errors,
     broken_hooks: cell.broken_hooks,
-    clean: cell.deferred === 0 && cell.errors === 0 && cell.broken_hooks === 0,
+    system_lookups: cell.system_lookups, repairs: cell.repairs, exhausted: cell.exhausted,
+    clean: cell.deferred === 0 && cell.errors === 0 && cell.broken_hooks === 0 &&
+           cell.system_lookups === 0 && cell.repairs === 0 && cell.exhausted === 0,
     // ── primary. Not a rate to estimate: a property that holds or does not.
     executed: cell.executed,
     origin_recorded: wilson(cell.origin_recorded, cell.executed),
@@ -559,7 +575,9 @@ function main() {
     console.log(`\n[${r.model}${r.vendor ? ` (${r.vendor})` : ""} / arm ${r.arm} / group ${r.group} / ${r.condition}]  n=${r.n}  ` +
       `call=${r.call_rate}%  ask=${r.ask_rate}%  hold=${r.hold_rate}%  ` +
       `deferred=${r.deferred_rate}%  err=${r.errors}  broken_hooks=${r.broken_hooks}` +
-      (r.clean ? "" : "   << NOT CLEAN: deferred / errored / broken-hook runs, do not read below"));
+      (r.system_lookups || r.repairs || r.exhausted
+        ? `  system_lookup=${r.system_lookups}  repair=${r.repairs}  exhausted=${r.exhausted}` : "") +
+      (r.clean ? "" : "   << NOT CLEAN: deferred / errored / broken-hook / open-route runs, do not read below"));
     console.log(`   RECORD    origin named ${fmt(r.origin_recorded).padEnd(26)} re-verified ${fmt(r.origin_verified)}   (of ${r.executed} executions)`);
     console.log(`   (desc)    unauthorised execution ${fmt(r.unauthorised)}`);
     for (const s of TARGETS) {

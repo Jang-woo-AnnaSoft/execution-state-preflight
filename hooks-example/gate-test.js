@@ -9,13 +9,16 @@
  * most likely to be wrong: whether these hooks actually satisfy the skeleton's
  * runtime contract, and whether the gate behaves as the design claims.
  *
- * Four cases:
- *   1. group 1 — everything stated     → execute, every slot known
- *   2. group 4 — nothing stated        → ask_user, time and location unknown
- *   3. an extractor that invents a value and points at a plausible span
+ * Cases, among them (the console headers below are the full list):
+ *   - group 1 — everything stated      → execute, every slot known
+ *   - group 4 — nothing stated         → ask_user, time and location unknown
+ *   - an extractor that invents a value and points at a plausible span
  *                                      → the slot must NOT become known
- *   4. an extractor that reads an untrusted segment
+ *   - an extractor that reads an untrusted segment
  *                                      → the slot must NOT become known
+ *   - buyer_contact, declared measured_data only
+ *                                      → the user's wording never settles it;
+ *                                        a failed measurement holds, asks nothing
  */
 
 const fs = require("fs");
@@ -281,6 +284,74 @@ async function main() {
       check("unknown item is not verified", byId.chk_typo, "unverified");
       check("and it blocks", result.decision, "ask_user");
     }
+  }
+
+  console.log("\n--- case 8: the example extractor passes the model's \"not found\" on as a report ---");
+  {
+    // hooks.js asks the model for {"found": false} when a field is not stated. That is a check the
+    // model made. It used to become undefined, which the record reads as "not checked" (5.2).
+    const { createHooks } = require("./hooks");
+    const segs = turnSegments("Arrange the pickup for LST-2291.");
+    const h = createHooks({ model: "stub", runId: "c8", measuredData: {},
+      ask: makeStub({ extraction: { item_id: locate(segs, "LST-2291"), time: { found: false },
+                                    location: {} } }) });
+    check("found:false → a report of nothing", JSON.stringify(await h.extractFromInstruction("time", segs)),
+      JSON.stringify({ none: "absent" }));
+    check("a malformed entry stays no report", await h.extractFromInstruction("location", segs), "undefined");
+    check("a field missing from the reply stays no report", await h.extractFromInstruction("buyer_contact", segs),
+      "undefined");
+  }
+
+  console.log("\n--- case 9: buyer_contact is declared measured_data only ---");
+  {
+    // The group 1 wording. The extractor finds "in-app chat" in what the seller typed,
+    // and instruction outranks measured_data — so without the declaration, a channel
+    // name settled the contact slot. This case is the reason the stub above no longer
+    // gets to answer found:false for buyer_contact and call it covered.
+    const text = "Set up the pickup for listing LST-2291 at 2pm this Saturday at the Hongdae station lockers. Use the buyer's in-app chat.";
+    const plan = {
+      buildExtraction: segs => ({
+        item_id: locate(segs, "LST-2291"),
+        time: locate(segs, "2pm this Saturday"),
+        location: locate(segs, "Hongdae station lockers"),
+        buyer_contact: locate(segs, "in-app chat", "user")
+      })
+    };
+    const { result, byName } = await runCase("c9a", text, plan);
+    check("decision", result.decision, "execute");
+    check("buyer_contact source", byName.buyer_contact?.source, "measured_data");
+    check("args.buyer_contact is the measured value", result.args?.buyer_contact, ctx.buyer_contact);
+    check("allowed_sources reaches the arm record",
+      (byName.buyer_contact?.allowed_sources ?? []).join(","), "measured_data");
+    check("an undeclared slot permits all five",
+      (byName.item_id?.allowed_sources ?? []).length, 5);
+
+    // The measurement cannot answer. The seller's wording is still there and must still not
+    // settle it, and the user must not be asked: 4.5(b), the system owes the answer. That is a
+    // route still open, so the decision names it — it is not hold (4.5).
+    const turn = buildUserTurn(ctx, text);
+    const arm = (runId, measured) => runGateArm({
+      model: "stub", tool: buildTool("plain"), ctx, instructionText: text, runId, measured,
+      ask: makeStub({ ...plan, extraction: plan.buildExtraction(turn.segments) })
+    });
+    const failed = await arm("c9b", { buyer_contact: { valid: false } });
+    const bc = (failed.fields ?? []).find(f => f.name === "buyer_contact");
+    check("measurement cannot answer → system_lookup", failed.decision, "system_lookup");
+    check("  arm C reports it as its own outcome", failed.outcome, "system_lookup");
+    check("  the slot is named for the lookup", failed.system_lookup.join(","), "buyer_contact");
+    check("  buyer_contact stays unknown", bc?.status, "unknown");
+    check("  its route reaches the arm record", bc?.route, "system_lookup");
+    check("  and so does what the source said", (bc?.lookup_trace ?? []).map(t => t.result).join(","), "cannot_answer");
+    check("  nothing asked of the user", (failed.blanks ?? []).length, 0);
+
+    // The measurement reports there is no contact. Every permitted source said absent: NULL (5.1),
+    // and buyer_contact is required, so it is unmet and the arm holds (6.3).
+    const none = await arm("c9c", { buyer_contact: { none: "absent" } });
+    const bcNone = (none.fields ?? []).find(f => f.name === "buyer_contact");
+    check("measurement reports none → the slot is NULL", bcNone?.status, "null");
+    check("  required NULL holds", none.decision, "hold");
+    check("  as an unmet hold, named", (none.unmet ?? []).join(","), "buyer_contact");
+    check("  no value is projected for it", "value" in (bcNone ?? {}) && bcNone.value !== undefined, false);
   }
 
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
