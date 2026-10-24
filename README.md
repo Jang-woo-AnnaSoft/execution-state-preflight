@@ -106,9 +106,11 @@ Two gates. Neither produces a value or a justification, and neither executes —
 | 1 | `instruction` | taken from a trusted segment, with its location |
 | 2 | `pre_set_data` | settled earlier through a decision path |
 | 3 | `measured_data` | observed from the environment |
-| 4 | `prior_state` | inherited from a prior `executed` record |
+| 4 | `prior_state` | a value in a prior `executed` record — never settles a slot; it is shown to the user as a candidate and counts only once confirmed, as `user_answer` |
 
-A search order, not a ranking by trustworthiness. Which of the five a slot may use is declared per slot, and an unknown's route follows from that: a slot that does not permit `user_answer` is one the system alone can answer, so it holds instead of asking. Declaring nothing permits all five. All five empty means `unknown` — and given an incomplete instruction, `unknown` is the correct output, not an error.
+A search order, not a ranking by trustworthiness. Which of the five a slot may use is declared per slot, and an unknown's route follows from that and is written on the slot: a slot that does not permit `user_answer` is one the system alone can answer, so it goes to `system_lookup` instead of asking. Declaring nothing permits all five. All five empty means `unknown` — and given an incomplete instruction, `unknown` is the correct output, not an error.
+
+A source can also report that it looked and found nothing — `{ none: "absent" }` — which is not the same as returning nothing (spec 5.2). When every permitted source reports that, the slot is `null` (5.1), and a required `null` is unmet: the gate holds. `hold` means only that — a check that finished and prohibits. Open routes are named as routes: `system_lookup`, `definition_repair`, `ask_user`, and `exhausted` once a route reaches its ceiling.
 
 What comes out is a record, and the record is the point:
 
@@ -139,8 +141,8 @@ const preflight = createPreflight({
     classifyWhenCase,             // → "immediate" | "scheduled" | "conditional" | "recurring"
     extractUserActionName,        // → what the user calls this action
     confirmToolNameMatchesIntent, // → { approved, reason }
-    extractFromInstruction,       // → { value, segment_index, span } | undefined
-    measureFromEnvironment,       // → { valid, value } | undefined
+    extractFromInstruction,       // → { value, segment_index, span } | { none: "absent" | "no_place" } | undefined
+    measureFromEnvironment,       // → { valid, value } | { valid: false } | { none: "absent" | "no_place" } | undefined
     buildActionKey,               // → opaque string; sets the blast radius of prior_state
   },
   storage,        // { persist, load } — append-only, or preserve `executed` separately
@@ -184,7 +186,7 @@ Apply this only to irreversible actions, and only the parts that match: immediat
 - **Flat arguments assumed.** Nested schemas and key-mapping tools need an adapter.
 - **Verdict and execution are not separated here, and that is on purpose.** The specification has the executing party decide for itself and write its own record (3.5); this skeleton writes `execution_decision` into the gate's own record so the example runs end to end in one process. **That is for demonstration, not a design to copy.**
 
-It also has no `null` state, so a confirmed absence cannot be told from a lookup that never finished. Both gaps are marked in the source beside the code they affect. **The specification is the standard; the skeleton is not being revised to meet it.**
+Two more departures remain: no record of which checklist version a verdict used (6.1), and no binding of an approval to the value it approved (6.3). Each is marked in the source beside the code it affects. **The specification is the standard; where the skeleton departs from it, the source says so.**
 
 ---
 

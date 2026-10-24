@@ -41,19 +41,52 @@
  * @typedef {Object} FieldRecord
  * @property {string} name
  * @property {*} value
- * @property {"known"|"unknown"} status
- * @property {"instruction"|"pre_set_data"|"measured_data"|"prior_state"|"user_answer"|null} source
+ * @property {"known"|"unknown"|"null"} status
+ *   // "null" (a string, never JS null): every permitted source reported nothing and no route remains
+ *   //   (5.1). Written by the gate from lookup_trace, never accepted from a hook. Not counted as unknown;
+ *   //   a required slot that is "null" is unmet (6.3), and a "null" value is never sent to the tool.
+ * @property {"instruction"|"pre_set_data"|"measured_data"|"user_answer"|null} source
+ *   // prior_state never appears: inheritance alone does not settle a slot (5.2).
  * @property {"instruction"|"pre_set_data"|"measured_data"|"user_answer"|null} [origin_source]
  *   // The first source. prior_state can never appear here (it inherits).
  * @property {boolean} [pending_at_trigger]
  *   // Marks "unknown is correct now, will be settled at trigger time". Only applyFieldPolicy sets it.
  *   // It excuses a field only at the at_instruction gate. At at_trigger, unknown is unmet without exception.
- *   // NOTE: no staleness slot. prior_state is refused by default in applyFieldPolicy instead.
+ *   // NOTE: no staleness slot. prior_state never settles a slot (5.2); see Source 5 in lookupField.
  * @property {boolean} [lookup_failed]  // The instruction or measurement hook threw. Set by lookupField only.
  *                                       //   See [LOOKUP HOOK FAILURE]
  * @property {string} [_diag_note]      // Hook exception text. Logs only — never copied into note
  * @property {string} [note]
  * @property {string} resolved_at
+ * @property {string[]} allowed_sources // Which of the five 5.2 sources this slot may consult (getAllowedSources)
+ * @property {{source: string, result: "found"|"absent"|"no_place"|"no_report"|"cannot_answer"|"rejected"|"failed"|"candidate"}[]} lookup_trace
+ *   // Every source the gate consulted for this slot, in order, and what came back (5.2: a source
+ *   //   that was checked stays on the record). A source not in allowed_sources is not consulted and
+ *   //   not listed; the chain stops at the first "found", so later sources are not listed either.
+ *   //   absent         the hook checked and reports the value is not there ({ none: "absent" }) — a
+ *   //                  report of nothing (5.2, 6.2). Recorded; does not settle the slot or end the chain
+ *   //   no_place       the hook reports there is no place to check ({ none: "no_place" }) — a gap in
+ *   //                  the declaration (5.1, 4.5c)
+ *   //   no_report      nothing came back — NOT a report of nothing. The source was not checked (5.2).
+ *   //                  Also what an absent key in userAnswers / preSetData / a prior record gives; see
+ *   //                  [REPORTING NOTHING]
+ *   //   cannot_answer  the source said it could not answer (measured_data valid:false). Not a
+ *   //                  confirmation of "nothing" either (5.1)
+ *   //   rejected       something came back and the gate refused it (untrusted segment, span that does
+ *   //                  not state the value, pre-set entry without trust "user")
+ *   //   failed         the hook threw (lookup_failed)
+ *   //   candidate      prior_state held a value. Not a confirmation: the slot stays unknown and the
+ *   //                  value waits on the user (prior_candidate, 5.2)
+ *   //   Written by the gate, never by a hook: resolveField re-attaches it after applyFieldPolicy.
+ * @property {{value: *, origin_source: string|null, action_key: string|null}} [prior_candidate]
+ *   // Present on an unknown slot whose prior_state held a value. Shown with the question; confirmed only
+ *   //   by coming back as user_answer.
+ * @property {"ask_user"|"system_lookup"|"definition_repair"|null} route
+ *   // 4.5 route for an UNKNOWN slot, recorded on the slot (6.3). null on known slots.
+ *   //   Computed by routeFor from allowed_sources and lookup_trace, never chosen by a model or a hook:
+ *   //   a hook that threw or a no_place report → definition_repair (4.5c); user_answer permitted and the
+ *   //   user has not said "none" → ask_user (4.5a); a measurement still open → system_lookup (4.5b);
+ *   //   anything else left open → definition_repair.
  *
  * @typedef {Object} UserChecklistItem
  * @property {string} id           // Required. The key that reattaches an ask_user answer — without it, hold.
@@ -67,7 +100,7 @@
  * @property {"value_gate"|"tool_undetermined"|"tool_undetermined_exhausted"
  *           |"intent_undetermined"|"intent_undetermined_exhausted"
  *           |"schema_unsupported"|"branch_unresolved"|"branch_conflict"|"payload_invalid"
- *           |"action_key_failed"} [kind]
+ *           |"action_key_failed"|"lookup_failed"|"system_lookup"|"definition_repair"|"unmet"|"exhausted"} [kind]
  *   // Omitted means value_gate (the original shape).
  *   // intent_undetermined*: C1/C2 could not be settled. Carries user_message, never unknown_fields
  *   //   (requiredFields is not even read yet at that point).
@@ -122,8 +155,14 @@
  * @property {number|null} unverified_provider_count
  *   // Provider conditions not compared. pending_on_slot and disclosure_required are not counted.
  * @property {GateResult|null} gate     // The authoritative decision. Consumers read this, not reason.
- * @property {"execute"|"ask_user"|"hold"|"deferred"|"executed"|"failed"} execution_decision
+ * @property {"execute"|"ask_user"|"system_lookup"|"definition_repair"|"exhausted"|"hold"|"deferred"|"executed"|"failed"} execution_decision
  *   // deferred: the normal wait for non-immediate work (distinct from hold). Only "executed" counts as baseline.
+ *   // On the value gate, hold means what 4.5 means by it: the check FINISHED and its result prohibits
+ *   //   (unmet, payload_invalid). system_lookup and definition_repair are routes still open (4.5b, 4.5c)
+ *   //   and are not hold — 4.5: "a finished check" and "a missing check" merged lose where the work goes.
+ *   // exhausted: the remaining blanks are on routes that reached their ceiling — intent/tool asks, or
+ *   //   the value gate's ask_user / system_lookup (createPreflight limits). Finished, not prohibited.
+ *   // The early returns (config defect, action_key, schema_unsupported, backstop) are definition_repair.
  * @property {Object} [deferred_input]  // Present only on deferred records — the input for re-running at trigger time
  * @property {string} reason            // A derived rendering. gate is authoritative.
  * @property {string} timestamp
@@ -162,6 +201,10 @@ const MSG_TOOL_EXHAUSTED =
 // NOTE: the value_gate ceiling remains the adopting system's — see [Re-ask ceiling] in APPENDIX.
 const INTENT_ATTEMPT_LIMIT = 2;
 const TOOL_ATTEMPT_LIMIT = 2;
+// Default ceilings for the value gate's two retriable routes. Overridable per preflight (createPreflight
+//   limits: { ask, lookup }), since 4.5 leaves the value to the adopting system.
+const ASK_ATTEMPT_LIMIT = 2;
+const LOOKUP_ATTEMPT_LIMIT = 2;
 
 // Named after the act, never after the schema. Branch options travel in gate.branch_options for rendering.
 const MSG_BRANCH_UNRESOLVED =
@@ -553,6 +596,34 @@ function verifyProviderCondition(condition, ctx) {
   return { status: "unverified", source: null, note: "verifyProviderCondition not wired" };
 }
 
+// 4.5 route of one slot, from its declared sources and its lookup result. Not a judgment: the same
+//   inputs give the same route, and no hook or model is consulted (4.5: "the model does not choose").
+//   known / null       no route — the check is done
+//   definition_repair  a hook threw, or a source reported there is no place to check (5.1, 4.5c). No
+//                      user answer and no re-measurement fills a gap in the declaration
+//   ask_user           user_answer is permitted and the user has not yet reported "none"
+//   system_lookup      otherwise, if a measurement is still open (not reported absent)
+//   definition_repair  otherwise. What is left open is a source neither the user nor the system can
+//                      re-answer: an extractor or a caller map that gave no report (4.5c) — the fix
+//                      is to make it report
+function routeFor(rec, allowed_sources, trace = []) {
+  if (rec.status === "known" || rec.status === "null") return null;
+  if (rec.lookup_failed === true) return "definition_repair";
+  if (trace.some(t => t.result === "no_place")) return "definition_repair";
+  const result = src => trace.find(t => t.source === src)?.result;
+  if (allowedSourceSet(allowed_sources).has("user_answer") && result("user_answer") !== "absent") return "ask_user";
+  const open = trace.filter(t => t.result !== "absent");
+  if (open.some(t => t.source === "measured_data")) return "system_lookup";
+  return "definition_repair";
+}
+
+// 5.1: the slot is NULL when every declared check reported nothing and no route remains. Every
+//   permitted source is consulted on an unknown slot, so "every entry is absent" is both halves: each
+//   check reported, and nothing is left open. no_report, cannot_answer, rejected and a prior_state
+//   candidate all leave something open, so none of them can make NULL. Nor can a route that ended at
+//   its ceiling — that is not a report (4.5, 5.2).
+const isNullByTrace = trace => trace.length > 0 && trace.every(t => t.result === "absent");
+
 // 4. Per-field lookup chain
 //    The five sources decide only whether a value EXISTS. Format validation comes after (applyFieldPolicy → validateFieldSchema).
 //    BREAKS: reorder and a later intent loses to an earlier one; demoting user_answer ignores the answer just given.
@@ -564,7 +635,23 @@ async function resolveField(h, fieldName, ctx) {
   const declared = await safeHook(h.getAllowedSources, [fieldName, ctx.mcpTool], () => null);
   const allowed_sources = [...allowedSourceSet(declared)];
   const record = await lookupField(h, fieldName, { ...ctx, allowed_sources });
-  const stamp = rec => ({ ...rec, allowed_sources, resolved_at });
+  // lookup_trace and route are the gate's own facts, so they are written last, over whatever a policy
+  //   hook returned. A hook may demote a value; it may not rewrite what was consulted or who resolves it.
+  //   BREAKS: spread them before ...rec and a policy that builds a fresh record drops the trace — the
+  //     record then shows a slot that was never looked up.
+  //   NULL is the gate's too: written here from the trace, never accepted from a hook.
+  const trace = record.lookup_trace ?? [];
+  const stamp = rec => {
+    const status = rec.status === "unknown" && rec.lookup_failed !== true && isNullByTrace(trace)
+      ? "null" : rec.status;
+    const out = { ...rec, status, allowed_sources, resolved_at, lookup_trace: trace };
+    // The candidate is the gate's fact as well. It survives a policy that rebuilds the record, and it
+    //   is dropped once the slot settles (the user confirmed it, as user_answer, or chose otherwise).
+    if (status === "unknown" && record.prior_candidate) out.prior_candidate = record.prior_candidate;
+    else delete out.prior_candidate;
+    out.route = routeFor(out, allowed_sources, trace);
+    return out;
+  };
   // BREAKS: run applyFieldPolicy here and it can set pending_at_trigger — the at_instruction gate excuses
   //   the field, and a crashed extractor gets scheduled instead of asked about.
   if (record.lookup_failed === true) return stamp(record);
@@ -573,10 +660,18 @@ async function resolveField(h, fieldName, ctx) {
   const out = await safeHook(h.applyFieldPolicy, [record, ctx],
     e => ({ ...record, value: undefined, status: "unknown", source: null,
             note: `field policy hook failed: ${e?.message ?? String(e)}` }));
-  const settled = (out && (out.status === "known" || out.status === "unknown"))
+  let settled = (out && (out.status === "known" || out.status === "unknown"))
     ? out
     : { ...record, value: undefined, status: "unknown", source: null,
         note: "field policy hook did not return a valid FieldRecord" };
+  // A policy demotes; it never promotes, and never moves a value to another source. Either would let
+  //   a hook settle what the lookup did not — the one thing this gate exists to refuse (5.2, 2.4).
+  //   Before prior_state stopped settling, passing it through was exactly that, and it was "opt-in".
+  //   NOTE: a known value with the same source but a different value (normalization) is let through.
+  if (settled.status === "known" && (record.status !== "known" || settled.source !== record.source)) {
+    settled = { ...record, value: undefined, status: "unknown", source: null,
+                note: "field policy may demote a value, never promote one or change its source (5.2)" };
+  }
 
   // Only known is checked. unknown is already unmet.
   if (settled.status !== "known") return stamp(settled);
@@ -592,17 +687,45 @@ async function resolveField(h, fieldName, ctx) {
 
 // ────────────────────────────────────────────────────────────────
 // [CORE] Never generates a value. Looks up five sources in order. If all are empty, unknown.
-// NOTE: an empty source leaves no trace in the record. (This is lookup, not validation.)
-//     Demotion reasons from the validation stage are written to note by resolveField.
+// Every consulted source leaves an entry in lookup_trace (5.2: a source that was checked stays on the
+//     record). Demotion reasons from the validation stage are written to note by resolveField.
+// [REPORTING NOTHING] 5.2 separates "no report" from "a report of nothing", 5.1 lets a source report
+//     NULL from the first round, and 6.2 names two kinds of nothing. The two lookup hooks may return:
+//       { none: "absent" }    checked the designated place, and the value is not there
+//       { none: "no_place" }  there is no place to check for this slot (a gap in the declaration, 4.5c)
+//       undefined             no report — recorded as no_report, which means NOT checked
+//     An explicit object rather than JS null on purpose: `??` and `==` merge null into undefined, and
+//     that merge is exactly the one 5.2 forbids. Any other `none`, or `none` alongside `value`, is
+//     rejected — an ambiguous report is not a report of nothing.
+//     A report of nothing never settles the slot and never ends the chain: the next source still runs
+//     (5.2). It cannot open anything — at most it narrows what is left.
+// [SLOT NULL] When every permitted source reported absent, the slot's status is "null" (5.1), written
+//     by resolveField from the trace (isNullByTrace). A required "null" is unmet and holds (6.3); a
+//     "null" value is never sent. Anything left open — no_report, cannot_answer, rejected, a candidate,
+//     a route that ended at its ceiling — keeps the slot UNKNOWN.
+//   The three map sources report nothing the same way, from whoever filled the map (D1, D3):
+//     userAnswers[slot] = { none: "absent" }      the user said there is none
+//     preSetData[slot]  = { none: "absent" }      the caller looked in the settings, none
+//     priorExecutionState = { none: "absent" }    the caller looked in storage, nothing executed
+//   An absent KEY stays no_report: the gate cannot tell "loaded, none" from "passed {}". Only "absent"
+//     is accepted there — "no place to check" is the declaration's to say, not a user's or a caller's.
 // [LOOKUP HOOK FAILURE] A throw is not an empty source. It settles the field unknown and ends the chain:
 //     instruction undefined → pre_set_data runs  /  instruction throws → pre_set_data never runs
 //     measured_data undefined → prior_state runs  /  measured_data throws → prior_state never runs
 //     BREAKS: bare calls let a throw escape to the backstop — one field kills the run. Falling through
-//       instead hands the slot to a later source, with no trace per the NOTE above.
-// NOTE: a lookup_failed field currently lands in unknown_fields and becomes ask_user. Per the
-//     specification this is a definition/implementation gap — no user answer fixes a hook that threw.
-//     An adopting system should route these to hold and surface them to whoever owns the hook.
+//       instead hands the slot to a later source, and the record would show a clean "no_report".
+//     Route: definition_repair (4.5c). No user answer fixes a hook that threw, so the slot is never
+//       put in front of the user, on either phase.
 // ────────────────────────────────────────────────────────────────
+
+// A lookup hook's report of nothing. Returns "absent" | "no_place" for a well-formed report, "malformed"
+//   for an object that carries `none` but is not one, and null when the return is not a report of
+//   nothing at all (undefined, or a found value).
+const NONE_REPORTS = new Set(["absent", "no_place"]);
+function noneReport(ret) {
+  if (!ret || typeof ret !== "object" || !("none" in ret)) return null;
+  return NONE_REPORTS.has(ret.none) && !("value" in ret) ? ret.none : "malformed";
+}
 
 const LOOKUP_HOOK_FAILED = Symbol("lookup_hook_failed");
 const lookupFailed = source => e => ({ [LOOKUP_HOOK_FAILED]: true, source, detail: e?.message ?? String(e) });
@@ -619,25 +742,46 @@ function lookupFailureRecord(fieldName, failure) {
 }
 async function lookupField(h, fieldName, ctx) {
   const { userAnswers, instruction, preSetData, priorExecutionState } = ctx;
+  // What each consulted source returned, in order. Attached to every record this function returns.
+  const trace = [];
+  const saw = (source, result) => trace.push({ source, result });
+  const traced = rec => ({ ...rec, lookup_trace: trace });
   // For the first four sources, this decision is itself the origin.
-  const fresh = rec => ({ ...rec, origin_source: rec.source });
+  const fresh = rec => traced({ ...rec, origin_source: rec.source });
+  const failedAt = failure => { saw(failure.source, "failed"); return traced(lookupFailureRecord(fieldName, failure)); };
 
   // Which sources may be consulted for THIS slot (4.5: the route follows from the slot's declared
   //   allowed sources). Same shape as the fixed checklist's C2, which has had a two-source list in
   //   resolveFixedChecklist since the start: an ordered set, first hit wins, no weights. The
   //   difference is where it lives. C2 is the same slot on every call, so its sources belong in the
   //   gate; these slots are the tool's arguments and vary per tool, so theirs are declared (6.1).
-  // NOTE: "may be consulted" is not "may settle". applyFieldPolicy still runs on whatever answered
-  //   and still refuses prior_state by default.
+  // NOTE: "may be consulted" is not "may settle". applyFieldPolicy still runs on whatever answered,
+  //   and prior_state never settles at all (Source 5).
   const allowed = allowedSourceSet(ctx.allowed_sources);
+  // The three map sources the gate reads itself accept one report of nothing, from whoever filled the
+  //   map: { none: "absent" } — "I looked, there is none". Nothing else from them is a report of
+  //   nothing; no_place in particular is a declaration gap, which a user or a caller does not report.
+  const mapNone = v => { const r = noneReport(v); return r === null ? null : (r === "absent" ? "absent" : "rejected"); };
 
   // Source 1 — user_answer (injected on re-run after ask_user)
   // NOTE: filling userAnswers happens outside the skeleton.
   // BREAKS: LLM parsing output here makes the first source model output.
   // NOTE: a user_answer has no expiry and outranks a later measurement.
   // POLICY: invalidate on a change to what the value derived from, not on elapsed time.
-  if (allowed.has("user_answer") && userAnswers && fieldName in userAnswers) {
-    return fresh({ name: fieldName, value: userAnswers[fieldName], status: "known", source: "user_answer" });
+  // D1: the user may answer "there is none" — { none: "absent" }. That is a report of nothing by the
+  //   one who checked (5.1), recorded, and the search goes on (5.2). It is never a value.
+  if (allowed.has("user_answer")) {
+    if (userAnswers && fieldName in userAnswers) {
+      const none = mapNone(userAnswers[fieldName]);
+      if (none) {
+        saw("user_answer", none);
+      } else {
+        saw("user_answer", "found");
+        return fresh({ name: fieldName, value: userAnswers[fieldName], status: "known", source: "user_answer" });
+      }
+    } else {
+      saw("user_answer", "no_report");
+    }
   }
 
   // Source 2 — instruction: known only from a trusted segment with a valid span.
@@ -646,8 +790,12 @@ async function lookupField(h, fieldName, ctx) {
   const fromInstruction = allowed.has("instruction")
     ? await safeHook(h.extractFromInstruction, [fieldName, instruction], lookupFailed("instruction"))
     : undefined;
-  if (fromInstruction?.[LOOKUP_HOOK_FAILED]) return lookupFailureRecord(fieldName, fromInstruction);
-  if (fromInstruction !== undefined) {
+  if (fromInstruction?.[LOOKUP_HOOK_FAILED]) return failedAt(fromInstruction);
+  const instructionNone = noneReport(fromInstruction);
+  if (allowed.has("instruction") && fromInstruction === undefined) saw("instruction", "no_report");
+  // A report of nothing is recorded and the search goes on (5.2). Never a value, never the end.
+  else if (instructionNone) saw("instruction", instructionNone === "malformed" ? "rejected" : instructionNone);
+  else if (fromInstruction !== undefined) {
     const seg = instruction?.[fromInstruction?.segment_index];
     const sp = fromInstruction?.span;
     const spanValid = Array.isArray(sp) && sp.length === 2 &&
@@ -661,9 +809,10 @@ async function lookupField(h, fieldName, ctx) {
       const atSpan = seg.text.slice(sp[0], sp[1]);
       const support = await safeHook(h.spanSupportsValue, [fromInstruction.value, atSpan, fieldName],
         lookupFailed("instruction"));
-      if (support?.[LOOKUP_HOOK_FAILED]) return lookupFailureRecord(fieldName, support);
+      if (support?.[LOOKUP_HOOK_FAILED]) return failedAt(support);
       const supported = support === true || support?.supported === true;
       if (supported) {
+        saw("instruction", "found");
         return fresh({
           name: fieldName, value: fromInstruction.value, status: "known", source: "instruction",
           // WHERE, not just "instruction". A record that names a source without
@@ -680,14 +829,29 @@ async function lookupField(h, fieldName, ctx) {
       }
       // The span does not say the value. This source did not settle the slot; the search goes on.
     }
+    // Untrusted segment, invalid span, or a span that does not state the value. Something came back
+    //   and the gate refused it — a different fact from the hook returning nothing.
+    saw("instruction", "rejected");
   }
 
   // Source 3 — pre_set_data: accepted only with trust "user". A raw value without the wrapper is rejected.
   //   NOTE: old-schema input looks like every field being stuck at unknown. Check here first when migrating.
-  if (allowed.has("pre_set_data") && preSetData && fieldName in preSetData) {
-    const entry = preSetData[fieldName];
-    if (entry && typeof entry === "object" && "value" in entry && entry.trust === "user") {
-      return fresh({ name: fieldName, value: entry.value, status: "known", source: "pre_set_data" });
+  // D3: the caller may write { none: "absent" } for a slot it looked up in the settings and found no
+  //   entry for. An absent KEY stays no_report — the gate cannot tell "loaded, none" from "passed {}".
+  if (allowed.has("pre_set_data")) {
+    if (preSetData && fieldName in preSetData) {
+      const entry = preSetData[fieldName];
+      const none = mapNone(entry);
+      if (none) {
+        saw("pre_set_data", none);
+      } else if (entry && typeof entry === "object" && "value" in entry && entry.trust === "user") {
+        saw("pre_set_data", "found");
+        return fresh({ name: fieldName, value: entry.value, status: "known", source: "pre_set_data" });
+      } else {
+        saw("pre_set_data", "rejected");
+      }
+    } else {
+      saw("pre_set_data", "no_report");
     }
   }
 
@@ -696,43 +860,80 @@ async function lookupField(h, fieldName, ctx) {
   const fromMeasurement = allowed.has("measured_data")
     ? await safeHook(h.measureFromEnvironment, [fieldName, ctx], lookupFailed("measured_data"))
     : undefined;
-  if (fromMeasurement?.[LOOKUP_HOOK_FAILED]) return lookupFailureRecord(fieldName, fromMeasurement);
-  if (fromMeasurement !== undefined && fromMeasurement.valid) {
+  if (fromMeasurement?.[LOOKUP_HOOK_FAILED]) return failedAt(fromMeasurement);
+  // Read before the found check: an object carrying `none` is never a value, whatever else it carries.
+  const measurementNone = noneReport(fromMeasurement);
+  // BREAKS: `fromMeasurement.valid` without ?. — as this was — and a hook returning null throws here,
+  //   outside safeHook, so one slot takes the whole run to the backstop with no record of which.
+  if (!measurementNone && fromMeasurement !== undefined && fromMeasurement?.valid) {
+    saw("measured_data", "found");
     return fresh({ name: fieldName, value: fromMeasurement.value, status: "known", source: "measured_data" });
+  }
+  if (allowed.has("measured_data")) {
+    // Three different facts, kept apart (5.1, 5.2):
+    //   absent / no_place  the source checked and reports nothing there / nowhere to check
+    //   cannot_answer      valid:false — the source could not answer this question. Not "nothing"
+    //   no_report          undefined — nothing came back, so nothing was checked
+    // Any other shape is refused, not trusted.
+    saw("measured_data", fromMeasurement === undefined ? "no_report"
+      : measurementNone ? (measurementNone === "malformed" ? "rejected" : measurementNone)
+      : fromMeasurement?.valid === false ? "cannot_answer" : "rejected");
   }
 
   // Source 5 — prior_state: inherited from a previous execution.
-  //   NOTE: "executed" is the ONLY condition checked here — not age, not staleness. applyFieldPolicy runs
-  //     after this and is where the inheritance is refused by default.
-  //   source is overwritten with prior_state, but origin_source is inherited.
-  //   BREAKS: overwrite origin_source and the first source is erased, opening a laundering path.
-  //   NOTE: old-schema records have origin_source undefined. Handling belongs in applyFieldPolicy.
-  const fromPriorState = allowed.has("prior_state") && priorExecutionState?.execution_decision === "executed"
-    ? priorExecutionState.fields?.find(f => f.name === fieldName && f.status === "known")
-    : undefined;
-  if (fromPriorState) {
-    return { name: fieldName, value: fromPriorState.value, status: "known", source: "prior_state",
-             origin_source: fromPriorState.origin_source };
+  //   5.2: inheritance alone does not confirm a slot; the value counts only once the user confirms it,
+  //   and then as user_answer. So this source NEVER settles. A value found here is recorded as a
+  //   candidate, the slot stays unknown, and the question to the user carries the candidate.
+  //   Enforced here, not left to applyFieldPolicy — a rule kept by hook discipline is a rule the gate
+  //   does not hold (the same reason [Required] is enforced in the gate, 4.2.1).
+  //   BREAKS: let it settle — as this did when a policy hook passed it through — and a payment's
+  //     amount arrives in a refund as KNOWN (policy-test part 5).
+  //   NOTE: "executed" is the ONLY condition checked on the record — not age, not which action wrote
+  //     it. The candidate carries the record's action_key so the question can say where it came from.
+  //   NOTE: origin_source is inherited onto the candidate. Erasing it opens a laundering path.
+  //   D3: the caller may pass { none: "absent" } for "looked in storage, nothing executed".
+  //     A record handed in that is executed and holds no known value for this slot is also "absent"
+  //     — the gate checked the record it was given. A record that is not executed is refused.
+  //     null/undefined stays no_report.
+  if (allowed.has("prior_state")) {
+    const priorNone = mapNone(priorExecutionState);
+    const executed = priorExecutionState?.execution_decision === "executed";
+    const fromPriorState = !priorNone && executed
+      ? priorExecutionState.fields?.find(f => f.name === fieldName && f.status === "known")
+      : undefined;
+    if (fromPriorState) {
+      saw("prior_state", "candidate");
+      return traced({ name: fieldName, value: undefined, status: "unknown", source: null, origin_source: null,
+                      prior_candidate: { value: fromPriorState.value,
+                                         origin_source: fromPriorState.origin_source ?? null,
+                                         action_key: priorExecutionState.action_key ?? null } });
+    }
+    saw("prior_state", priorNone ? priorNone
+      : executed ? "absent"
+      : priorExecutionState == null ? "no_report" : "rejected");
   }
   // All empty → unknown. The allowed set rides along: the route is chosen from it (4.5), and a
   //   record that does not carry it cannot say why nothing was asked of the user.
-  return { name: fieldName, value: undefined, status: "unknown", source: null, origin_source: null };
+  return traced({ name: fieldName, value: undefined, status: "unknown", source: null, origin_source: null });
 }
 
 // Which of the five sources may be consulted for this slot (5.2, 4.5). Returning null or anything
 //   malformed means all five, which is what this skeleton did before the hook existed.
 // CONTRACT: a subset of SOURCES, or null. Do not throw.
 // NOTE: this answers "may be consulted", not "may settle". applyFieldPolicy still judges whatever
-//   answered, and its default still refuses prior_state.
+//   answered. prior_state never settles regardless (Source 5).
 // POLICY: this is a declaration, so it belongs with the checklist and changes without a deploy (6.1,
 //   7.2). Encoding it in a hook body instead is the scattering 2.8 describes.
 function getAllowedSources(fieldName, mcpTool) {
   return null;
 }
 
-// [REQUIRED-SAFETY] Blocks prior_state by default (inherited values read as fresh — staleness is undetectable
-//   here), passes everything else through. Carry-forward is opt-in.
+// [REQUIRED-SAFETY] Passes everything through. It used to be where prior_state was refused, and passing it
+//   through was how an adopter "accepted inheritance"; the gate now refuses it itself (5.2: inheritance
+//   alone never confirms), so the branch below never sees a prior_state record. Kept as a guard.
 // CONTRACT: do not throw. To block: { ...record, value: undefined, status: "unknown", source: null }.
+//   Demote only: a returned known whose record was not known, or whose source changed, is refused by the
+//   gate (resolveField).
 //   No falling back to a later source. Set pending_at_trigger: true for an at_instruction unknown that
 //   settles at trigger time — the only thing the gate excuses, and the default never sets it.
 function applyFieldPolicy(record, ctx) {
@@ -746,9 +947,15 @@ function validateFieldSchema(value, schema, ctx) {
   return null;
 }
 
-// [REQUIRED-OP] CONTRACT: { valid, value } or undefined (no means of observation). valid:false must never become known.
-// NOTE: the return shape is not validated. A raw value arrives with valid undefined and is silently skipped.
-// NOTE: undefined moves on to prior_state; a throw settles the field unknown. Do not throw for "cannot observe".
+// [REQUIRED-OP] CONTRACT: one of
+//   { valid: true, value }   measured, and this is the value
+//   { valid: false }         this source cannot answer the question (5.1). Never becomes known
+//   { none: "absent" }       measured, and there is nothing there — a report of nothing (5.2, 6.2)
+//   { none: "no_place" }     there is nothing to measure for this slot — a gap in the declaration
+//   undefined                no report. Recorded as no_report, which means NOT checked
+// NOTE: any other shape is refused and traced as rejected. A raw value with no `valid` is one of them.
+// NOTE: everything but a throw moves on to prior_state; a throw settles the field unknown. Do not throw
+//   for "cannot observe" — say which of the above it is.
 function measureFromEnvironment(fieldName, ctx) {
   if (ctx.measured_data && fieldName in ctx.measured_data) return ctx.measured_data[fieldName];
   return undefined;
@@ -756,8 +963,11 @@ function measureFromEnvironment(fieldName, ctx) {
 
 // [REQUIRED-OP] Extract a value from the instruction (LLM). Unimplemented means every field stays unknown.
 // CONTRACT: instruction is an InstructionSegment[].
-//   Found → { value, segment_index, span: [start, end] }  /  not found or extraction failed → undefined
-//   NOTE: undefined moves on to pre_set_data; a throw settles the field unknown. Do not throw for "not found".
+//   Found → { value, segment_index, span: [start, end] }
+//   Looked, not there → { none: "absent" }. Nowhere to look for this slot → { none: "no_place" }.
+//   No report → undefined (recorded as no_report: NOT checked). An extractor that looked and found
+//     nothing must say so; returning undefined erases the check it just did (5.2, 6.2).
+//   NOTE: everything but a throw moves on to pre_set_data; a throw settles the field unknown. Do not throw for "not found".
 //   segment_index = the segment the value came from. span = the character range within that segment's text (half-open).
 //   A missing or out-of-bounds span is rejected, and the text at the span is compared against value
 //   by spanSupportsValue. A span that does not say the value does not settle the slot.
@@ -818,7 +1028,7 @@ async function runPreflight(h, input) {
       unknown_count: null, unverified_checklist_count: null,
       provider_checklist: null, unverified_provider_count: null,
       gate: null,
-      execution_decision: "hold",
+      execution_decision: "definition_repair",   // backstop: an implementation gap (4.5c)
       // NOTE: the internal error message is carried verbatim. Filter what reaches the user in formatReason.
       reason: `preflight error: ${e?.message ?? String(e)}`,
       timestamp: h.now(),
@@ -832,12 +1042,19 @@ async function runPreflight(h, input) {
 //   specification exists to rule out, so it is absent rather than carried unread.
 //   A policy that must gate execution is declared as a checklist item: it becomes a slot and is
 //   compared like any other.
-async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, fixedPreSet, measured_data, priorExecutionState, userChecklist, userAnswers, checklistAnswers, intent_attempt, tool_attempt }) {
+async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, fixedPreSet, measured_data, priorExecutionState, userChecklist, userAnswers, checklistAnswers, intent_attempt, tool_attempt, ask_attempt, lookup_attempt }) {
   const checklist = userChecklist ?? [];
+  // Ceilings on the two resolution routes that can be retried (4.5: asking the user and the system
+  //   lookup both have one; the adopting system sets it). Same contract as intent_attempt: the caller
+  //   carries the count per action and sends back gate.next_ask_attempt / next_lookup_attempt.
+  //   Absent or malformed = 0. A larger value only brings "exhausted" forward, never "execute".
+  //   D4: one count per route per action, not per slot — the same shape as intent_attempt.
+  const askAttempt = Number.isInteger(ask_attempt) && ask_attempt >= 0 ? ask_attempt : 0;
+  const lookupAttempt = Number.isInteger(lookup_attempt) && lookup_attempt >= 0 ? lookup_attempt : 0;
 
   // Asks already spent on the Fixed checklist. Absent or malformed = 0.
   // NOTE: caller-supplied and the skeleton DOES read it, unlike input.tool_reselected_by_user.
-  //   Direction is why: a larger value only brings "hold" forward, never produces "execute". Not a bypass.
+  //   Direction is why: a larger value only brings "exhausted" forward, never produces "execute". Not a bypass.
   //   POLICY: the caller must carry it. These records have no action_key and pile under
   //     UNKEYED_RECORD_KEY, so storage cannot supply the count either.
   const attempt = Number.isInteger(intent_attempt) && intent_attempt >= 0 ? intent_attempt : 0;
@@ -856,8 +1073,8 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       unknown_count: null, unverified_checklist_count: null,
       provider_checklist: null, unverified_provider_count: null,
       gate: null,   // Not a question. There is nothing for the user to answer
-      execution_decision: "hold",
-      reason: `checklist item without id at index: ${unidentified.join(", ")}`,
+      execution_decision: "definition_repair",
+      reason: `definition_repair: checklist item without id at index: ${unidentified.join(", ")}`,
       timestamp: h.now(),
     };
   }
@@ -896,8 +1113,8 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       //   C1/C2 are not required fields and have no key to attach an answer to.
       // exhausted: leave the skeleton; resolve in conversation. Re-entry is a NEW request at attempt 0.
       //   POLICY: resetting the counter every turn restores the loop this ceiling exists to stop.
-      execution_decision: exhausted ? "hold" : "ask_user",
-      reason: `${exhausted ? "hold" : "ask_user"}: fixed undetermined (${fixedIssues.map(i => `${i.slot}:${i.code}`).join(", ")}) attempt=${attempt}/${INTENT_ATTEMPT_LIMIT}`,
+      execution_decision: exhausted ? "exhausted" : "ask_user",
+      reason: `${exhausted ? "exhausted" : "ask_user"}: fixed undetermined (${fixedIssues.map(i => `${i.slot}:${i.code}`).join(", ")}) attempt=${attempt}/${INTENT_ATTEMPT_LIMIT}`,
       timestamp: h.now(),
     };
   }
@@ -922,8 +1139,8 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       provider_checklist: null, unverified_provider_count: null,
       call_arguments: null,
       gate: { kind: "action_key_failed", _diag: { detail: keyFailure } },
-      execution_decision: "hold",
-      reason: "hold: action_key could not be built",
+      execution_decision: "definition_repair",
+      reason: "definition_repair: action_key could not be built",
       timestamp: h.now(),
     };
   }
@@ -979,8 +1196,8 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       //   feeds the reselection; it is not an answer to attach to a field.
       // exhausted: leave the skeleton; settle it in conversation. Re-entry is a NEW request at attempt 0.
       //   POLICY: the caller carries the count. Resetting it every turn restores the loop this ceiling stops.
-      execution_decision: toolExhausted ? "hold" : "ask_user",
-      reason: `${toolExhausted ? "hold" : "ask_user"}: tool undetermined (${c3Reason}) attempt=${toolAttempt}/${TOOL_ATTEMPT_LIMIT}`,
+      execution_decision: toolExhausted ? "exhausted" : "ask_user",
+      reason: `${toolExhausted ? "exhausted" : "ask_user"}: tool undetermined (${c3Reason}) attempt=${toolAttempt}/${TOOL_ATTEMPT_LIMIT}`,
       timestamp: h.now(),
     };
   }
@@ -1024,8 +1241,8 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
         kind: "schema_unsupported",
         _diag: { detail: candidateFailure ?? "getCandidateSlots returned no list" },
       },
-      execution_decision: "hold",
-      reason: "hold: tool input schema undetermined or unsupported",
+      execution_decision: "definition_repair",
+      reason: "definition_repair: tool input schema undetermined or unsupported",
       timestamp: h.now(),
     };
   }
@@ -1056,8 +1273,8 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
         _diag: { detail: slotSet?.detail ?? "materializeSlots returned no status",
                  lookup_failures: lookupFailures(resolvedAll) },
       },
-      execution_decision: "hold",
-      reason: `hold: slot list could not be materialized (${slotSet?.detail ?? "no status"})`,
+      execution_decision: "definition_repair",
+      reason: `definition_repair: slot list could not be materialized (${slotSet?.detail ?? "no status"})`,
       timestamp: h.now(),
     };
   }
@@ -1105,12 +1322,27 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   // NOTE: passing here is a preliminary decision. requiredFields is a snapshot and may differ at trigger time.
   if (phase === "at_instruction") {
     const unknownNow = fields.filter(f => f.status === "unknown");
-    // Same split as the immediate path: a crashed lookup hook is not a blank the user can fill.
-    const failedNow = unknownNow.filter(f => f.lookup_failed === true);
-    const blocking = unknownNow.filter(f => f.pending_at_trigger !== true && f.lookup_failed !== true);
-    const pendingCount = unknownNow.length - blocking.length - failedNow.length;
+    // Same routes as the immediate path, read from each slot. What blocks the scheduling is only what
+    //   can be settled NOW: a blank the user can answer, while the user is still here, and a gap in a
+    //   declaration, which waiting will not fill.
+    //   10: a slot only the system can answer is NOT settled now. 4.5: only what was confirmed by asking
+    //   is fixed at instruction time; the rest is checked again at the trigger, and system state is
+    //   measured at execution time, not inherited (3.5). So it is excused to the trigger like
+    //   pending_at_trigger, and the trigger-time gate routes it. A NULL slot is excused the same way:
+    //   its sources are re-read at the trigger, and whether it prohibits is judged there (6.3).
+    //   BREAKS: split on lookup_failed alone — as this once did — and a measurement-only slot reaches the
+    //     user as a question on this phase while the immediate path correctly withholds it.
+    const repairNow = unknownNow.filter(f => f.route === "definition_repair");
+    const failedNow = repairNow.filter(f => f.lookup_failed === true);
+    const gapsNow = repairNow.filter(f => f.lookup_failed !== true);
+    const blocking = unknownNow.filter(f => f.pending_at_trigger !== true && f.route === "ask_user");
+    const systemNow = unknownNow.filter(f => f.route === "system_lookup");
+    const pendingCount = unknownNow.length - blocking.length - repairNow.length;
+    const askExhaustedNow = askAttempt >= h.limits.ask;
 
-    if (blocking.length > 0 || failedNow.length > 0) {
+    if (blocking.length > 0 || repairNow.length > 0) {
+      const decision = repairNow.length ? "definition_repair"
+        : askExhaustedNow ? "exhausted" : "ask_user";
       // Block the scheduling itself (fail-closed). This is the last moment the user is present.
       // POLICY: can be changed to "schedule anyway, flagged unresolved" — a choice that accepts failure at trigger time.
       return {
@@ -1123,19 +1355,35 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
         unverified_provider_count: null,         // Not performed at this phase
         call_arguments: null,             // Assembled at trigger time only
         gate: {
-          unknown_fields: blocking.map(f => ({ name: f.name, note: f.note ?? null })),
+          unknown_fields: blocking.map(f => ({ name: f.name, note: f.note ?? null,
+            ...(f.prior_candidate ? { candidate: f.prior_candidate } : {}) })),
           unverified_checklist: [],       // Not performed. Not "all verified" (see count: null above)
           ...(failedNow.length ? {
             kind: "lookup_failed",
             lookup_failed_fields: failedNow.map(f => ({ name: f.name, note: f.note ?? null })),
           } : {}),
+          ...(gapsNow.length ? {
+            ...(failedNow.length ? {} : { kind: "definition_repair" }),
+            definition_repair_fields: gapsNow.map(f => ({ name: f.name,
+              open: (f.lookup_trace ?? []).filter(t => t.result !== "absent").map(t => `${t.source}:${t.result}`),
+              note: f.note ?? null })),
+          } : {}),
+          ...(decision === "exhausted" ? { kind: "exhausted",
+            exhausted: [{ route: "ask_user", attempt: askAttempt, limit: h.limits.ask, names: blocking.map(f => f.name) }] } : {}),
+          next_ask_attempt: decision === "ask_user" ? askAttempt + 1 : (askExhaustedNow ? null : askAttempt),
+          // Recorded, not blocking: these are answered at the trigger (see above).
+          ...(systemNow.length ? { deferred_system_lookup: systemNow.map(f => f.name) } : {}),
           _diag: { phase, pending_at_trigger: pendingCount, lookup_failures: lookupFailures(fields) },
         },
-        execution_decision: failedNow.length ? "hold" : "ask_user",
+        execution_decision: decision,
         reason: failedNow.length
-          ? `hold: lookup hook failed — ${failedNow.map(f => f.name).join(", ")} ` +
+          ? `definition_repair: lookup hook failed — ${failedNow.map(f => f.name).join(", ")} ` +
             `(definition/implementation gap; no user answer settles these)`
-          : await h.formatReason("ask_user", { unknown_fields: blocking, unverified_checklist: [] }),
+          : gapsNow.length
+          ? `definition_repair: no source can answer — ${gapsNow.map(f => f.name).join(", ")}`
+          : decision === "exhausted"
+          ? `exhausted: ask_user ${askAttempt}/${h.limits.ask} (${blocking.map(f => f.name).join(", ")})`
+          : await h.formatReason(decision, { unknown_fields: blocking, unverified_checklist: [] }),
         timestamp: h.now(),
       };
     }
@@ -1299,6 +1547,13 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
              `${JSON.stringify(out?.status)} from ${JSON.stringify(out?.source ?? null)}`;
     }
 
+    // [NOT IMPLEMENTED] Spec 6.3 binds each approval to a {slot_id, value} pair, voids it when the value
+    //   changes, and records the set of slots shown with it. This skeleton does none of that: a [Verify]
+    //   approval is whatever verifyProviderCondition reports, with its source. An approval given for one
+    //   amount therefore still reads as given after the amount changes, unless the hook checks.
+    //   POLICY: until the gate does it, the hook must compare the approved value against the settled
+    //     one in ctx.fields and return unverified on a mismatch. Implementing it here needs a caller
+    //     contract for approvals (what was shown, for which values), which this skeleton does not have.
     // The label decides the route, so nothing here is a judgment call. [Verify] creates a user
     //   approval slot; [Required] cannot be answered by the user and is a gap in the declaration
     //   or the lookup path (4.5c).
@@ -1315,15 +1570,19 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   // back identically next run while the one person who can fix it never hears about it.
   // Per 4.5 this is the definition-repair route, not the user-query route.
   const allUnknown = fields.filter(f => f.status === "unknown");
-  const failedLookups = allUnknown.filter(f => f.lookup_failed === true);
-  // 4.5 splits the remainder by who can resolve it, and the slot's declared sources decide — not the
-  //   model, and not this code. A slot that does not permit user_answer is 4.5(b): the system can
-  //   answer it and the user is NOT asked again. Before this, every unknown went to the user, so a
-  //   measurement-only slot produced a question nobody could answer.
-  const askable = f => allowedSourceSet(f.allowed_sources).has("user_answer");
-  const pending = allUnknown.filter(f => f.lookup_failed !== true);
-  const unknownFields = pending.filter(askable);
-  const systemLookups = pending.filter(f => !askable(f));
+  // 4.5 splits the unknowns by who can resolve them, and the slot's declared sources decide — not the
+  //   model, and not this code. The route is already on each slot (routeFor, 6.3); these lists are
+  //   read from it, so the gate's lists and the slots' records cannot disagree.
+  //   A slot that does not permit user_answer is 4.5(b): the system can answer it and the user is NOT
+  //   asked. Before allowed_sources, every unknown went to the user, so a measurement-only slot
+  //   produced a question nobody could answer.
+  // definition_repair has two causes and two addressees (7.1): a hook that threw is the implementer's,
+  //   a source with no place to check (or a source left with no report) is the declaration's.
+  const repairFields = allUnknown.filter(f => f.route === "definition_repair");
+  const failedLookups = repairFields.filter(f => f.lookup_failed === true);
+  const declarationGaps = repairFields.filter(f => f.lookup_failed !== true);
+  const unknownFields = allUnknown.filter(f => f.route === "ask_user");
+  const systemLookups = allUnknown.filter(f => f.route === "system_lookup");
   const unknown_count = allUnknown.length;   // total. gate is authoritative for what blocks
   // Counted: only what was NOT checked. pending_on_slot waits on a blank that is already
   // counted; unmet was checked and is recorded as unmet, outside the count (spec 6.3).
@@ -1352,11 +1611,14 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   // Step 6-a: gate decision. gate is authoritative, reason is a derived rendering.
   // NOTE: no per-Tool risk branching. delete_all_records and list_records pass the same gate.
   const gate = {
-    unknown_fields: unknownFields.map(f => ({ name: f.name, note: f.note ?? null })),
+    // A slot with a prior_state candidate carries it, so the question can be "use this again?" — the
+    //   confirmation 5.2 requires. The answer comes back as user_answer; the candidate itself never settles.
+    unknown_fields: unknownFields.map(f => ({ name: f.name, note: f.note ?? null,
+      ...(f.prior_candidate ? { candidate: f.prior_candidate } : {}) })),
     unverified_checklist: unverifiedItems.map(i => ({ id: i.id, description: i.description, note: i.note ?? null })),
     _diag: { lookup_failures: lookupFailures([...fields, ...extra_fields]), slot_branch: slotSet.branch ?? null },
   };
-  // A broken lookup is a hold addressed to whoever owns the hook, and it outranks the question
+  // A broken lookup is definition repair addressed to whoever owns the hook, and it outranks the question
   // to the user: with a crashed extractor the other blanks are not known to be blanks either.
   // kind is set so a consumer can tell "the user didn't say" from "our extractor is broken"
   // without reading _diag, which is diagnostics and not part of the contract.
@@ -1364,9 +1626,21 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     gate.kind = "lookup_failed";
     gate.lookup_failed_fields = failedLookups.map(f => ({ name: f.name, note: f.note ?? null }));
   }
-  // 4.5(b): the system can answer these and the user is not asked. Same family as the two holds
-  //   below — nothing a user answer settles — but a different addressee: the lookup, not the
-  //   declaration. Separate fields so a consumer can tell retry from repair (7.1).
+  // A slot whose sources reported no place to check, or left a source no one can re-answer (an
+  //   extractor or a caller map with no report). No user answer fills it; the declaration or the
+  //   caller has to report (4.5c, 5.1).
+  if (declarationGaps.length > 0) {
+    if (!gate.kind) gate.kind = "definition_repair";
+    gate.definition_repair_fields = declarationGaps.map(f => ({
+      name: f.name,
+      open: (f.lookup_trace ?? []).filter(t => t.result !== "absent").map(t => `${t.source}:${t.result}`),
+      note: f.note ?? null,
+    }));
+  }
+  // 4.5(b): the system can answer these and the user is not asked. Like definition_repair below,
+  //   nothing a user answer settles — but a different addressee: the lookup, not the declaration.
+  //   Separate fields and separate decision words so a consumer can tell retry from repair (7.1).
+  //   Neither is hold: both are routes still open (4.5).
   if (systemLookups.length > 0) {
     if (!gate.kind) gate.kind = "system_lookup";
     gate.system_lookup = systemLookups.map(f =>
@@ -1400,14 +1674,23 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   }
   // A checked condition that prohibits execution is recorded, not asked about. One list for both
   // declarers, each entry tagged: the verdict is the same, the addressee is not (7.1).
+  // 6.3: a required value confirmed as NULL is unmet. fields are the materialized slots — the ones the
+  //   tool requires — so every NULL among them prohibits. The requirement is the tool's (4.2), hence
+  //   declared_by provider. An optional argument that is NULL is not here: it is simply not sent.
+  //   BREAKS: leave it out — as the first cut of NULL did — and a required slot every source reported
+  //     empty is neither unknown nor unmet, so the gate counts zero and executes without it.
+  const nullRequired = fields.filter(f => f.status === "null");
   const allUnmet = [
     ...unmetItems.map(i => ({ id: i.id, description: i.description, note: i.note ?? null, declared_by: "user" })),
     ...providerUnmet.map(c => ({ id: c.id, description: c.description, note: c.note ?? null, declared_by: "provider", label: c.label })),
+    ...nullRequired.map(f => ({ id: f.name, slot: f.name, declared_by: "provider", kind: "required_null",
+      description: `required value "${f.name}" — every permitted source reported none`,
+      note: `NULL from ${(f.lookup_trace ?? []).map(t => t.source).join(", ")} (6.3)` })),
   ];
   if (allUnmet.length > 0) {
     gate.unmet = allUnmet;
   }
-  const valueGateClean = failedLookups.length === 0 && providerRepair.length === 0 &&
+  const valueGateClean = repairFields.length === 0 && providerRepair.length === 0 &&
     systemLookups.length === 0 &&
     gate.unknown_fields.length === 0 && gate.unverified_checklist.length === 0 &&
     providerAsk.length === 0;
@@ -1442,11 +1725,53 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   //   payload_invalid   every slot settled and the object is still illegal
   // BREAKS: overwrite unconditionally — as this did — and the kind reported depends on the order
   //   the branches happen to run in.
+  // Decision. hold is reserved for what 4.5 calls hold: the check FINISHED and its result prohibits.
+  //   A route still open is named as that route, not as hold (4.5: merge "a finished check" with "a
+  //   missing check" and the work loses where it should go).
+  //   hold               unmet (user or provider condition checked and prohibits), payload_invalid
+  //   definition_repair  a lookup hook threw, or a provider condition could not be compared (4.5c)
+  //   system_lookup      a blank only the system can answer (4.5b). The user is not asked
+  //   ask_user           a blank the user can answer (4.5a)
+  //   exhausted          what is left is on a route that reached its ceiling (4.5: a route that reaches
+  //                      its ceiling has finished and is not tried again). Not hold — nothing was found
+  //                      to prohibit — and not NULL — a ceiling is not a report of nothing (5.2)
+  // Precedence: a finished prohibition first — no route still open can turn an unmet condition met,
+  //   since it was compared against SETTLED values. Then the open routes, the one no user answer can
+  //   close before the one it can: definition_repair, system_lookup, ask_user. A route past its
+  //   ceiling is not open, so the next one is tried; exhausted only when none is left.
+  //   POLICY: system_lookup above ask_user means the user is not asked while a system answer is
+  //     outstanding. Both lists stay in gate, so an adopter that wants both at once can read both.
+  //   NOTE: this precedence is for the decision word. gate.kind keeps its own precedence above, so a
+  //     record can carry decision hold with kind lookup_failed. gate is authoritative (6.4).
+  //   definition_repair has no ceiling: retrying a declaration gap changes nothing, so it is not
+  //     retried in the first place — it waits on whoever owns the declaration.
+  const askOutstanding = gate.unknown_fields.length + gate.unverified_checklist.length + providerAsk.length;
+  const askExhausted = askAttempt >= h.limits.ask;
+  const lookupExhausted = lookupAttempt >= h.limits.lookup;
   const execution_decision =
-    (failedLookups.length > 0 || providerRepair.length > 0 || systemLookups.length > 0 ||
-     allUnmet.length > 0 || payload_violation)
-      ? "hold"                                                 // nothing here a user answer settles
-      : (!valueGateClean ? "ask_user" : "execute");
+    allUnmet.length > 0 ? "hold"
+    : (repairFields.length > 0 || providerRepair.length > 0) ? "definition_repair"
+    : (systemLookups.length > 0 && !lookupExhausted) ? "system_lookup"
+    : payload_violation ? "hold"
+    : (askOutstanding > 0 && !askExhausted) ? "ask_user"
+    : (systemLookups.length > 0 || askOutstanding > 0) ? "exhausted"
+    : "execute";
+  // The counts go back to the caller, which carries them (the gate is stateless), the same contract
+  //   as intent_attempt: send next_* back as input on the re-run, null means do not re-enter that route.
+  gate.next_ask_attempt = execution_decision === "ask_user" ? askAttempt + 1 : (askExhausted ? null : askAttempt);
+  gate.next_lookup_attempt = execution_decision === "system_lookup" ? lookupAttempt + 1
+    : (lookupExhausted ? null : lookupAttempt);
+  if (execution_decision === "exhausted") {
+    if (!gate.kind) gate.kind = "exhausted";
+    gate.exhausted = [
+      ...(systemLookups.length && lookupExhausted
+        ? [{ route: "system_lookup", attempt: lookupAttempt, limit: h.limits.lookup, names: systemLookups.map(f => f.name) }] : []),
+      ...(askOutstanding && askExhausted
+        ? [{ route: "ask_user", attempt: askAttempt, limit: h.limits.ask,
+             names: [...gate.unknown_fields.map(f => f.name), ...gate.unverified_checklist.map(i => i.id),
+                     ...providerAsk.map(c => c.id)] }] : []),
+    ];
+  }
 
   return {
     fixed, action_key, phase, fields, extra_fields,
@@ -1457,15 +1782,21 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     call_arguments,                  // The exact object executeIfReady sends
     gate,
     execution_decision,
-    reason: allUnmet.length > 0 && valueGateClean
+    // Rendered from the same branch as the decision, so the reason never names a different verdict.
+    reason: allUnmet.length > 0
       ? `hold: unmet — ${allUnmet.map(i => `${i.id} [${i.declared_by}] (${i.note ?? "prohibited"})`).join("; ")}`
       : failedLookups.length > 0
-      ? `hold: lookup hook failed — ${failedLookups.map(f => f.name).join(", ")} ` +
+      ? `definition_repair: lookup hook failed — ${failedLookups.map(f => f.name).join(", ")} ` +
         `(definition/implementation gap; no user answer settles these)`
       : providerRepair.length > 0
-      ? `hold: provider condition not comparable — ${providerRepair.map(c => c.id ?? "(unidentified)").join(", ")} ` +
-        `(definition_repair; no user answer settles these)`
-      : payload_violation
+      ? `definition_repair: provider condition not comparable — ${providerRepair.map(c => c.id ?? "(unidentified)").join(", ")} ` +
+        `(no user answer settles these)`
+      : declarationGaps.length > 0
+      ? `definition_repair: no source can answer — ${declarationGaps.map(f => f.name).join(", ")} ` +
+        `(no place to check, or a source that gave no report; no user answer settles these)`
+      : execution_decision === "exhausted"
+      ? `exhausted: ${gate.exhausted.map(e => `${e.route} ${e.attempt}/${e.limit} (${e.names.join(", ")})`).join("; ")}`
+      : payload_violation && execution_decision === "hold"
         ? `hold: payload invalid — ${payload_violation}`
         : await h.formatReason(execution_decision, gate),
     timestamp: h.now(),
@@ -1529,7 +1860,11 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.10",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.11",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.11: fields[] carry route (4.5 route of an unknown, 6.3) and lookup_trace (each consulted source
+    //        and what it returned, 5.2, including a hook's report of nothing: absent / no_place). On the value gate, execution_decision may be "system_lookup" or
+    //        "definition_repair"; "hold" there now means only a finished check that prohibits. A 1.10
+    //        record's "hold" may be any of the three — read its gate.kind.
     //   1.8: fixed.c3_match added. Older records record no approval, only refusals.
     //   Pre-1.6 records may carry comparison_key fields; the skeleton neither writes nor reads them.
     //   1.7: fields[] may carry lookup_failed / _diag_note; gate._diag may carry lookup_failures
@@ -1664,7 +1999,7 @@ const REQUIRED_HOOKS = [
 ];
 
 // Hooks that have a default implementation whose default is "do not verify". Unwired, the gate is weak.
-// NOTE: applyFieldPolicy's default refuses prior_state, but still validates nothing. It stays on this list for that.
+// NOTE: applyFieldPolicy's default validates nothing (prior_state is refused by the gate, not by it). It stays on this list for that.
 // NOTE: unwired, validatePayload lets a value that fills its slot while violating the schema through.
 // NOTE: spanSupportsValue's default does equality, which its contract says is not sufficient.
 //   Unwired, a limit or a negation containing a value-shaped token settles a slot (see 8.x).
@@ -1697,7 +2032,7 @@ const defaultHooks = {
  * With strict=true, the defaults of [REQUIRED-SAFETY] hooks (which do not verify) are also rejected.
  * If unsafeDefaults in the return value is non-empty, the gate is in a weak state.
  */
-function createPreflight({ hooks = {}, storage, clock, strict = false } = {}) {
+function createPreflight({ hooks = {}, storage, clock, strict = false, limits = {} } = {}) {
   const known = new Set(Object.keys(defaultHooks));
   const unknown = Object.keys(hooks).filter(n => !known.has(n));
   if (unknown.length) throw new Error(`createPreflight: unknown hook name — ${unknown.join(", ")}`);
@@ -1728,7 +2063,12 @@ function createPreflight({ hooks = {}, storage, clock, strict = false } = {}) {
     throw new Error(`createPreflight(strict): defaults not permitted — ${unsafeDefaults.join(", ")}`);
   }
 
-  const h = { ...defaultHooks, ...hooks, storage, now: clock ?? (() => new Date().toISOString()) };
+  // Route ceilings (4.5: "the adopting system sets the ceiling"). Defaults match INTENT_ATTEMPT_LIMIT.
+  //   A value that is not a non-negative integer falls back to the default rather than to no ceiling.
+  const lim = (v, d) => (Number.isInteger(v) && v >= 0 ? v : d);
+  const routeLimits = { ask: lim(limits.ask, ASK_ATTEMPT_LIMIT), lookup: lim(limits.lookup, LOOKUP_ATTEMPT_LIMIT) };
+  const h = { ...defaultHooks, ...hooks, storage, limits: routeLimits,
+              now: clock ?? (() => new Date().toISOString()) };
 
   return {
     runPreflight: input => runPreflight(h, input),
@@ -1748,7 +2088,7 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *
  * Instruction (array of trust-labeled segments)
  *      ▼
- * Step 0. checklist id check ────────► "hold" (config defect — before any question is asked)
+ * Step 0. checklist id check ────────► "definition_repair" (config defect — before any question is asked)
  *      ▼
  * Step 1. resolveFixedChecklist
  *      │ └─ Extract C1 (When/Case), C2 (User Action Name); C3 = mcpTool.name
@@ -1759,25 +2099,25 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  * Step 1-a. intent gate  [issues > 0]
  *      ├─ [attempt <  2] ────────────────► "ask_user" (kind: intent_undetermined)
  *      │                                    └─ next_intent_attempt = attempt+1; re-call with it
- *      └─ [attempt >= 2] ────────────────► "hold"     (kind: intent_undetermined_exhausted)
+ *      └─ [attempt >= 2] ────────────────► "exhausted" (kind: intent_undetermined_exhausted)
  *                                           └─ next_intent_attempt = null. No auto re-entry; resolve in
  *                                              conversation. Carry-forward is default, reset needs a
  *                                              new-request signal (see POLICY).
  *      ▼
  * Step 1-b. buildActionKey(userId, fixed) → action_key
- *      └─ throws ────────────────────────► "hold" (kind: action_key_failed)
+ *      └─ throws ────────────────────────► "definition_repair" (kind: action_key_failed)
  *      │ └─ Both the record key and the prior_state lookup key. It sets the blast radius.
  *      ▼
  * Step 1-c. confirmToolNameMatchesIntent
  *      ├─ [approved !== true, tool_attempt <  2] ► "ask_user" (kind: tool_undetermined)
  *      │                                    └─ next_tool_attempt = attempt+1; reselect mcpTool, re-call
- *      ├─ [approved !== true, tool_attempt >= 2] ► "hold"     (kind: tool_undetermined_exhausted)
+ *      ├─ [approved !== true, tool_attempt >= 2] ► "exhausted" (kind: tool_undetermined_exhausted)
  *                                           └─ next_tool_attempt = null. Settle the Tool in conversation.
  *      ▼
  * Step 1-1. phase = (c1 === "immediate") ? at_trigger : at_instruction
  *      ▼
  * Step 2-a. getCandidateSlots → the superset the lookup may try (declared properties ∪ every branch's required)
- *      └─ not a list ────────────────────► "hold" (kind: schema_unsupported)
+ *      └─ not a list ────────────────────► "definition_repair" (kind: schema_unsupported)
  *      ▼
  * Step 2-3. resolveField per candidate                      ← common to both phases
  *      │ └─ lookupField walks five sources → all empty means "unknown"
@@ -1786,30 +2126,47 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *      │    (known then goes applyFieldPolicy → validateFieldSchema; a violation demotes to unknown)
  *      ▼
  * Step 3-0. materializeSlots(mcpTool, groundedNames)  ← grounded = came back known, nothing else
- *      ├─ unsupported ──────────────────► "hold"     (kind: schema_unsupported)
+ *      ├─ unsupported ──────────────────► "definition_repair" (kind: schema_unsupported)
  *      ├─ branch_unresolved / conflict ─► "ask_user" (carries branch_options, no unknown_fields)
  *      └─ resolved → fields = the slot set, extra_fields = everything else that was looked up
  *      ▼
  * Step 3-a. [at_instruction] values now, conditions at trigger
- *      │ └─ blocking = unknowns not marked pending_at_trigger
- *      ├─ [blocking > 0] ────────────────► "ask_user" (ask before scheduling)
- *      ├─ [blocking = 0] ────────────────► "deferred" (+ fields, deferred_input)
+ *      │ └─ unknowns by route (routes as in Step 5-6). system_lookup and NULL slots are excused to the
+ *      │    trigger (4.5: only what was confirmed by asking is fixed now); pending_at_trigger likewise
+ *      ├─ [route definition_repair] ─────► "definition_repair"
+ *      ├─ [route ask_user, ask under ceiling] ► "ask_user" (ask before scheduling)
+ *      ├─ [route ask_user, ask at ceiling] ──► "exhausted"
+ *      ├─ [none of the above] ───────────► "deferred" (+ fields, deferred_input)
  *      ▼  (below: at_trigger only)
  * Step 4. verifyUserChecklistItem (at_trigger only — conditions must be judged now)
  *      │ └─ anything other than status === "verified" becomes "unverified"
  *      ▼
  * Step 5-6. gate tally → assemble call_arguments (fields ∪ extra_fields, known only) → validatePayload
- *      Each unknown takes one of 4.5's three routes, chosen from the slot's declared allowed sources:
- *      ├─ user_answer permitted ─────────► "ask_user"  (gate.unknown_fields)
- *      ├─ not permitted ─────────────────► "hold"      (kind: system_lookup — 4.5b, user not asked)
- *      └─ lookup hook threw ─────────────► "hold"      (kind: lookup_failed — 4.5c)
- *      ├─ [unknown 0 AND unverified 0, payload valid] ──► "execute" ─► executeIfReady ─► record "executed"
- *      ├─ [unknown 0 AND unverified 0, payload invalid] ► "hold"     (kind: payload_invalid)
- *      └─ [otherwise] ──────────────────────────────────► "ask_user"
+ *      Each slot not found is one of (computed by the gate from allowed sources + lookup_trace, 6.3):
+ *      ├─ every permitted source reported absent ► status "null" (5.1). Required → unmet
+ *      ├─ hook threw, or a no_place report ─► route definition_repair (4.5c)
+ *      ├─ user_answer permitted, user has not said "none" ► route ask_user (gate.unknown_fields)
+ *      ├─ a measurement still open ─────► route system_lookup     (4.5b, user not asked)
+ *      └─ anything else left open ──────► route definition_repair (a source that cannot report)
+ *      prior_state never settles: a value there is a candidate carried on the question (5.2)
+ *      Decision, first match wins:
+ *      ├─ [any unmet, incl. required NULL] ─────────────► "hold"   (a finished check that prohibits — 4.5)
+ *      ├─ [route definition_repair, or provider condition not comparable] ► "definition_repair"
+ *      ├─ [route system_lookup, lookup under ceiling] ──► "system_lookup"
+ *      ├─ [unknown 0 AND unverified 0, payload invalid] ► "hold"   (kind: payload_invalid)
+ *      ├─ [anything to ask, ask under ceiling] ─────────► "ask_user"
+ *      ├─ [what is left is past its ceiling] ───────────► "exhausted"
+ *      └─ [otherwise] ──────────────────────────────────► "execute" ─► executeIfReady ─► record "executed"
  *      NOTE: executeIfReady sends call_arguments verbatim. It never rebuilds the payload.
  *
  * Feedback: only executed records become the baseline for prior_state on the next run.
- * Exception: a throw at any step is caught by runPreflight's backstop as "hold".
+ * Exception: a throw at any step is caught by runPreflight's backstop as "definition_repair".
+ *
+ * hold, everywhere in this file, means only what 4.5 means: a check that finished and prohibits. The
+ *   early returns above the value gate are not that. A config defect, an action_key that could not be
+ *   built, an unsupported schema and the backstop are gaps in a definition or an implementation
+ *   (definition_repair, 4.5c). Intent and tool asks that reached their ceiling are routes that ended
+ *   (exhausted, 4.5: "a route that reaches its ceiling has finished"). gate.kind names each one.
  *
  * POLICY (do NOT store): the raw instruction.
  *   BREAKS: stored, every ambiguous utterance accumulates in plaintext. 
@@ -1822,7 +2179,8 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *
  * Principles: Separation → Validation → Enforcement → Traceability
  *   Routing      an unknown's route comes from the slot's declared allowed sources, the same ordered
- *                first-hit-wins shape C2 has had in resolveFixedChecklist from the start
+ *                first-hit-wins shape C2 has had in resolveFixedChecklist from the start, and is
+ *                written on the slot (fields[].route); the gate's lists are read from it
  *   Separation   trust-labeled segments; fixed checklist (C1/C2/C3) kept apart from value lookup;
  *                three lists kept apart by declarer — fields (arguments), user_checklist,
  *                provider_checklist. Only the first is ever sent to the tool.
@@ -1843,7 +2201,7 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *               same for the C2 fallback: wrapper plus trust "user", never a raw string
  *               values from the instruction must name their coordinates via a span within a segment; unnamed means rejected
  * - Inheritance: the first source is never erased by any path
- *               prior_state inherits on "executed" alone; the default refuses it, allowing it is the adopting system's
+ *               prior_state never settles: an executed record's value becomes a candidate the user confirms (5.2)
  * - Timing:     values at instruction time, conditions at trigger time. Only values that cannot be asked for now get pending_at_trigger
  * - Decision:   if even one unknown remains, do not execute — record instead
  * - Execution:  reference only recorded state. A hook failure is not a pass; it is unmet
