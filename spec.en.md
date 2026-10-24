@@ -324,7 +324,7 @@ user_answer → instruction → pre_set_data → measured_data → prior_state
 - measured_data: system state confirmed on the spot by calling a system API. The lookup must be a live measurement.
 - prior_state: a value inherited from a previous execution that the record confirms was executed. Applies to values only; conditions are not inherited. Inheritance alone does not confirm a slot. The value counts only after the user confirms it.
   - A value found at this source does not end the lookup. Once the user confirms it, it is confirmed as user_answer.
-- If no value is confirmed by the last step, the slot is UNKNOWN while a route remains and NULL when none does (5.1). Even when the model offers a value, that is only a claim about a location, and the gate checks whether a value is actually there. This structure does not assume the model is honest.
+- If no value is confirmed by the last step, the slot is UNKNOWN. It is NULL only when every declared check has reported nothing and no route remains (5.1). A route that ended at its ceiling has not reported nothing (4.5). Even when the model offers a value, that is only a claim about a location, and the gate checks whether a value is actually there. This structure does not assume the model is honest.
 
 ### 5.3 What instruction covers
 
