@@ -140,7 +140,7 @@ const { createPreflight } = require("./execution-state-preflight");
 
 const preflight = createPreflight({
   hooks: {
-    classifyWhenCase,             // → "immediate" | "scheduled" | "conditional" | "recurring"
+    classifyWhenCase,             // → "immediate" | "scheduled" | "conditional" | "recurring" | null (undecidable)
     extractUserActionName,        // → what the user calls this action
     confirmToolNameMatchesIntent, // → { approved, reason }
     extractFromInstruction,       // → { value, segment_index, span } | { none: "absent" | "no_place" } | undefined

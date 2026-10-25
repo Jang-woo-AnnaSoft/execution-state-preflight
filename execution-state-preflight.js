@@ -78,6 +78,9 @@
  *   //   candidate      prior_state held a value. Not a confirmation: the slot stays unknown and the
  *   //                  value waits on the user (prior_candidate, 5.2)
  *   //   Written by the gate, never by a hook: resolveField re-attaches it after applyFieldPolicy.
+ * @property {boolean} [derived]       // The value was computed from the span plus other inputs, not stated
+ * @property {Object[]} [derived_from]  // Every other input a derived value rests on, as the gate verified it:
+ *   //   { source: "instruction", segment_index, span, text } | { source: "measured_data", name, value }
  * @property {{value: *, origin_source: string|null, action_key: string|null}} [prior_candidate]
  *   // Present on an unknown slot whose prior_state held a value. Shown with the question; confirmed only
  *   //   by coming back as user_answer.
@@ -141,7 +144,10 @@
  *   // Looked up through the same chain but outside the slot set: optional arguments, and values that
  *   // grounded a branch. Never counted by the gate; eligible for call_arguments when known.
  * @property {Object|null} [call_arguments]
- *   // The exact object executeIfReady sends, assembled from settled values only. null on deferred/hold.
+ *   // The object executeIfReady would send, assembled from settled (known) values only. null on the
+ *   //   early returns and on deferred, where no slot set was judged. On the value gate it is assembled
+ *   //   whatever the decision — a hold or an ask still carries the partial object for the record.
+ *   //   What stops it being sent is the decision: executeIfReady sends it only on "execute".
  * @property {string} advisory_notes    // Provider description — recorded only, not part of the gate
  * @property {UserChecklistItem[]} user_checklist
  * @property {Object[]|null} [provider_checklist]
@@ -296,8 +302,16 @@ async function resolveFixedChecklist(h, instruction, mcpTool, fixedPreSet) {
 
   const c1 = await safeHook(h.classifyWhenCase, [instruction], fail("c1_when_case"));
   const c1Failed = issues.some(i => i.slot === "c1_when_case");
-  // C1 enum check. Moved here from runPreflightInner so that "threw" and "returned garbage" share one path.
-  if (!c1Failed && !WHEN_CASES.includes(c1)) {
+  // A hook that returns null REPORTS that the instruction does not settle C1. That is an answer, not a
+  //   crash, and it is recorded as unresolved — the code C2 uses for the same fact. Same route either
+  //   way (the intent gate asks), but the record must not say the classifier broke when it said "I
+  //   cannot tell" (5.2: a report of nothing is not a failure to report).
+  //   BREAKS: fold null into hook_error — as this did, because throwing was the only way to say it —
+  //     and a correct "undecidable" reads as a broken hook in every audit.
+  if (!c1Failed && c1 === null) {
+    issues.push({ slot: "c1_when_case", code: "unresolved", detail: "classifier reported the instruction does not settle it" });
+  } else if (!c1Failed && !WHEN_CASES.includes(c1)) {
+    // C1 enum check. Moved here from runPreflightInner so that "threw" and "returned garbage" share one path.
     issues.push({ slot: "c1_when_case", code: "out_of_enum", detail: JSON.stringify(c1) });
   }
   const c1Ok = !issues.some(i => i.slot === "c1_when_case");
@@ -346,7 +360,9 @@ function intentMessage(issues) {
   return c1 ? MSG_INTENT_UNDETERMINED.c1_when_case : MSG_INTENT_UNDETERMINED.c2_user_action_name;
 }
 
-// [REQUIRED-OP] Returns one of WHEN_CASES.
+// [REQUIRED-OP] Returns one of WHEN_CASES, or null when the instruction does not settle it.
+//   null is a report ("I cannot tell") and is recorded as unresolved; a throw is a broken hook and is
+//   recorded as hook_error. Both go to the intent gate, which asks.
 // BREAKS: falling back to immediate when undecidable causes irreversible execution.
 function classifyWhenCase(instruction) {
   throw new Error("not implemented");
@@ -675,7 +691,7 @@ async function resolveField(h, fieldName, ctx) {
 
   // Only known is checked. unknown is already unmet.
   if (settled.status !== "known") return stamp(settled);
-  const schemaOut = await safeHook(h.validateFieldSchema, [settled.value, ctx.fieldSchemas?.[fieldName], ctx],
+  const schemaOut = await safeHook(h.validateFieldSchema, [settled.value, ctx.fieldSchemas?.[fieldName], ctx, fieldName],
     e => `validation hook failed: ${e?.message ?? String(e)}`);
   const violation = typeof schemaOut === "string" ? schemaOut : null;
   if (!violation) return stamp(settled);
@@ -740,6 +756,37 @@ function lookupFailureRecord(fieldName, failure) {
     _diag_note: failure.detail,
   };
 }
+// Check every input a derived value names (see spanSupportsValue). Returns { ok, deps } with each dep
+//   as verified, { ok: false, why } when one does not hold, or { failed } when re-measuring threw.
+async function verifyDerivedFrom(h, declared, instruction, ctx) {
+  if (!Array.isArray(declared) || declared.length === 0) {
+    return { ok: false, why: "derived without derived_from — what it rests on is not named" };
+  }
+  const deps = [];
+  for (const d of declared) {
+    if (d?.source === "instruction") {
+      const seg = instruction?.[d.segment_index];
+      const sp = d.span;
+      const valid = Array.isArray(sp) && sp.length === 2 && Number.isInteger(sp[0]) && Number.isInteger(sp[1]) &&
+        sp[0] >= 0 && sp[0] < sp[1] && sp[1] <= (seg?.text?.length ?? -1);
+      if (seg?.trust !== "user" || !valid) return { ok: false, why: "an instruction input is not a valid span in a trusted segment" };
+      deps.push({ source: "instruction", segment_index: d.segment_index, span: [sp[0], sp[1]],
+                  text: seg.text.slice(sp[0], sp[1]) });
+    } else if (d?.source === "measured_data" && typeof d.name === "string") {
+      const m = await safeHook(h.measureFromEnvironment, [d.name, ctx], lookupFailed("measured_data"));
+      if (m?.[LOOKUP_HOOK_FAILED]) return { failed: m };
+      if (!m || m.valid !== true || JSON.stringify(m.value) !== JSON.stringify(d.value)) {
+        return { ok: false, why: `measured input "${d.name}" is not what the system measures` };
+      }
+      deps.push({ source: "measured_data", name: d.name, value: m.value });
+    } else {
+      // user_answer, pre_set_data, prior_state could be added the same way when a use needs them.
+      return { ok: false, why: `an input of source ${JSON.stringify(d?.source)} cannot be checked here` };
+    }
+  }
+  return { ok: true, deps };
+}
+
 async function lookupField(h, fieldName, ctx) {
   const { userAnswers, instruction, preSetData, priorExecutionState } = ctx;
   // What each consulted source returned, in order. Attached to every record this function returns.
@@ -807,10 +854,26 @@ async function lookupField(h, fieldName, ctx) {
       // source: "instruction" and the record asserts a provenance that does not exist.
       // The policy knob is WHICH comparison, never WHETHER there is one.
       const atSpan = seg.text.slice(sp[0], sp[1]);
-      const support = await safeHook(h.spanSupportsValue, [fromInstruction.value, atSpan, fieldName],
+      const support = await safeHook(h.spanSupportsValue, [fromInstruction.value, atSpan, fieldName, ctx],
         lookupFailed("instruction"));
       if (support?.[LOOKUP_HOOK_FAILED]) return failedAt(support);
-      const supported = support === true || support?.supported === true;
+      let supported = support === true || support?.supported === true;
+      // A derived value ("2pm this Saturday" → 2026-10-31T14:00+09:00) rests on more than the span:
+      //   the date the user said elsewhere, the year and time zone the system measured. Each of those
+      //   must be named (derived_from) and the gate checks each one itself. A derived value that names
+      //   nothing it rests on, or names something that is not there, does not settle the slot.
+      //   BREAKS: accept derived: true on the hook's word — as this did — and the record says the value
+      //     came from the instruction while a clock reading nobody recorded sits inside it.
+      let derivedFrom = null;
+      if (supported && support?.derived === true) {
+        derivedFrom = await verifyDerivedFrom(h, support.derived_from, instruction, ctx);
+        if (derivedFrom.failed) return failedAt(derivedFrom.failed);
+        if (!derivedFrom.ok) {
+          saw("instruction", "rejected");
+          return traced({ name: fieldName, value: undefined, status: "unknown", source: null, origin_source: null,
+                          note: `derived value not supported: ${derivedFrom.why}` });
+        }
+      }
       if (supported) {
         saw("instruction", "found");
         return fresh({
@@ -822,8 +885,9 @@ async function lookupField(h, fieldName, ctx) {
           located_at: { segment_index: fromInstruction.segment_index, span: [sp[0], sp[1]] },
           // A derived match ("tomorrow" → a date) is recorded as derived. The span then
           // points at supporting text rather than stating the value, and the record says so.
-          ...(support?.derived === true
-            ? { derived: true, note: `derived from instruction text "${atSpan}"` }
+          ...(derivedFrom?.ok
+            ? { derived: true, derived_from: derivedFrom.deps,
+                note: `derived from instruction text "${atSpan}" and ${derivedFrom.deps.length} other input(s)` }
             : {}),
         });
       }
@@ -943,6 +1007,8 @@ function applyFieldPolicy(record, ctx) {
 
 // [REQUIRED-SAFETY] The default implementation checks nothing. Unwired, there is no format validation (including type).
 // CONTRACT: null if it passes, a reason string if it violates. This is where AJV or similar goes.
+//   Called with (value, schema, ctx, fieldName). fieldName was added so a format declared outside the
+//   schema object can be found without matching schema objects by reference.
 function validateFieldSchema(value, schema, ctx) {
   return null;
 }
@@ -977,7 +1043,15 @@ function extractFromInstruction(fieldName, instruction) {
 }
 
 // [OPTIONAL] Does the text at the span state this as the value FOR THIS SLOT?
-// CONTRACT: true | { supported: true, derived?: boolean } | false. A throw is a lookup failure.
+// CONTRACT: true | { supported: true, derived?: boolean, derived_from?: Dep[] } | false.
+//   A throw is a lookup failure. Called with (value, textAtSpan, fieldName, ctx).
+//   derived: true REQUIRES derived_from — every other input the value rests on:
+//     { source: "instruction", segment_index, span }   another place the user said it
+//     { source: "measured_data", name, value }          a system measurement (clock year, time zone)
+//   The gate checks each: an instruction dep must be a valid span in a trusted segment; a measured
+//   dep is re-measured through measureFromEnvironment and must be valid and equal. Any that fails,
+//   or a derived value with none named, leaves the slot unsettled (rejected). What passes is
+//   recorded on the field as derived_from, so the record names every input, not just the span.
 //
 // Equality is NECESSARY AND NOT SUFFICIENT, and the default only does equality — which is why
 // it is on UNSAFE_DEFAULT_HOOKS. The span proves WHERE the text is, not what role it plays:
@@ -1860,7 +1934,9 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.11",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.12",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.12: a derived field carries derived_from (every input it rests on, verified by the gate).
+    //        On older records derived: true with no derived_from means the inputs were not recorded.
     //   1.11: fields[] carry route (4.5 route of an unknown, 6.3) and lookup_trace (each consulted source
     //        and what it returned, 5.2, including a hook's report of nothing: absent / no_place). On the value gate, execution_decision may be "system_lookup" or
     //        "definition_repair"; "hold" there now means only a finished check that prohibits. A 1.10
