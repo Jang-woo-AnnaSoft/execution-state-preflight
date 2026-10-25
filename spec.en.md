@@ -25,7 +25,7 @@ Existing work raises model accuracy and validates input arguments with schemas a
 | **Who judges that what was filled is everything** | The model hands over a neat, completed form and a person clicks through (2.2). | Counting code does. People receive blanks, not a filled-in form, and only the items only they can answer come back to them (3.5). |
 | **Who decides to execute** | Validation is a branch inside the execution flow, so it can be skipped, and the skip leaves no trace. | The verdict ends in a record. An external executing party reads that record and makes its own decision. No execution path bypasses the record. |
 
-**The default changes.** Today, an execution that nothing prohibits goes ahead. Nobody can write down everything that should be prohibited, so whatever is left unwritten stays permitted. Under this specification, an execution reaches an executable state only within the intent and permitted range the user stated or approved (in the instruction, in answers, or in pre-set settings; 5.2), and only when everything it needs is confirmed and no confirmed condition prohibits it. That nothing prohibited it is not grounds for execution.
+**The default changes.** Today, an execution that nothing prohibits goes ahead. Nobody can write down everything that should be prohibited, so whatever is left unwritten stays permitted. Under this specification, only an execution unit the user stated or approved (in the instruction, in answers, or in pre-set settings; 5.2) can reach an executable state, and only when everything it needs is confirmed and no confirmed condition prohibits it. That nothing prohibited it is not grounds for execution.
 
 **Stopping is not a failure.** Today, stopping counts as a failure and finishing by any other route counts as a success, so when something is blocked, the agent looks for a way around it that nobody asked for (1.1). Under this specification, an execution that does not run because something was not confirmed is a normal outcome, recorded with its reason (6.4), and the blank goes back to whoever can fill it (4.5).
 
@@ -73,7 +73,7 @@ A call that leaves no state change is not an execution unit. A call that produce
 
 One delegation can produce several execution units. It is not one gate per delegation but one gate per state change.
 
-An alternative taken when an execution is blocked or fails (withdrawing from another account, reducing the amount, cancelling an existing booking to book again) is not a continuation of the original execution but a new execution unit. If it is not within the range the user stated or approved, it is not attempted.
+An alternative taken when an execution is blocked or fails (withdrawing from another account, reducing the amount, cancelling an existing booking to book again) is not a continuation of the original execution but a new execution unit. If it is not among the execution units the user stated or approved, it is not attempted. No unit can be added to the ones the user set.
 
 Which state changes count as execution units is declared by the party that built the tool. A state change nobody declared does not become an execution unit, so the gate never sees it. Here the change of default in Section 0 does not hold: whatever nothing prohibits still runs. This is a residual risk of the same kind as 8.1.
 
@@ -83,7 +83,7 @@ Which state changes count as execution units is declared by the party that built
 - Systems with a single tool: no tool-matching item in the intent slot.
 - When the same party owns the agent and the tools: the agent's own checklist is still needed, and the per-tool checklist goes where the input schema goes.
 
-There is no reduction rule for the user checklist. The fixed checklist settles the execution unit, and provider conditions only add reasons not to execute; the permitted range is answered here and nowhere else. That question is present in every deployment that executes.
+There is no reduction rule for the user checklist. The fixed checklist settles the execution unit, and provider conditions only add reasons not to execute; this is the only place where the user sets the ranges of values and state. That question is present in every deployment that executes.
 
 ---
 
@@ -130,9 +130,9 @@ Failures are not different kinds of fault. They differ in what was filled in by 
 
 - When a value is inferred (→ wrong execution): no source is designated for looking up the value, so the model fills it in at call time.
 - When a condition is inferred (→ execution without instruction): the condition was never declared, so the model assumes whether it holds.
-- When intent is inferred: intent and permitted range were never declared, so there is nothing to compare against.
+- When intent is inferred: the execution unit the user wants was never declared, so there is nothing to compare against.
   - If what to do (the tool and the state change) is inferred (→ a different execution): the item that settles the checklist changes, so the tool choice diverges, and the values and conditions to check change with it.
-  - If the permitted range or the timing (when, or on which event, to run) is inferred (→ execution without instruction): the action is the right one, but it runs outside the range or at a time the user never allowed. Examples: a reservation is full, so the agent cancels the user's existing reservation and books again; given "buy it when the price drops," the model sets the threshold itself and buys at a moment the user didn't expect.
+  - If an execution unit is added, or the timing (when, or on which event, to run) is inferred (→ execution without instruction): the action is the right one, but an execution the user never set is added, or it runs at a time the user never allowed. Examples: a reservation is full, so the agent cancels the user's existing reservation and books again; given "buy it when the price drops," the model sets the threshold itself and buys at a moment the user didn't expect.
 
 Many blanks start with what the user didn't say. People usually don't know what they left out, so an incomplete instruction is the normal case. The problem is that the model fills the blank, the gap never shows, and the next instruction comes with the same blank.
 
@@ -189,7 +189,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 
 ### 3.3 Slots on the same footing (Value, Condition, Intent)
 
-- Values, conditions, and intent are all treated as verification slots. A value is what goes into a tool argument; a condition is a fact whose truth is checked before execution (balance, permission, and so on); intent is the execution unit the user wants and the permitted range within it. Because the verdict is about the action, conditions need no separate mechanism. Counting works the same way for all three, and in the order of settling, intent comes first.
+- Values, conditions, and intent are all treated as verification slots. A value is what goes into a tool argument; a condition is a fact whose truth is checked before execution (balance, permission, and so on); intent is the execution unit the user wants. Because the verdict is about the action, conditions need no separate mechanism. Counting works the same way for all three, and in the order of settling, intent comes first.
 - Conditions divide into three by what they ask for: do not do this, get approval first, and tell me. A value is a number or a string and has a format; a condition has this distinction instead. The distinction is independent of who declared it. Declared by the provider or by the user, a condition is one of the three, and the labels in 4.2.1 are their names.
 - A condition can be declared as a range, by the provider or by the user. If the values or state confirmed at execution time fall within that range, the condition is met. This holds even for a value the other party proposed, as long as it was confirmed by measurement rather than read out by the model, and nobody is asked again (5.2).
 - Confidence scores are not used. A slot's state is settled by whether it was looked up from a declared source, which is a fact rather than a probability.
@@ -209,7 +209,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 - The gate only checks unconfirmed slots and records the result.
 - The executing party sits outside this specification and decides separately whether to execute, consulting only the decision record.
 - A structure that branches on the return value of the verdict function is not separation. There must be no execution path that does not go through the record.
-- The gate does not judge an actor's authority. Authority is granted to an actor, so whether a grant still holds and when it is revoked have to be handled separately, and that belongs to the executing party or a policy layer. The gate compares declared conditions against the state at execution time, so an execution outside those conditions is not one whose authority expired. It was outside the scope from the start.
+- The gate does not judge an actor's authority. Authority is granted to an actor, so whether a grant still holds and when it is revoked have to be handled separately, and that belongs to the executing party or a policy layer. The gate compares declared conditions against the state at execution time, so an execution outside those conditions is not one whose authority expired. It was outside the range from the start.
 - The grounds for execution have no validity period. What the user declared (instruction, answers, pre-set settings) holds until the user changes it, and a change is a new declaration that is judged again (6.1, 6.3). A changed checklist is judged again as well (6.1). System state is never carried over: it is measured again at trigger time (4.5), and the gap between that measurement and execution is closed at execution (8.3). The validity period of an actor's authority is a separate matter and outside the scope of this specification.
 
 ---
@@ -227,8 +227,8 @@ Every value, condition, and intent item is registered in an external checklist, 
             ▼                                                     ▼
 ┌───────────────────────────────────────┐ ┌───────────────────────────────────────┐
 │       Provider Checklist              │ │         User Checklist                │
-│ - Schema / Type Validation            │ │ - User Intent Bounds / Context        │
-│ - Mandatory Pre-conditions (Balance)  │ │ - Execution Limits & Scope            │
+│ - Schema / Type Validation            │ │ - User Intent / Context               │
+│ - Mandatory Pre-conditions (Balance)  │ │ - Execution Limits & Ranges           │
 │ - State Changes & Action Labels       │ │ - User Preference / Approval          │
 └───────────────────────────────────────┘ └───────────────────────────────────────┘
 ```
@@ -257,14 +257,14 @@ Providers already describe conditions in the tool description. The description a
 - [Verify]: attached to a condition. Creates a user approval slot.
 - [Notice]: attached to a constraint. The user must be informed before execution.
 
-A condition can also declare how it is to be checked (by user approval, or by looking up and comparing a particular system state). Conditions declared by the provider serve only as grounds not to execute. Passing a condition does not justify execution. The grounds for execution come from the intent and permitted range the user stated or approved (Section 0). Provider conditions only add reasons not to execute within that range. Using the labels as an enforced checklist makes the parsing contract part of the gate: the declaring party is trusted, the syntax is fixed, and parsing is deterministic.
+A condition can also declare how it is to be checked (by user approval, or by looking up and comparing a particular system state). Conditions declared by the provider serve only as grounds not to execute. Passing a condition does not justify execution. The grounds for execution come from the execution units the user stated or approved (Section 0). Provider conditions only add reasons not to execute within them. Using the labels as an enforced checklist makes the parsing contract part of the gate: the declaring party is trusted, the syntax is fixed, and parsing is deterministic.
 
 ### 4.3 User Checklist: varies per user and environment.
 
 - Making intent and context specific.
-- Execution limits and scope, checks before execution or termination, safety, user preferences, and so on.
+- Execution limits and ranges, checks before execution or termination, safety, user preferences, and so on.
 
-**Role of the user checklist: sets the permitted range within the settled execution unit. It is filled in after the unit is settled, so it comes after the intent in 4.1.**
+**Role of the user checklist: sets the ranges of values and state within the settled execution unit. It is filled in after the unit is settled, so it comes after the intent in 4.1.**
 
 ### 4.4 When checklists are obtained and slots are created
 
@@ -431,7 +431,7 @@ With authority outside the model, decisions and accountability stay with the par
 | --- | --- | --- |
 | **Value** | No source designated for looking up the value | Review backend API/DB integration |
 | **Condition** | The condition was not declared | Fill in OpenAPI Specification / description metadata |
-| **Intent** | Intent and permitted range were not declared | Improve UX and conversation flow design. Tool selection errors belong here too. |
+| **Intent** | The execution unit was not declared | Improve UX and conversation flow design. Tool selection errors belong here too. |
 
 - None of the three calls for a model training budget. What changes is not how fast things improve, but what kind of improvement is made.
 - Today, an agent's anomalies are attributed to the agent developer inside the organization and to the model outside it. Neither is the result of an investigation. Both are explanations left over because there is no record.
@@ -522,7 +522,7 @@ Provenance-based gates have been explored in injection defense, and the blank pr
 
 - This specification is not a technique for removing hallucination. The model's output remains, as it is, the input for preparing execution.
 - Its goal is not to block execution, but to establish what execution needs and settle an executable state. Safety follows from that.
-- It changes the default. Instead of running whatever is not prohibited, only what is confirmed within the range the user stated or approved reaches an executable state.
+- It changes the default. Instead of running whatever is not prohibited, only what is confirmed, in an execution unit the user stated or approved, reaches an executable state.
 - The black box is not fully opened. What is opened is what went into the verdict and what came out. After an incident, what you usually need is not the model's internal state but where the values came from, so this scope answers a good share of the questions.
 
 The authority to decide what gets checked and the authority to judge whether it was checked belong outside the model. Things went wrong not because these authorities were in the model, but because they were nowhere. The model filled the empty place. What narrows is the model's authority. What widens is what the model can be used for.
