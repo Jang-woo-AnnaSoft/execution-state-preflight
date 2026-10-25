@@ -35,9 +35,17 @@
  *    reported as broken_hooks / NOT CLEAN rather than counted as gate wins.
  *    This is a real second measurement — how well each model points instead of
  *    asserting — and it must not be read as the gate's effect.
+ *
+ * 4. TOKEN BUDGETS. A tool call (arms A and B, one call per turn) gets MAX_TOKENS,
+ *    unchanged since the first runs so their numbers stay comparable. The hooks'
+ *    JSON calls (arm C) get JSON_MAX_TOKENS. In the first "said" run, 7 of arm C's
+ *    extraction calls stopped at 1024 tokens with no text at all, and the record
+ *    could not say where the tokens went. They now get more room, and every JSON
+ *    call records which kinds of content block came back (blocks).
  */
 
 const MAX_TOKENS = 1024;
+const JSON_MAX_TOKENS = 4096;
 
 // ── Anthropic ───────────────────────────────────────────────────────────────
 
@@ -78,11 +86,11 @@ const anthropicAdapter = {
   //   wrote, what it cost. A parse failure throws with those attached (see jsonReply).
   async callJsonMeta(model, system, user) {
     const res = await anthropic().messages.create({
-      model, max_tokens: MAX_TOKENS, system,
+      model, max_tokens: JSON_MAX_TOKENS, system,
       messages: [{ role: "user", content: user }],
     });
     return jsonReply(res.content.filter(b => b.type === "text").map(b => b.text).join(""),
-                     res.stop_reason ?? null, res.usage ?? null);
+                     res.stop_reason ?? null, res.usage ?? null, (res.content ?? []).map(b => b.type));
   },
 };
 
@@ -149,12 +157,13 @@ function openaiAdapter({ id, baseUrl, envKey, jsonMode = false, headers = {} }) 
     async callJsonMeta(model, system, user) {
       const out = await post({
         model,
-        max_tokens: MAX_TOKENS,
+        max_tokens: JSON_MAX_TOKENS,
         messages: [{ role: "system", content: system }, { role: "user", content: user }],
         ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
       });
-      return jsonReply(out?.choices?.[0]?.message?.content ?? "",
-                       out?.choices?.[0]?.finish_reason ?? null, out?.usage ?? null);
+      const msg = out?.choices?.[0]?.message ?? {};
+      return jsonReply(msg.content ?? "", out?.choices?.[0]?.finish_reason ?? null, out?.usage ?? null,
+                       Object.keys(msg).filter(k => msg[k] != null && k !== "role"));
     },
   };
 }
@@ -193,13 +202,18 @@ function parseJsonObject(text) {
 //   record can say WHY the hook failed — the first smoke run had 19 extraction failures and no way
 //   to tell a truncated reply from a chatty one.
 const TRUNCATED = new Set(["max_tokens", "length"]);
-function jsonReply(text, stop_reason, usage) {
+// blocks: the kinds of content that came back (Anthropic block types, or the populated message
+//   fields on the OpenAI shape). An empty text with a "thinking" block is a different failure from
+//   an empty text with nothing — the first said run could not tell them apart.
+function jsonReply(text, stop_reason, usage, blocks = null) {
   try {
-    return { json: parseJsonObject(text), stop_reason, usage };
+    return { json: parseJsonObject(text), stop_reason, usage, blocks };
   } catch (e) {
-    const err = new Error(`${TRUNCATED.has(stop_reason) ? "reply truncated at the token limit; " : ""}${e.message}`);
+    const err = new Error(`${TRUNCATED.has(stop_reason) ? "reply truncated at the token limit; " : ""}` +
+                          `${stop_reason === "refusal" ? "the model refused; " : ""}${e.message}`);
     err.stop_reason = stop_reason;
     err.usage = usage;
+    err.blocks = blocks;
     err.head = String(text).slice(0, 300);
     throw err;
   }
@@ -226,4 +240,4 @@ function buildAdapter(entry) {
   throw new Error(`unknown provider "${entry.provider}" (expected "anthropic" or "openai")`);
 }
 
-module.exports = { buildAdapter, parseJsonObject, jsonReply, MAX_TOKENS };
+module.exports = { buildAdapter, parseJsonObject, jsonReply, MAX_TOKENS, JSON_MAX_TOKENS };

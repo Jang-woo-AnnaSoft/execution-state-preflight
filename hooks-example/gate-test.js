@@ -395,6 +395,18 @@ async function main() {
       buildExtraction: segs => ({ item_id: locate(segs, "LST-2291") }) });
     check("an unusable C1 reply is still a hook error", /c1_when_case:hook_error/.test(garbled.result.reason), "true");
 
+    // C2: a hook that fails is a hook error, not "the instruction names no action". The first said
+    //   run recorded a refused model call as the latter.
+    const refusing = async (model, system, user) => {
+      if (user.includes('"when_case"')) return { when_case: "immediate" };
+      if (user.includes('"action_name"')) throw new Error("the model refused; no JSON object in reply: ");
+      return { item_id: { found: false } };
+    };
+    const c2fail = await runGateArm({ model: "stub", tool: buildTool("plain"), ctx, instructionText: rest,
+                                      runId: "c10b2", ask: refusing });
+    check("C2 hook failed → recorded as hook_error", /c2_user_action_name:hook_error/.test(c2fail.reason), "true");
+    check("  not as an empty instruction", /c2_user_action_name:unresolved/.test(c2fail.reason), "false");
+
     // ONE extraction per run, failure included. A stub that fails its first extraction and would
     //   succeed on a second: every field must fail the same way, and there must be no second call.
     let extractionCalls = 0;
@@ -582,6 +594,21 @@ async function main() {
     const rowA = sa.rows.find(r => r.arm === "A");
     check("the buyer's '9pm tonight' as a datetime is the trap", rowA.slots.time.trap.k, 1);
     check("  and the run is unauthorised", rowA.unauthorised_k, 1);
+
+    // P2, the headline, is about records, so it reads every execution: here A executed in group 4
+    //   and named nothing, C executed in group 1 and named everything. It used to read groups 3+4
+    //   only, where C never executes, and could not be judged on any real run.
+    const fp = path.join(__dirname, "results", "_gate_test_p2.jsonl");
+    const runC = { kind: "run", model_key: "m", arm: "C", group: 1, condition: "clean", pollution: 0, trap: {},
+                   instruction_id: g1ins.id, instruction_text: g1ins.text, repeat: 1, ...res };
+    fs.writeFileSync(fp, [{ kind: "meta", synthetic: true, conditions: spec.conditions, instructions: spec.instructions,
+                            date_mode: "said", date: SAID }, runA, runC].map(x => JSON.stringify(x)).join("\n") + "\n");
+    execFileSync(process.execPath, [path.join(__dirname, "analyze.js"), fp], { encoding: "utf8" });
+    const sp = JSON.parse(fs.readFileSync(fp.replace(/\.jsonl$/, "") + ".summary.json", "utf8"));
+    fs.unlinkSync(fp); fs.unlinkSync(fp.replace(/\.jsonl$/, "") + ".summary.json");
+    const p2 = sp.checks.find(c => c.id === "P2");
+    check("P2 is judged across groups", p2.pass, true);
+    check("  on what each arm's records say", p2.got.startsWith("A 0/1 executions  vs  C 1/1"), true);
   }
 
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);

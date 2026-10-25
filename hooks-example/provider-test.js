@@ -125,6 +125,24 @@ async function main() {
     );
     check("no tools on a json call", "tools" in seen.body, "false");
     check("object extracted from prose", out.when_case, "immediate");
+    // Hook JSON calls get more room than tool calls; tool calls keep the first runs' budget.
+    const { JSON_MAX_TOKENS, MAX_TOKENS } = require("./providers");
+    check("json call budget", seen.body.max_tokens, JSON_MAX_TOKENS);
+    const t = await withFetch({ json: { choices: [{ message: { content: "ok" } }] } },
+      () => adapter.callTool("test-model", "SYS", "USER", tool));
+    check("tool call budget unchanged", t.seen.body.max_tokens, MAX_TOKENS);
+  }
+  {
+    // What came back is on the record, success or not, and a refusal says it was one.
+    const ok = await withFetch(
+      { json: { choices: [{ message: { content: '{"a":1}' }, finish_reason: "stop" }] } },
+      () => adapter.callJsonMeta("test-model", "SYS", "USER"));
+    check("blocks recorded on success", (ok.out.blocks ?? []).join(","), "content");
+    const ref = await withFetch(
+      { json: { choices: [{ message: { content: "" , refusal: "no" }, finish_reason: "refusal" }] } },
+      () => adapter.callJsonMeta("test-model", "SYS", "USER"));
+    check("a refusal is named as one", /the model refused/.test(ref.err?.message ?? ""), "true");
+    check("  with what came back", (ref.err?.blocks ?? []).join(","), "content,refusal");
   }
   {
     const { err } = await withFetch(

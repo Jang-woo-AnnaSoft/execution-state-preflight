@@ -271,14 +271,14 @@ check("A records a source for NONE of them", sum(pooledA, p => p.recorded), 0);
 check("C executed nothing undeclared (all held)", sum(pooledC, p => p.executed), 0);
 
 check("P1:A passes (A names nothing, as expected)", byId["opus:P1:A"], true);
-// C held everything in groups 3+4, so these have nothing to judge. They used to read PASS on
-//   that empty set; n/a (null) is what the data supports.
-check("P1:C n/a (C executed nothing undeclared)",    byId["opus:P1:C"], null);
-check("P3 n/a (nothing to re-verify)",              byId["opus:P3"], null);
+// The record properties are read over every execution. C executed in group 1, named every source,
+//   and every source re-checks — real passes, not the empty-set PASS these once were.
+check("P1:C passes (C names every source, all groups)", byId["opus:P1:C"], true);
+check("P3 passes (C re-verifies, all groups)",       byId["opus:P3"], true);
 check("K1 passes (declared control stable)",        byId["opus:K1"], true);
 check("K3 n/a (no execution to be unauthorised)",   byId["opus:K3"], null);
 check("R1 not refuted (plain call records nothing)", byId["opus:R1"], true);
-check("R2 n/a (no source claimed)",                 byId["opus:R2"], null);
+check("R2 not refuted (no false source in C)",      byId["opus:R2"], true);
 check("R3 n/a (nothing let through or held back)",  byId["opus:R3"], null);
 check("D1 is reported, not judged",                 byId["opus:D1"], true);
 
@@ -386,6 +386,33 @@ console.log("\n--- analyzer: what the first smoke run showed it got wrong ---");
 
 fs.unlinkSync(tmp);
 fs.unlinkSync(tmp.replace(/\.jsonl$/, "") + ".summary.json");
+
+console.log("\n--- runner: options it does not know, and which code made a file ---");
+{
+  // A stale checkout once ran --date said by ignoring the option. Unknown options now stop the run.
+  const runner = path.join(__dirname, "runner.js");
+  const refuse = args => {
+    try { execFileSync(process.execPath, [runner, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); return "ran"; }
+    catch (e) { return String(e.stderr).split("\n")[0]; }
+  };
+  check("a misspelt option is refused", refuse(["--dates", "said", "--check"]), 'unknown option "--dates"');
+  check("an option missing its value is refused", refuse(["--date"]), 'option "--date" needs a value');
+  check("a stray word is refused", refuse(["said"]), 'unexpected argument "said"');
+  check("a non-number repeat count is refused", refuse(["--repeats", "two"]), '--repeats must be a positive integer, got "two"');
+  // The code version that goes into every results file.
+  const { codeVersion } = require("./version");
+  const v1 = codeVersion(), v2 = codeVersion();
+  check("the skeleton is hashed", typeof v1.files["execution-state-preflight.js"], "string");
+  check("the declarations are hashed", typeof v1.files["hooks-example/instructions.json"], "string");
+  check("tests are not — they do not decide a run", Object.keys(v1.files).some(f => /test\.js$/.test(f)), false);
+  check("the same code gives the same version", JSON.stringify(v1.files) === JSON.stringify(v2.files), true);
+  // And --check prints the same version the runner writes into meta.
+  let out = "";
+  try { out = execFileSync(process.execPath, [runner, "--check"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+  catch (e) { out = String(e.stdout); }
+  check("--check names the skeleton the run would use",
+    out.includes(`skeleton ${v1.files["execution-state-preflight.js"]}`), true);
+}
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

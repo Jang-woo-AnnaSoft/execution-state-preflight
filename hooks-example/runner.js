@@ -23,6 +23,7 @@ const { SYSTEM_A, SYSTEM_B, SYSTEM_C } = require("./prompts");
 const { runPlainArm } = require("./arm-plain");
 const { runGateArm } = require("./arm-gate");
 const { buildAdapter } = require("./providers");
+const { codeVersion } = require("./version");
 
 const REGISTRY = JSON.parse(fs.readFileSync(path.join(__dirname, "models.json"), "utf8")).models;
 
@@ -32,17 +33,29 @@ const ARMS = {
   C: { label: "gate", system: SYSTEM_C }
 };
 
+// Every option this runner understands, and whether it takes a value. Anything else is refused.
+//   It used to be skipped silently: on 2026-10-25 a stale checkout was given --date said, did not
+//   know the option, dropped it, and ran the no-date baseline under a name that suggested otherwise.
+const OPTIONS = { models: true, arms: true, conditions: true, repeats: true, variant: true, date: true, check: false };
+
 function parseArgs(argv) {
   const out = { models: Object.keys(REGISTRY), arms: ["A", "B", "C"], repeats: 5, variant: "plain",
                 check: false, conditions: null, date: "none" };
+  const fail = msg => { console.error(`${msg}\nKnown options: ${Object.keys(OPTIONS).map(k => "--" + k).join(" ")}`); process.exit(1); };
   for (let i = 2; i < argv.length; i += 1) {
-    const k = argv[i].replace(/^--/, "");
-    if (k === "check") { out.check = true; continue; }
-    const v = argv[i + 1]; i += 1;
+    if (!argv[i].startsWith("--")) fail(`unexpected argument "${argv[i]}"`);
+    const k = argv[i].slice(2);
+    if (!(k in OPTIONS)) fail(`unknown option "${argv[i]}"`);
+    if (!OPTIONS[k]) { out[k] = true; continue; }
+    const v = argv[i + 1];
+    if (v === undefined || v.startsWith("--")) fail(`option "--${k}" needs a value`);
+    i += 1;
     if (k === "models" || k === "arms" || k === "conditions") out[k] = v.split(",");
-    else if (k === "repeats") out.repeats = parseInt(v, 10);
-    else if (k === "variant") out.variant = v;
-    else if (k === "date") out.date = v;
+    else if (k === "repeats") {
+      out.repeats = Number(v);
+      if (!Number.isInteger(out.repeats) || out.repeats < 1) fail(`--repeats must be a positive integer, got "${v}"`);
+    }
+    else out[k] = v;
   }
   return out;
 }
@@ -79,10 +92,15 @@ async function main() {
     for (const p of problems) console.error(`  - ${p}`);
     console.error("");
   }
+  // The same object goes into every results file's meta. Printed by --check so a checkout can be
+  //   compared with the one that made a results file before anything is spent.
+  const code = codeVersion();
   if (opts.check) {
     for (const m of resolved) {
       console.log(`  ok  ${m.key.padEnd(10)} ${String(m.vendor).padEnd(10)} ${m.model}  via ${m.adapter.id}`);
     }
+    console.log(`\ncode: ${code.git ? `${code.git.commit.slice(0, 7)}${code.git.dirty ? " (uncommitted changes)" : ""}` : "not a git checkout"}` +
+                `, skeleton ${code.files["execution-state-preflight.js"]}`);
     console.log(`\n${resolved.length} usable, ${problems.length} unusable. Nothing was called.\n`);
     process.exit(problems.length ? 1 : 0);
   }
@@ -129,6 +147,7 @@ async function main() {
     variant: opts.variant,
     date_mode: opts.date,
     date,                       // the mode as declared, so the analyzer rebuilds the same segments
+    code,                       // which code made this file: git commit + a hash of every file that decides a run
     repeats: opts.repeats,
     models: resolved.map(m => ({ key: m.key, vendor: m.vendor, model: m.model, provider: m.adapter.id,
                                  base_url: m.entry.base_url ?? null, json_mode: m.entry.json_mode === true })),

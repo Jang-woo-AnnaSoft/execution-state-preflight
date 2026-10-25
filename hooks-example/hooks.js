@@ -99,11 +99,12 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter }) {
       const r = adapter.callJsonMeta
         ? await adapter.callJsonMeta(m, system, user)
         : { json: await adapter.callJson(m, system, user), stop_reason: null, usage: null };
-      Object.assign(entry, { ok: true, stop_reason: r.stop_reason ?? null, usage: r.usage ?? null });
+      Object.assign(entry, { ok: true, stop_reason: r.stop_reason ?? null, usage: r.usage ?? null,
+                             blocks: r.blocks ?? null });
       return r.json;
     } catch (e) {
       Object.assign(entry, { error: e?.message ?? String(e), stop_reason: e?.stop_reason ?? null,
-                             usage: e?.usage ?? null, head: e?.head ?? null });
+                             usage: e?.usage ?? null, blocks: e?.blocks ?? null, head: e?.head ?? null });
       throw e;
     }
   }

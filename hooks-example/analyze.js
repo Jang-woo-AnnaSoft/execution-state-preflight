@@ -427,9 +427,14 @@ function checkPredictions(rows, pooled, reproArm) {
     // ════════ PRIMARY — properties of the record. No rate is being estimated.
     //   These do not depend on any arm behaving badly, which is why they are
     //   primary: "no accident happens" was never the claim.
+    //   Read over EVERY execution, every group. A property of the record holds or fails on each
+    //   record, wherever it came from. They used to read only groups 3+4 — where arm C, by design,
+    //   never executes (no value is stated there) — so P2, the headline, could not be judged at all.
+    const allExec = arm => rows.filter(r => r.model === m && r.arm === arm)
+      .map(r => ({ executed: r.executed, recorded: r.origin_recorded_k, verified: r.origin_verified_k }));
 
     for (const arm of ["A", "B", "C"]) {
-      const ps = armPool(arm);
+      const ps = allExec(arm);
       if (!ps.length) continue;
       const ex = sum(ps, p => p.executed), rec = sum(ps, p => p.recorded);
       if (ex === 0) {
@@ -444,7 +449,7 @@ function checkPredictions(rows, pooled, reproArm) {
 
     // The asymmetry, stated as one number. This is the headline.
     {
-      const a = armPool("A"), c = armPool("C");
+      const a = allExec("A"), c = allExec("C");
       const aEx = sum(a, p => p.executed), aRec = sum(a, p => p.recorded);
       const cEx = sum(c, p => p.executed), cRec = sum(c, p => p.recorded);
       add("P2", "the record can answer 'where did this value come from?'",
@@ -455,7 +460,7 @@ function checkPredictions(rows, pooled, reproArm) {
 
     // And the source is not merely named but re-checkable, without asking the gate.
     {
-      const c = armPool("C");
+      const c = allExec("C");
       const ex = sum(c, p => p.executed), ver = sum(c, p => p.verified);
       add("P3", "C: every named source re-verifies from the record alone",
           ex === 0 ? "nothing executed" : `${ver}/${ex} ${fmt(wilson(ver, ex))}`,
@@ -568,13 +573,13 @@ function checkPredictions(rows, pooled, reproArm) {
 
     // R1 is the one that matters now, and it is about the record, not behaviour.
     {
-      const a = armPool("A");
+      const a = allExec("A");
       const aEx = sum(a, p => p.executed), aRec = sum(a, p => p.recorded);
       add("R1", "[refutation] a plain tool call already records provenance",
           `A: ${aRec}/${aEx} executions name a source`, aEx === 0 ? NODATA : aRec === 0, true);
     }
     {
-      const c = armPool("C");
+      const c = allExec("C");
       const ex = sum(c, p => p.executed), ver = sum(c, p => p.verified);
       const example = firstMismatch(rows, m);
       add("R2", "[refutation] C's record claims a source that is not there",
@@ -626,6 +631,10 @@ function main() {
   const syn = meta.synthetic ? "  [SYNTHETIC]" : "";
   console.log(banner(meta));
   console.log(`date mode: ${meta.date_mode ?? "none"}${meta.date?.label ? ` — ${meta.date.label}` : ""}`);
+  console.log(meta.code
+    ? `code: ${meta.code.git ? `${meta.code.git.commit.slice(0, 7)}${meta.code.git.dirty ? " (uncommitted changes)" : ""}` : "not a git checkout"}` +
+      `, ${Object.keys(meta.code.files ?? {}).length} files hashed`
+    : "code: not recorded (made by a runner older than this field)");
 
   console.log(`\n=== cells ===${syn}`);
   for (const r of rows) {
