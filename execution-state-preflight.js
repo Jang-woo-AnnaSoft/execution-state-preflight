@@ -321,7 +321,9 @@ async function resolveFixedChecklist(h, instruction, mcpTool, fixedPreSet) {
   //   BREAKS: check the fallback first and a stored name silently redirects a different request.
   // NOTE: length caps and whole-input echoes remain the hook's post-processing job. An echo is a non-empty
   //   string, passes usableActionName, and flows into action_key.
-  const fromInstruction = await safeHook(h.extractUserActionName, [instruction], () => undefined);
+  let c2HookError = null;
+  const fromInstruction = await safeHook(h.extractUserActionName, [instruction],
+    e => { c2HookError = e?.message ?? String(e); return undefined; });
   let c2 = null;
   let c2_source = null;
   if (usableActionName(fromInstruction)) {
@@ -332,6 +334,12 @@ async function resolveFixedChecklist(h, instruction, mcpTool, fixedPreSet) {
     if (fallback !== undefined) {
       c2 = fallback;
       c2_source = "pre_set_data";
+    } else if (c2HookError !== null) {
+      // The hook failed — it did not report that the instruction names no action. Recording it as
+      //   "unresolved — instruction and pre-set both empty" said something untrue about the
+      //   instruction (the first said run: a refused model call on "Set up a time to hand over
+      //   LST-2291"). Same route either way; the record must say which happened. Mirror of C1.
+      issues.push({ slot: "c2_user_action_name", code: "hook_error", detail: c2HookError });
     } else {
       issues.push({ slot: "c2_user_action_name", code: "unresolved", detail: "instruction and pre-set both empty" });
     }
