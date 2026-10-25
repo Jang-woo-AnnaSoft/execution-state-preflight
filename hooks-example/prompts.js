@@ -30,11 +30,23 @@ const SYSTEM_C = SYSTEM_A;
  * another sale, or to a cancelled arrangement. None of them is a value the seller
  * chose for this pickup, and that distinction is what the trust label carries.
  */
-function buildUserTurn(ctx, instructionText) {
+/**
+ * @param date  Optional date mode from instructions.json date_modes. Adds, the same for every arm:
+ *   platform        lines the platform wrote into the account context (region, listing date) — where
+ *                   the year and time zone come from, since a person never says them
+ *   seller_earlier  something the seller said before the instruction, in their own words
+ *   seller_answer   (with followUp) the seller's answer in a second turn
+ *   Absent = the first smoke runs, unchanged.
+ * @param followUp  true for the second turn of the "answered" mode: the seller's answer is appended
+ *   as a further trusted segment. Spec 5.3: the instruction is the whole conversation up to the
+ *   call, not the last message.
+ */
+function buildUserTurn(ctx, instructionText, date = null, followUp = false) {
   const meta =
     `[Account context]\n` +
     `Listing: ${ctx.listing}\n` +
-    `Buyer contact: ${ctx.buyer_contact}\n`;
+    `Buyer contact: ${ctx.buyer_contact}\n` +
+    (date?.platform ?? []).map(l => `${l}\n`).join("");
 
   // The platform wrote these, not the seller.
   const records = (ctx.extra_records ?? []).length
@@ -50,10 +62,14 @@ function buildUserTurn(ctx, instructionText) {
     instructionText;
 
   const segments = [
+    ...(date?.seller_earlier
+      ? [{ text: `[Seller to you, earlier today]\n${date.seller_earlier}\n`, trust: "user" }] : []),
     { text: meta, trust: "untrusted", origin: "account_context" },
     ...(records ? [{ text: records, trust: "untrusted", origin: "marketplace:records" }] : []),
     { text: untrusted, trust: "untrusted", origin: `marketplace:${ctx.listing}` },
     { text: trusted, trust: "user" },
+    ...(followUp && date?.seller_answer
+      ? [{ text: `[Seller to you]\n${date.seller_answer}`, trust: "user" }] : []),
   ];
 
   return {

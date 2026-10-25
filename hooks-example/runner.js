@@ -9,6 +9,8 @@
  *   node runner.js --repeats 2 --arms A      a smoke test before spending
  *   node runner.js --variant labelled        run 2 (provider labels)
  *   node runner.js --check                   validate registry and keys, call nothing
+ *   node runner.js --date said               where the date comes from: none (default, the first
+ *                                            smoke runs) | said | answered. See instructions.json
  *
  * Models come from models.json, not from this file: ids change and which ones
  * you can reach depends on your account. Verify them before spending.
@@ -32,7 +34,7 @@ const ARMS = {
 
 function parseArgs(argv) {
   const out = { models: Object.keys(REGISTRY), arms: ["A", "B", "C"], repeats: 5, variant: "plain",
-                check: false, conditions: null };
+                check: false, conditions: null, date: "none" };
   for (let i = 2; i < argv.length; i += 1) {
     const k = argv[i].replace(/^--/, "");
     if (k === "check") { out.check = true; continue; }
@@ -40,6 +42,7 @@ function parseArgs(argv) {
     if (k === "models" || k === "arms" || k === "conditions") out[k] = v.split(",");
     else if (k === "repeats") out.repeats = parseInt(v, 10);
     else if (k === "variant") out.variant = v;
+    else if (k === "date") out.date = v;
   }
   return out;
 }
@@ -93,6 +96,13 @@ async function main() {
 
   const spec = JSON.parse(fs.readFileSync(path.join(__dirname, "instructions.json"), "utf8"));
   const tool = buildTool(opts.variant);
+  // One date mode per run, so a results file never mixes them. "none" passes no date object at all,
+  //   which is byte-for-byte what the first smoke runs sent.
+  if (!Object.prototype.hasOwnProperty.call(spec.date_modes ?? {}, opts.date) || opts.date.startsWith("_")) {
+    console.error(`unknown --date "${opts.date}". Known: ${Object.keys(spec.date_modes ?? {}).filter(k => !k.startsWith("_")).join(", ")}`);
+    process.exit(1);
+  }
+  const date = opts.date === "none" ? null : spec.date_modes[opts.date];
 
   // (instruction × condition) pairs. Declared groups run clean only; the
   // undeclared ones carry the pollution axis. See instructions.json.
@@ -109,13 +119,16 @@ async function main() {
   }
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const outPath = path.join(__dirname, "results", `run-${opts.variant}-${stamp}.jsonl`);
+  const outPath = path.join(__dirname, "results",
+    `run-${opts.variant}${opts.date === "none" ? "" : `-${opts.date}`}-${stamp}.jsonl`);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
   const meta = {
     kind: "meta",
     started_at: new Date().toISOString(),
     variant: opts.variant,
+    date_mode: opts.date,
+    date,                       // the mode as declared, so the analyzer rebuilds the same segments
     repeats: opts.repeats,
     models: resolved.map(m => ({ key: m.key, vendor: m.vendor, model: m.model, provider: m.adapter.id,
                                  base_url: m.entry.base_url ?? null, json_mode: m.entry.json_mode === true })),
@@ -148,8 +161,8 @@ async function main() {
           try {
             result = armKey === "C"
               ? await runGateArm({ adapter, model, tool, ctx, instructionText: ins.text, runId,
-                                   userChecklist: ins.user_checklist ?? [] })
-              : await runPlainArm({ adapter, model, systemPrompt: arm.system, tool, ctx, instructionText: ins.text });
+                                   userChecklist: ins.user_checklist ?? [], date })
+              : await runPlainArm({ adapter, model, systemPrompt: arm.system, tool, ctx, instructionText: ins.text, date });
           } catch (e) {
             error = { message: e?.message ?? String(e), stack: e?.stack ?? null };
             result = { outcome: "error", args: null };
@@ -166,6 +179,7 @@ async function main() {
             condition: cname, pollution: cond.pollution ?? 0, trap: cond.trap ?? {},
             repeat: r,
             variant: opts.variant,
+            date_mode: opts.date,
             ms: Date.now() - t0,
             error,
             ...result

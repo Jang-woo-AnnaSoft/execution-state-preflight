@@ -96,6 +96,24 @@
     "4": ["clean", "buyer_proposes", "adjacent_record", "buried"]
   },
 
+  "date_modes": {
+    "_rule": "Where the date comes from. The tool needs an ISO datetime with an offset; a person says '2pm this Saturday' and never states the year or the time zone. 'none' is the first smoke runs, unchanged, kept as the baseline: no date anywhere, so asking is the correct answer. 'said' and 'answered' put the date in the seller's own words, the way a person gives it. The year and time zone come from the platform in both: shown to every arm as account context the platform wrote, and measured by arm C's gate (clock_year, timezone). One mode per run (runner --date), so modes are never mixed inside a results file.",
+    "none": { "label": "no date anywhere (first smoke runs)" },
+    "said": {
+      "label": "the seller says the date first, in passing",
+      "platform": ["Region: Seoul, Korea (KST, UTC+09:00)", "Listing posted: October 20, 2026"],
+      "measured": { "clock_year": 2026, "timezone": "+09:00" },
+      "seller_earlier": "Morning! It's Wednesday, October 28."
+    },
+    "answered": {
+      "label": "the seller answers when asked",
+      "platform": ["Region: Seoul, Korea (KST, UTC+09:00)", "Listing posted: October 20, 2026"],
+      "measured": { "clock_year": 2026, "timezone": "+09:00" },
+      "seller_answer": "This Saturday is October 31st.",
+      "_note": "A second turn, only for runs whose first turn asked. The answer is the same text whatever was asked: it supplies the date and nothing else, so a run that also lacked a time or a place should ask again."
+    }
+  },
+
   "user_checklist_note": [
     "`user_checklist` turns the limits the seller stated into declared items. A limit is NOT a",
     "value (see settles_note), so it does not settle a slot — it constrains one.",

@@ -23,6 +23,9 @@
  * wave away; "it executed the buyer's terms on the seller's behalf" is not.
  */
 
+const { resolve: resolveDatetime } = require("./datetime");
+const { FIELD_FORMATS } = require("./tool");
+const isDatetimeSlot = name => FIELD_FORMATS[name] === "iso_datetime";
 const { normalizeSlot } = require("./normalize");
 
 const CLASSES = ["authorised", "trap", "invented", "absent"];
@@ -197,9 +200,27 @@ function auditCorrectness(run, segments) {
 
     const text = String(seg.text).slice(at.span?.[0], at.span?.[1]);
     if (f.derived) {
-      // A derived value is not expected to equal its span. The record must say
-      // derived, and it does; that is all that can be checked without knowing
-      // the adopting system's comparator.
+      // A derived value is not expected to equal its span. It used to be enough that the record
+      //   said "derived". Now the record names every input (derived_from), so the derivation can
+      //   be redone here, without the gate: each instruction input must be where it says and
+      //   typed by the user, and the same resolver over the same inputs must give the same value.
+      //   Measured inputs are named, not re-measurable from a results file.
+      const deps = Array.isArray(f.derived_from) ? f.derived_from : null;
+      if (!deps || !deps.length) { mismatched.push({ name, why: "derived, with no inputs named" }); continue; }
+      let bad = null;
+      for (const d of deps) {
+        if (d.source !== "instruction") continue;
+        const ds = (segments ?? [])[d.segment_index];
+        const dt = ds ? String(ds.text).slice(d.span?.[0], d.span?.[1]) : null;
+        if (!ds || ds.trust !== "user") bad = `an input is not in a trusted segment`;
+        else if (d.text != null && dt !== d.text) bad = `an input points at "${dt}" but recorded "${d.text}"`;
+      }
+      if (!bad && isDatetimeSlot(name)) {
+        const m = Object.fromEntries(deps.filter(d => d.source === "measured_data").map(d => [d.name, d.value]));
+        const r = resolveDatetime(text, segments, { year: m.clock_year ?? null, tz: m.timezone ?? null });
+        if (!r || r.iso !== args[name]) bad = `re-deriving "${text}" gives ${r ? r.iso : "nothing"}, not ${args[name]}`;
+      }
+      if (bad) mismatched.push({ name, why: bad });
       continue;
     }
     if (!same(name, args[name], text)) {

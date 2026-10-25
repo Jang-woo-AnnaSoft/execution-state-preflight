@@ -54,11 +54,12 @@ const anthropicAdapter = {
   id: "anthropic",
   envKey: "ANTHROPIC_API_KEY",
 
+  // userText: the user turn, or a whole conversation as [{ role, content }] (the "answered" mode).
   async callTool(model, system, userText, tool) {
     const res = await anthropic().messages.create({
       model, max_tokens: MAX_TOKENS, system,
       tools: [{ name: tool.name, description: tool.description, input_schema: tool.inputSchema }],
-      messages: [{ role: "user", content: userText }],
+      messages: Array.isArray(userText) ? userText : [{ role: "user", content: userText }],
     });
     const text = res.content.filter(b => b.type === "text").map(b => b.text).join("\n") || null;
     const use = res.content.find(b => b.type === "tool_use");
@@ -70,11 +71,18 @@ const anthropicAdapter = {
   },
 
   async callJson(model, system, user) {
+    return (await this.callJsonMeta(model, system, user)).json;
+  },
+
+  // Same call, with what the record needs to explain a failure: why the model stopped, what it
+  //   wrote, what it cost. A parse failure throws with those attached (see jsonReply).
+  async callJsonMeta(model, system, user) {
     const res = await anthropic().messages.create({
       model, max_tokens: MAX_TOKENS, system,
       messages: [{ role: "user", content: user }],
     });
-    return parseJsonObject(res.content.filter(b => b.type === "text").map(b => b.text).join(""));
+    return jsonReply(res.content.filter(b => b.type === "text").map(b => b.text).join(""),
+                     res.stop_reason ?? null, res.usage ?? null);
   },
 };
 
@@ -107,7 +115,8 @@ function openaiAdapter({ id, baseUrl, envKey, jsonMode = false, headers = {} }) 
       const out = await post({
         model,
         max_tokens: MAX_TOKENS,
-        messages: [{ role: "system", content: system }, { role: "user", content: userText }],
+        messages: [{ role: "system", content: system },
+                   ...(Array.isArray(userText) ? userText : [{ role: "user", content: userText }])],
         tools: [{
           type: "function",
           function: { name: tool.name, description: tool.description, parameters: tool.inputSchema },
@@ -134,27 +143,66 @@ function openaiAdapter({ id, baseUrl, envKey, jsonMode = false, headers = {} }) 
     },
 
     async callJson(model, system, user) {
+      return (await this.callJsonMeta(model, system, user)).json;
+    },
+
+    async callJsonMeta(model, system, user) {
       const out = await post({
         model,
         max_tokens: MAX_TOKENS,
         messages: [{ role: "system", content: system }, { role: "user", content: user }],
         ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
       });
-      return parseJsonObject(out?.choices?.[0]?.message?.content ?? "");
+      return jsonReply(out?.choices?.[0]?.message?.content ?? "",
+                       out?.choices?.[0]?.finish_reason ?? null, out?.usage ?? null);
     },
   };
 }
 
 // ── shared ──────────────────────────────────────────────────────────────────
 
-/** Lenient on wrapping prose, strict on the object. Same rule for every provider. */
+/**
+ * Lenient on wrapping prose, strict on the object. Same rule for every provider.
+ * Reads the FIRST complete top-level object, matching braces outside strings. It used to take the
+ *   span from the first "{" to the last "}", so prose after the object that contained a brace — or a
+ *   second object — made the whole reply unparseable, and the run was scored as a broken hook.
+ */
 function parseJsonObject(text) {
   const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start < 0 || end < start) {
-    throw new Error(`no JSON object in reply: ${text.slice(0, 200)}`);
+  if (start < 0) throw new Error(`no JSON object in reply: ${text.slice(0, 200)}`);
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return JSON.parse(text.slice(start, i + 1));
+    }
   }
-  return JSON.parse(text.slice(start, end + 1));
+  throw new Error(`unterminated JSON object in reply: ${text.slice(0, 200)}`);
+}
+
+// Parse a JSON reply and keep the facts that explain it. On failure the error carries them, so the
+//   record can say WHY the hook failed — the first smoke run had 19 extraction failures and no way
+//   to tell a truncated reply from a chatty one.
+const TRUNCATED = new Set(["max_tokens", "length"]);
+function jsonReply(text, stop_reason, usage) {
+  try {
+    return { json: parseJsonObject(text), stop_reason, usage };
+  } catch (e) {
+    const err = new Error(`${TRUNCATED.has(stop_reason) ? "reply truncated at the token limit; " : ""}${e.message}`);
+    err.stop_reason = stop_reason;
+    err.usage = usage;
+    err.head = String(text).slice(0, 300);
+    throw err;
+  }
 }
 
 /**
@@ -178,4 +226,4 @@ function buildAdapter(entry) {
   throw new Error(`unknown provider "${entry.provider}" (expected "anthropic" or "openai")`);
 }
 
-module.exports = { buildAdapter, parseJsonObject, MAX_TOKENS };
+module.exports = { buildAdapter, parseJsonObject, jsonReply, MAX_TOKENS };

@@ -123,6 +123,19 @@ const ALLOWED_SOURCES = {
   buyer_contact: ["measured_data"]
 };
 
+/**
+ * Formats the gate checks (validateFieldSchema). The schema above already says it in prose —
+ * time is an "ISO 8601 datetime" — and that prose is what every arm's model reads. This is the
+ * same declaration in a form code can check, kept here rather than added to INPUT_SCHEMA so the
+ * tool every arm sees is unchanged from the first smoke runs.
+ *
+ * The first smoke run is why it exists: with no format check, arm C sent "2pm this Saturday" to a
+ * slot that requires a datetime — the span was real, the value was not one.
+ */
+const FIELD_FORMATS = {
+  time: "iso_datetime"
+};
+
 function buildTool(variant = "plain") {
   return {
     name: "schedule_pickup",
@@ -145,6 +158,7 @@ module.exports = {
   toAnthropicTool,
   SLOTS,
   ALLOWED_SOURCES,
+  FIELD_FORMATS,
   INPUT_SCHEMA,
   PLAIN_DESCRIPTION,
   LABELLED_DESCRIPTION,

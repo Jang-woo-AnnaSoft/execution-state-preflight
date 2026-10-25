@@ -26,6 +26,7 @@
  *   8. what the slot itself records: the route its unknown took, and every seat that was consulted
  *   9. a report of nothing — { none: "absent" | "no_place" } — kept apart from no report at all
  *  10. NULL as a slot state, who may report it, and the two route ceilings
+ *  11. a derived value names every input it rests on, and the gate checks each one
  *
  * Part 4 is why this file exists. storage.load is never called by the gate — the caller fetches the
  * prior record with preflight.getPriorExecutionState(key) and passes it in — so until now no test
@@ -94,7 +95,7 @@ function createStorage() {
 }
 
 // ── Hooks. Each seat is wired by what is passed in, not by branching in the hooks. ─
-function createHooks({ locate, measured, acceptPriorState, whenCase, allowed, measure, policy, extract }) {
+function createHooks({ locate, measured, acceptPriorState, whenCase, allowed, measure, policy, extract, support }) {
   return {
     classifyWhenCase: () => whenCase ?? "immediate",
     extractUserActionName: () => "pay the supplier",
@@ -105,7 +106,7 @@ function createHooks({ locate, measured, acceptPriorState, whenCase, allowed, me
     extractFromInstruction: extract ?? ((fieldName) =>
       (locate && fieldName === SLOT) ? locate : undefined),
     // The span really does hold the value, so equality is honest here.
-    spanSupportsValue: (value, atSpan) => value === atSpan,
+    spanSupportsValue: support ?? ((value, atSpan) => value === atSpan),
 
     // Seat 4.
     measureFromEnvironment: measure ?? ((fieldName) =>
@@ -133,10 +134,10 @@ function createHooks({ locate, measured, acceptPriorState, whenCase, allowed, me
 
 async function run({ locate, instruction, preSetData, measured, userAnswers, prior,
                      acceptPriorState, whenCase, storage, allowed, measure, policy, extract,
-                     ask_attempt, lookup_attempt, intent_attempt, limits }) {
+                     ask_attempt, lookup_attempt, intent_attempt, limits, support }) {
   const store = storage ?? createStorage();
   const preflight = createPreflight({
-    hooks: createHooks({ locate, measured, acceptPriorState, whenCase, allowed, measure, policy, extract }),
+    hooks: createHooks({ locate, measured, acceptPriorState, whenCase, allowed, measure, policy, extract, support }),
     storage: store,
     ...(limits ? { limits } : {}),
   });
@@ -607,6 +608,49 @@ const slotOf = state => (state.fields ?? []).find(f => f.name === SLOT) ?? {};
     const { state: intentEx } = await run({ whenCase: "not_a_case", intent_attempt: 2 });
     check("intent ask at ceiling: exhausted, not hold", intentEx.execution_decision, "exhausted");
     check("  kind still names it", intentEx.gate?.kind, "intent_undetermined_exhausted");
+  }
+
+  // ── 11. A derived value names what it rests on. ───────────────────────────────
+  // "2pm this Saturday" is not a datetime. Turning it into one takes the date the user said
+  // elsewhere and the year and time zone the system knows. 2.7: the record must say where a value
+  // came from — all of it, not just the span.
+  console.log("\n--- part 11: derived values and what they rest on ---");
+  {
+    const said = "Pay it on the 31st.";
+    const segs = [{ trust: "user", text: "It's October 28." }, { trust: "untrusted", text: "buyer: October 30" },
+                  { trust: "user", text: said }];
+    const loc = { value: "2026-10-31", segment_index: 2, span: [said.indexOf("the 31st"), said.indexOf("the 31st") + 8] };
+    const YEAR = { valid: true, value: 2026 };
+    const measureYear = (f) => (f === "clock_year" ? YEAR : undefined);
+    const dateDep = { source: "instruction", segment_index: 0, span: [5, 15] };
+    const yearDep = { source: "measured_data", name: "clock_year", value: 2026 };
+
+    const { state: ok } = await run({ instruction: segs, locate: loc, measure: measureYear,
+      support: () => ({ supported: true, derived: true, derived_from: [dateDep, yearDep] }) });
+    check("derived, every input named and checked: known", slotOf(ok).status, "known");
+    check("  recorded as derived", slotOf(ok).derived, true);
+    check("  the other place the user said it, with its text",
+      (slotOf(ok).derived_from ?? []).find(d => d.source === "instruction")?.text, "October 28");
+    check("  the measured year, as measured", (slotOf(ok).derived_from ?? []).find(d => d.source === "measured_data")?.value, 2026);
+
+    const { state: bare } = await run({ instruction: segs, locate: loc, measure: measureYear,
+      support: () => ({ supported: true, derived: true }) });
+    check("derived with nothing named: not settled", slotOf(bare).status, "unknown");
+    check("  traced as rejected, not as found", (slotOf(bare).lookup_trace ?? []).find(t => t.source === "instruction")?.result, "rejected");
+
+    const { state: lied } = await run({ instruction: segs, locate: loc, measure: measureYear,
+      support: () => ({ supported: true, derived: true, derived_from: [dateDep, { ...yearDep, value: 2025 }] }) });
+    check("a measured input the system does not measure: not settled", slotOf(lied).status, "unknown");
+
+    const { state: untrusted } = await run({ instruction: segs, locate: loc, measure: measureYear,
+      support: () => ({ supported: true, derived: true,
+                        derived_from: [{ source: "instruction", segment_index: 1, span: [7, 17] }, yearDep] }) });
+    check("an input read from an untrusted segment: not settled", slotOf(untrusted).status, "unknown");
+
+    const { state: boom } = await run({ instruction: segs, locate: loc,
+      measure: (f) => { if (f === "clock_year") throw new Error("clock down"); },
+      support: () => ({ supported: true, derived: true, derived_from: [dateDep, yearDep] }) });
+    check("re-measuring an input throws: a lookup failure", slotOf(boom).route, "definition_repair");
   }
 
   console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`);

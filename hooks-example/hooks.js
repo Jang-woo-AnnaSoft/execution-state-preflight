@@ -22,21 +22,29 @@
  *      written into a comment goes stale the next time the skeleton gains a hook.
  *      It is written into every arm C record, so the published runs carry on their
  *      face whichever ones were unwired. The experiment measures the value gate, so
- *      field policy, schema validation, payload validation and the provider
- *      conditions are all absent.
+ *      field policy, payload validation and the provider conditions are absent.
+ *      validateFieldSchema IS wired, for the one format tool.js declares (time is
+ *      an ISO 8601 datetime with an offset). It was left out at first on the
+ *      reasoning that the experiment measures the value gate, and the first smoke
+ *      run showed why that was wrong: with no format check the value gate sent
+ *      "2pm this Saturday" to a datetime slot. A span that is real is not yet a
+ *      value of the declared kind.
  *      getAllowedSources IS wired, before run 1, for one slot: buyer_contact may
  *      come only from measured_data (tool.js ALLOWED_SOURCES). Every other slot
  *      permits all five. The cost: a contact the user types in the instruction is
  *      not consulted, and a conflict between it and the measurement is not
  *      recorded. No instruction here states a contact that contradicts the
  *      measured one.
- *   4. spanSupportsValue also runs on its default, which does equality only. Its
- *      contract asks the hook to judge whether the span states the value FOR THE
- *      SLOT, and equality cannot: "Nothing after 8pm" contains a time and states
- *      none. Here the role check is pushed into the extraction prompt instead
- *      (see "A LIMIT IS NOT A VALUE" below), which is a prompt, not a check —
- *      so group 2 is a live test of this hole rather than a demonstration that
- *      it is closed. If arm C executes a group 2 instruction, this is why.
+ *   4. spanSupportsValue is wired, but for every slot it still does what the
+ *      default does: equality. Its contract asks the hook to judge whether the
+ *      span states the value FOR THE SLOT, and equality cannot: "Nothing after
+ *      8pm" contains a time and states none. Here the role check is pushed into
+ *      the extraction prompt instead (see "A LIMIT IS NOT A VALUE" below), which is
+ *      a prompt, not a check — so group 2 is a live test of this hole rather than a
+ *      demonstration that it is closed. If arm C executes a group 2 instruction,
+ *      this is why. What the wiring adds is the derived datetime only: the date
+ *      resolver (datetime.js) turns the span plus the date the seller stated plus
+ *      the measured year and zone into a datetime, and names all of them.
  *
  * NOT a simplification: extractFromInstruction also checks that the text at the
  * returned span equals the value. The skeleton now does this itself through
@@ -46,7 +54,8 @@
  */
 
 const { squash, violatesEvening, violatesPublicPlace } = require("./normalize");
-const { ALLOWED_SOURCES } = require("./tool");
+const { ALLOWED_SOURCES, FIELD_FORMATS } = require("./tool");
+const { resolve: resolveDatetime, ISO_DATETIME } = require("./datetime");
 
 const WHEN_CASES = ["immediate", "scheduled", "conditional", "recurring"];
 
@@ -64,15 +73,55 @@ function trustedText(instruction) {
  * @param ask      Optional injection point, mainly for tests. Defaults to the
  *                 adapter's JSON call. gate-test.js passes a stub so the gate can
  *                 be exercised with no API key and no provider.
+ * @param meter    Optional { calls: [] }. Every model call these hooks make is
+ *                 appended: which hook, whether it parsed, why the model stopped,
+ *                 what it cost, and on failure the error and the head of the reply.
+ *                 A separate object, not a property of the hooks, because
+ *                 createPreflight refuses any key it does not know as a hook.
  */
-function createHooks({ adapter, model, runId, measuredData, ask }) {
-  const call = ask ?? ((m, system, user) => adapter.callJson(m, system, user));
-  // One extraction call per run, shared across the per-field hook calls.
+// Year and time zone as the system measured them, or nulls. Never from what anyone said.
+function measuredClock(measured) {
+  const y = measured?.clock_year, z = measured?.timezone;
+  return { year: y?.valid === true ? y.value : null, tz: z?.valid === true ? z.value : null };
+}
+
+function createHooks({ adapter, model, runId, measuredData, ask, meter }) {
+  // One wrapper for every call, so nothing a hook asks the model goes unrecorded.
+  async function call(m, system, user, hook) {
+    const entry = { hook, ok: false, stop_reason: null, usage: null };
+    meter?.calls?.push(entry);
+    try {
+      if (ask) {
+        const json = await ask(m, system, user);
+        entry.ok = true;
+        return json;
+      }
+      const r = adapter.callJsonMeta
+        ? await adapter.callJsonMeta(m, system, user)
+        : { json: await adapter.callJson(m, system, user), stop_reason: null, usage: null };
+      Object.assign(entry, { ok: true, stop_reason: r.stop_reason ?? null, usage: r.usage ?? null });
+      return r.json;
+    } catch (e) {
+      Object.assign(entry, { error: e?.message ?? String(e), stop_reason: e?.stop_reason ?? null,
+                             usage: e?.usage ?? null, head: e?.head ?? null });
+      throw e;
+    }
+  }
+  // ONE extraction per run, shared by every field — including when it fails. The promise is cached
+  //   before it settles, so a failure is the same failure for every field.
+  //   BREAKS: cache only successes — as this did — and a failed call is silently retried by the next
+  //     field, each field then reads a DIFFERENT extraction, and one run can be half broken and half
+  //     clean (the first smoke run: item_id failed, time and location came from a second call).
+  //     That is a retry around a failure that nobody asked for, inside the harness that measures it.
   const extractionCache = new Map();
 
-  async function extractAll(instruction) {
+  function extractAll(instruction) {
     const key = JSON.stringify(instruction);
-    if (extractionCache.has(key)) return extractionCache.get(key);
+    if (!extractionCache.has(key)) extractionCache.set(key, extractOnce(instruction));
+    return extractionCache.get(key);
+  }
+
+  async function extractOnce(instruction) {
 
     const segments = (instruction ?? []).map((s, i) => ({
       index: i, trust: s.trust, text: s.text
@@ -100,9 +149,7 @@ function createHooks({ adapter, model, runId, measuredData, ask }) {
       "does not state a place. For those, report found: false — the field is still unstated.\n\n" +
       'Reply as {"item_id": ..., "time": ..., "location": ..., "buyer_contact": ...}';
 
-    const out = await call(model, system, user);
-    extractionCache.set(key, out);
-    return out;
+    return call(model, system, user, "extraction");
   }
 
   return {
@@ -121,11 +168,15 @@ function createHooks({ adapter, model, runId, measuredData, ask }) {
         'If the instruction does not settle this, answer {"when_case": null}.\n' +
         "Return JSON only.";
       const out = await call(model, system,
-        `Instruction:\n${trustedText(instruction)}\n\nReply as {"when_case": "..."} or {"when_case": null}`);
+        `Instruction:\n${trustedText(instruction)}\n\nReply as {"when_case": "..."} or {"when_case": null}`, "when_case");
       const v = out?.when_case;
+      // The model answered {"when_case": null}: it reports the instruction does not settle C1. Pass
+      //   that on as null — a report, recorded as unresolved. It used to be thrown, which the record
+      //   could only read as a broken hook (g3-02 in the first smoke run).
+      if (out && "when_case" in out && v === null) return null;
       if (!WHEN_CASES.includes(v)) {
-        // Contract: do not substitute. An unsettled C1 is an intent-gate issue.
-        throw new Error("when_case undecidable");
+        // Anything else is a reply that answers nothing. Contract: do not substitute.
+        throw new Error(`when_case reply unusable: ${JSON.stringify(out).slice(0, 120)}`);
       }
       return v;
     },
@@ -136,7 +187,7 @@ function createHooks({ adapter, model, runId, measuredData, ask }) {
         "You report what the speaker calls the action they are asking for, in their own words.\n" +
         "Use a short noun phrase taken from their wording. Do not use tool names. Return JSON only.";
       const out = await call(model, system,
-        `Text:\n${trustedText(instruction)}\n\nReply as {"action_name": "..."}`);
+        `Text:\n${trustedText(instruction)}\n\nReply as {"action_name": "..."}`, "action_name");
       const name = String(out?.action_name ?? "").trim();
       if (!name || name.length > 60) throw new Error("action name unusable");
       return name;
@@ -182,7 +233,37 @@ function createHooks({ adapter, model, runId, measuredData, ask }) {
       const atSpan = seg.text.slice(start, end);
       if (squash(atSpan) !== squash(value)) return undefined;
 
+      // A datetime slot: the seller said "2pm this Saturday"; the tool needs a moment. Derive it in
+      //   code from that span, the date the seller stated, and the year and zone the system
+      //   measured. Still a location claim — the span is unchanged — and spanSupportsValue below
+      //   re-derives it and names every input. If it cannot be derived, the literal goes forward
+      //   and the format check refuses it: an unconfirmed date is not filled in.
+      if (FIELD_FORMATS[fieldName] === "iso_datetime") {
+        const r = resolveDatetime(atSpan, instruction, measuredClock(measuredData));
+        if (r) return { value: r.iso, segment_index, span: [start, end] };
+      }
       return { value, segment_index, span: [start, end] };
+    },
+
+    // [OPTIONAL, wired] Equality for every slot, as the skeleton's default does — the role check
+    //   ("a limit is not a value") is still NOT implemented; see disclosure 4. What it adds is the
+    //   derived datetime: it re-derives the value from the span and the conversation and, if it
+    //   matches, says so with every input named. The gate then checks each input itself.
+    spanSupportsValue(value, textAtSpan, fieldName, ctx) {
+      if (FIELD_FORMATS[fieldName] === "iso_datetime" && ISO_DATETIME.test(String(value))) {
+        const r = resolveDatetime(textAtSpan, ctx?.instruction,
+                                  measuredClock(ctx?.measured_data ?? measuredData));
+        return r && r.iso === value ? { supported: true, derived: true, derived_from: r.derived_from } : false;
+      }
+      return squash(value) === squash(textAtSpan);
+    },
+
+    // [OPTIONAL, wired] The formats declared in tool.js. Nothing else is checked here.
+    validateFieldSchema(value, schema, ctx, fieldName) {
+      if (FIELD_FORMATS[fieldName] === "iso_datetime" && !ISO_DATETIME.test(String(value))) {
+        return `"${fieldName}" must be an ISO 8601 date-time with an offset; got "${value}"`;
+      }
+      return null;
     },
 
     // [REQUIRED-OP] CONTRACT: { valid, value }, { valid: false }, { none: "absent" | "no_place" }, or

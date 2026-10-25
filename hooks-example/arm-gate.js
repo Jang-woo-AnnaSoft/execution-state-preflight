@@ -42,35 +42,53 @@ const { buildUserTurn } = require("./prompts");
  * @param measured  Optional, tests only: replaces the measurement, so a failed
  *             one can be exercised through this function.
  */
-async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, userId = "seller_1", ask, measured, userChecklist = [], userAnswers = {} }) {
-  const turn = buildUserTurn(ctx, instructionText);
-
+async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, userId = "seller_1", ask, measured, userChecklist = [], userAnswers = {}, date = null }) {
   // buyer_contact is the one slot the system can measure, and the only source it
-  // permits (tool.js ALLOWED_SOURCES).
+  // permits (tool.js ALLOWED_SOURCES). With a date mode, the platform's clock year and
+  // the account's time zone are measured too — the parts of a date nobody says.
   const measuredData = measured ?? {
-    buyer_contact: { valid: true, value: ctx.buyer_contact }
+    buyer_contact: { valid: true, value: ctx.buyer_contact },
+    ...Object.fromEntries(Object.entries(date?.measured ?? {}).map(([k, v]) => [k, { valid: true, value: v }])),
   };
 
-  const storage = createStorage();
-  const hooks = createHooks({ adapter, model, runId, measuredData, ...(ask ? { ask } : {}) });
+  // Every model call the hooks make lands here — arm C calls the model three times a run, and
+  //   none of it was on the record before: not the cost, and not why a call failed.
+  const meter = { calls: [] };
+  const turn1 = await runOnce(buildUserTurn(ctx, instructionText, date).segments);
+  // "answered": the seller answers a question in their own words, once. Only if the gate asked.
+  //   The gate's question is a list of blanks, not prose (spec 4.6: how to ask is the model's job,
+  //   what to ask is the code's), so the answer goes in as the next thing the seller typed.
+  if (date?.seller_answer && turn1.outcome === "ask") {
+    const turn2 = await runOnce(buildUserTurn(ctx, instructionText, date, true).segments, "-t2");
+    return { ...turn2, turns: 2, turn1: summarizeTurn(turn1), ...harness(meter) };
+  }
+  return { ...turn1, turns: 1, ...harness(meter) };
 
-  const preflight = createPreflight({ hooks, storage });
+  async function runOnce(segments, suffix = "") {
+    const storage = createStorage();
+    const hooks = createHooks({ adapter, model, runId: runId + suffix, measuredData, meter, ...(ask ? { ask } : {}) });
+    const preflight = createPreflight({ hooks, storage });
 
-  const state = await preflight.runPreflight({
-    userId,
-    instruction: turn.segments,
-    mcpTool: tool,
-    preSetData: {},
-    measured_data: measuredData,
-    // The limits the seller stated, declared as items. See instructions.json.
-    userChecklist,
-    userAnswers,
-    intent_attempt: 0,
-    tool_attempt: 0
-  });
+    const state = await preflight.runPreflight({
+      userId,
+      instruction: segments,
+      mcpTool: tool,
+      preSetData: {},
+      measured_data: measuredData,
+      // The limits the seller stated, declared as items. See instructions.json.
+      userChecklist,
+      userAnswers,
+      intent_attempt: 0,
+      tool_attempt: 0
+    });
 
-  await preflight.recordExecutionState(state);
+    await preflight.recordExecutionState(state);
+    return project(state, preflight, tool);
+  }
+}
 
+// The arm's view of one gate verdict. A whitelist, like recordExecutionState.
+function project(state, preflight, tool) {
   const decision = state.execution_decision;
   const base = {
     decision,
@@ -100,13 +118,21 @@ async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, u
       //   is what separates "nobody looked" from "looked, nothing there" in a published run.
       lookup_trace: f.lookup_trace ?? [],
       derived: f.derived ?? false,
+      // Every other input a derived value rests on (the date the seller said, the measured year and
+      //   time zone). Without it a derived time reads as if the instruction alone stated it.
+      derived_from: f.derived_from ?? null,
+      // Why a slot that was found is still unknown — a format refusal, a derivation that did not
+      //   hold. Left out, a published run showed "found" and "unknown" side by side with no reason.
+      note: f.note ?? null,
       // A NULL slot has no value; only a known one is projected.
       value: f.status === "known" ? f.value : undefined
     })),
     user_checklist: (state.user_checklist ?? []).map(i => ({
       id: i.id, status: i.status, source: i.source ?? null, note: i.note ?? null,
     })),
-    unsafe_defaults: preflight.unsafeDefaults
+    unsafe_defaults: preflight.unsafeDefaults,
+    // The skeleton's per-slot lookup failures, with the hook's exception text. Harness diagnostics.
+    lookup_failures: state.gate?._diag?.lookup_failures ?? []
   };
 
   if (decision === "execute") {
@@ -147,6 +173,28 @@ async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, u
     return { outcome: "deferred", when_case: state.fixed?.c1_when_case ?? null, args: null, ...base };
   }
   return { outcome: "unrecognized", args: null, ...base };
+}
+
+// Harness diagnostics across every turn: our own hooks' calls and failures — not the gate's verdict,
+//   and never shown to a user. Carried so a broken-hook cell can be explained from the results file.
+function harness(meter) {
+  return { hook_calls: meter.calls, usage: sumUsage(meter.calls) };
+}
+
+// What turn 1 was, kept on a two-turn run so the analyzer can tell a first-turn ask from the end.
+function summarizeTurn(t) {
+  return { outcome: t.outcome, gate_kind: t.gate_kind, blanks: t.blanks ?? null, reason: t.reason,
+           fields: t.fields };
+}
+
+// Token totals across the arm's calls, in the provider's own field names, so arm C's cost sits
+//   beside arms A and B's single-call usage. null when no call reported usage (stubs).
+function sumUsage(calls) {
+  const out = {};
+  for (const c of calls) for (const [k, v] of Object.entries(c.usage ?? {})) {
+    if (typeof v === "number") out[k] = (out[k] ?? 0) + v;
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 module.exports = { runGateArm };
