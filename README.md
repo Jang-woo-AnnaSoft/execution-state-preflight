@@ -2,6 +2,8 @@
 
 Check where an agent's input values came from before the tool call, and write it into the record.
 
+Agents fill blanks, and when blocked they find another way through. The usual expectation is that better models will stop this. They won't. A model cannot say it doesn't know something it does not recognize as missing, and it has been rewarded for treating a stop as something to get around. And the blanks are mostly not facts the model lacks — they are things missing from the input: a condition the user never stated, a limit nobody declared. Reasoning cannot confirm what is not there; it can only guess more plausibly, and a plausible guess is the same string as a looked-up value. So this does not ask the model whether it knows. It asks where it looked and what came back, and counts what is missing outside the model.
+
 ---
 
 ## Where this sits
