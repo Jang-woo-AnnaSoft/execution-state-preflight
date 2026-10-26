@@ -42,7 +42,7 @@ So the agent doesn't take a value and validate it. It takes a pointer to where t
 
 Checking sources is what separates the model from the agent. A value whose source can't be confirmed was made up, and what was made up does not get into the agent. **Criteria come from declarations. Values come from sources.**
 
-Tool selection can't be proven by source checks the way argument values can. It can be compared against the declared scope, the allowed tools, and what the user asked for, but nothing fully proves that a tool matches an intent stated in natural language. The spec states this limit as it is.
+Tool selection can't be proven by source checks the way argument values can. It can be compared against the declared execution units, the allowed tools, and what the user asked for, but nothing fully proves that a tool matches an intent stated in natural language. The spec states this limit as it is.
 
 | | Model's reasoning | Grounds for execution |
 |---|---|---|
