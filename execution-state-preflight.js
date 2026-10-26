@@ -1072,7 +1072,7 @@ function extractFromInstruction(fieldName, instruction) {
 // record is TRUE. An auditor re-verifying it confirms it. The record is true and the execution
 // is wrong. A limit, a negation, an example and a prohibition all carry value-shaped tokens.
 //
-// A sentence that constrains belongs to the user checklist (scope), not to the value lookup.
+// A sentence that constrains belongs to the user checklist (a range of values or state), not to the value lookup.
 // The gate cannot tell them apart from the text alone; this hook must. The default cannot, so
 // a system that relies on it is running without this check — strict mode refuses it.
 // POLICY: an adopting system supplies a role-aware comparator. For a derived value
