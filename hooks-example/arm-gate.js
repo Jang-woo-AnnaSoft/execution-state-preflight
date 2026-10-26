@@ -43,12 +43,20 @@ const { buildUserTurn } = require("./prompts");
  *             one can be exercised through this function.
  */
 async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, userId = "seller_1", ask, measured, userChecklist = [], userAnswers = {}, date = null }) {
-  // buyer_contact is the one slot the system can measure, and the only source it
-  // permits (tool.js ALLOWED_SOURCES). With a date mode, the platform's clock year and
-  // the account's time zone are measured too — the parts of a date nobody says.
+  // buyer_contact is always measured, and measurement is the only source it permits
+  // (tool.js ALLOWED_SOURCES). With a date mode, the platform's clock year and the
+  // account's time zone are measured too — the parts of a date nobody says. In group 5's
+  // offer conditions, the buyer's pickup request is a platform record and is measured as well.
   const measuredData = measured ?? {
     buyer_contact: { valid: true, value: ctx.buyer_contact },
     ...Object.fromEntries(Object.entries(date?.measured ?? {}).map(([k, v]) => [k, { valid: true, value: v }])),
+    // A pickup request the buyer made through the platform (group 5). The platform recorded it, so it
+    //   is a measurement of what the buyer proposed — not something the model read in a message.
+    //   Whether the seller accepts it is not decided here: the seller's range (user_checklist) is.
+    ...(ctx.pickup_request ? {
+      time: { valid: true, value: ctx.pickup_request.time },
+      location: { valid: true, value: ctx.pickup_request.location },
+    } : {}),
   };
 
   // Every model call the hooks make lands here — arm C calls the model three times a run, and

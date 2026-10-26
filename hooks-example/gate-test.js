@@ -23,6 +23,10 @@
  *   - buyer_contact, declared measured_data only
  *                                      → the user's wording never settles it;
  *                                        a failed measurement holds, asks nothing
+ *   - group 5: a range the seller approves, a proposal from the other side (spec 3.3)
+ *                                      → measured and inside: execute, ask nothing;
+ *                                        chat only: ask; measured and outside: unmet hold;
+ *                                        a range not placeable on the calendar clears nothing
  */
 
 const fs = require("fs");
@@ -609,6 +613,69 @@ async function main() {
     const p2 = sp.checks.find(c => c.id === "P2");
     check("P2 is judged across groups", p2.pass, true);
     check("  on what each arm's records say", p2.got.startsWith("A 0/1 executions  vs  C 1/1"), true);
+  }
+
+  console.log("\n--- case 13: a range the seller approves, and a proposal from the other side (spec 3.3) ---");
+  {
+    // Group 5. The seller states a range, not a value. The buyer proposes — through the platform's
+    //   pickup form (a record, measured) or in the chat (words, read by a model). Inside the range and
+    //   measured: execute, and ask nothing — the seller already answered. Words only: ask. Measured and
+    //   outside: hold. A range that cannot be placed on the calendar: it has cleared nothing.
+    const spec = JSON.parse(fs.readFileSync(path.join(__dirname, "instructions.json"), "utf8"));
+    const ins = spec.instructions.find(i => i.id === "g5-01");
+    const C = spec.conditions;
+    // A faithful extractor: the range is a limit, not a value (the extraction prompt says so).
+    const rangeIsNotAValue = segs => ({ item_id: locate(segs, "LST-2291"), time: { found: false },
+                                        location: { found: false }, buyer_contact: { found: false } });
+    async function g5(name, cname, date, buildExtraction = rangeIsNotAValue) {
+      const c = C[cname].context;
+      const segs = buildUserTurn(c, ins.text, date).segments;
+      const result = await runGateArm({ model: "stub", tool: buildTool("plain"), ctx: c, instructionText: ins.text,
+        runId: name, date, userChecklist: ins.user_checklist, ask: makeStub({ extraction: buildExtraction(segs) }) });
+      return { result, byName: Object.fromEntries((result.fields ?? []).map(f => [f.name, f])),
+               byId: Object.fromEntries((result.user_checklist ?? []).map(i => [i.id, i])) };
+    }
+
+    const inR = await g5("c13a", "offer_in_range", SAID);
+    check("offer in range: executes", inR.result.decision, "execute");
+    check("  without asking anything", (inR.result.blanks ?? []).length, 0);
+    check("  the time is the platform's record", `${inR.byName.time?.source}:${inR.result.args?.time}`,
+          "measured_data:2026-10-31T15:00:00+09:00");
+    check("  so is the place", `${inR.byName.location?.source}:${inR.result.args?.location}`,
+          "measured_data:Hongdae station lockers");
+    check("  the window is verified", inR.byId.chk_window?.status, "verified");
+    check("  against the Saturday the seller meant",
+          /2026-10-31T13:00:00\+09:00\.\.2026-10-31T18:00:00\+09:00/.test(inR.byId.chk_window?.note ?? ""), true);
+    check("  the station rule is verified", inR.byId.chk_station?.status, "verified");
+
+    const chat = await g5("c13b", "chat_in_range", SAID);
+    check("same proposal in the chat only: asks", chat.result.decision, "ask_user");
+    check("  for time and place", (chat.result.blanks ?? []).sort().join(","), "location,time");
+    check("  the range waits on the values", chat.byId.chk_window?.status, "pending_on_slot");
+
+    const out = await g5("c13c", "offer_out_of_range", SAID);
+    check("offer outside the range: holds", out.result.decision, "hold");
+    check("  as an unmet rule, not a question", out.result.hold_kind, "unmet");
+    check("  the window is the rule it broke", (out.result.unmet ?? []).join(","), "chk_window");
+    check("  the place was inside", out.byId.chk_station?.status, "verified");
+
+    // No date said: "this Saturday" cannot be placed, so the window has cleared nothing. The value is
+    //   measured and real; what is missing is whether it is inside the seller's range.
+    const noDate = await g5("c13d", "offer_in_range", null);
+    check("no date: a measured offer does not execute", noDate.result.decision === "execute", false);
+    check("  the window is unverified", noDate.byId.chk_window?.status, "unverified");
+    check("  and the record says why", /could not be placed/.test(noDate.byId.chk_window?.note ?? ""), true);
+
+    const clean = await g5("c13e", "clean", SAID);
+    check("a range and no proposal: asks", clean.result.decision, "ask_user");
+
+    // The risk this group exists to expose: an extractor that reads the range as a value. The
+    //   instruction outranks measured_data, so a phrase it settles would sit in front of the offer.
+    //   "1pm" alone is not a datetime and the format check refuses it; the record must not show the
+    //   platform's value as the instruction's, and the gate must not send "1pm".
+    const misread = await g5("c13f", "offer_in_range", SAID,
+      segs => ({ ...rangeIsNotAValue(segs), time: locate(segs, "1pm", "user") }));
+    check("range misread as a value: '1pm' is never sent", misread.result.args?.time === "1pm", false);
   }
 
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);

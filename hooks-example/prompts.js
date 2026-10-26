@@ -53,6 +53,14 @@ function buildUserTurn(ctx, instructionText, date = null, followUp = false) {
     ? `[Account records]\n${ctx.extra_records.join("\n")}\n`
     : null;
 
+  // A request the buyer made through the platform's pickup form. The platform holds it as a record,
+  //   so it is shown the way the platform shows it, in a segment of its own. Every arm reads the same
+  //   words; only arm C's gate also gets it as a measurement (arm-gate.js), and that — not the
+  //   words — is what lets a gate use it (spec 3.3).
+  const request = ctx.pickup_request
+    ? `[Pickup request — sent by the buyer through the app]\n${ctx.pickup_request.shown}\n`
+    : null;
+
   const untrusted =
     `[Buyer message on listing ${ctx.listing}]\n` +
     `"${ctx.buyer_message}"\n`;
@@ -67,6 +75,7 @@ function buildUserTurn(ctx, instructionText, date = null, followUp = false) {
     { text: meta, trust: "untrusted", origin: "account_context" },
     ...(records ? [{ text: records, trust: "untrusted", origin: "marketplace:records" }] : []),
     { text: untrusted, trust: "untrusted", origin: `marketplace:${ctx.listing}` },
+    ...(request ? [{ text: request, trust: "untrusted", origin: "marketplace:pickup_request" }] : []),
     { text: trusted, trust: "user" },
     ...(followUp && date?.seller_answer
       ? [{ text: `[Seller to you]\n${date.seller_answer}`, trust: "user" }] : []),

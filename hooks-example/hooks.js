@@ -53,9 +53,9 @@
  * a slot — a redundant check costs nothing, a missing one invalidates the arm.
  */
 
-const { squash, violatesEvening, violatesPublicPlace } = require("./normalize");
+const { squash, violatesEvening, violatesPublicPlace, violatesStation } = require("./normalize");
 const { ALLOWED_SOURCES, FIELD_FORMATS } = require("./tool");
-const { resolve: resolveDatetime, ISO_DATETIME } = require("./datetime");
+const { resolve: resolveDatetime, ISO_DATETIME, placeWindow, outsideWindow } = require("./datetime");
 
 const WHEN_CASES = ["immediate", "scheduled", "conditional", "recurring"];
 
@@ -306,10 +306,22 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter }) {
     //   would make the verdict probabilistic, which is what the gate exists to avoid.
     verifyUserChecklistItem(item, ctx) {
       const byName = Object.fromEntries((ctx?.fields ?? []).map(f => [f.name, f]));
+      // Group 5's window is placed on the calendar from what the seller said and the measured year
+      //   and zone (datetime.js). The bounds it was compared against go into the note, so the record
+      //   says which Saturday "this Saturday" was taken to be — the comparison is re-checkable.
+      const clock = measuredClock(ctx?.measured_data ?? measuredData);
+      const placed = item.window ? placeWindow(item.window, ctx?.instruction, clock) : null;
       const rules = {
         chk_evening:  { slot: "time",     test: violatesEvening,     bad: "is after the stated cutoff" },
         chk_public:   { slot: "location", test: violatesPublicPlace, bad: "is not a public place" },
         chk_not_home: { slot: "location", test: violatesPublicPlace, bad: "is a private address" },
+        // A range the seller approves in advance (spec 3.3). Same three outcomes: inside is verified
+        //   and needs no question, outside is unmet (a hold), and a window that cannot be placed —
+        //   no date said, no measured year or zone — is unverified, never "inside".
+        chk_window:   { slot: "time",     test: v => outsideWindow(v, item.window, ctx?.instruction, clock),
+                        bad: placed ? `is outside ${placed.start}..${placed.end}` : "is outside the window",
+                        ok: placed ? `is within ${placed.start}..${placed.end}` : null },
+        chk_station:  { slot: "location", test: violatesStation,     bad: "is not at a station" },
       };
       const rule = rules[item.id];
       if (!rule) {
@@ -324,13 +336,14 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter }) {
         // Undecidable is unverified, never "fine". violatesEvening returns null when it
         // cannot parse the value at all, and a value it cannot read is not a value it cleared.
         return { ...item, status: "unverified", source: null,
-                 note: `cannot compare ${rule.slot}=${JSON.stringify(value ?? null)}` };
+                 note: `cannot compare ${rule.slot}=${JSON.stringify(value ?? null)}` +
+                       (item.window && !placed ? `: the window "${item.window.day}" could not be placed on the calendar` : "") };
       }
       return violated
         ? { ...item, status: "unmet", source: field?.source ?? "instruction",
             note: `${rule.slot}=${JSON.stringify(value)} ${rule.bad}` }
         : { ...item, status: "verified", source: field?.source ?? "instruction",
-            note: `${rule.slot}=${JSON.stringify(value)} is within the limit` };
+            note: `${rule.slot}=${JSON.stringify(value)} ${rule.ok ?? "is within the limit"}` };
     }
   };
 }

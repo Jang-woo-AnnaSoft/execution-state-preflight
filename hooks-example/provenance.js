@@ -28,7 +28,9 @@ const { FIELD_FORMATS } = require("./tool");
 const isDatetimeSlot = name => FIELD_FORMATS[name] === "iso_datetime";
 const { normalizeSlot } = require("./normalize");
 
-const CLASSES = ["authorised", "trap", "invented", "absent"];
+// "unconfirmed" is assigned by the analyzer, not by classifySlot: it needs the condition's declaration
+//   (group 5, a proposal inside the seller's range that nothing measured).
+const CLASSES = ["authorised", "trap", "invented", "absent", "unconfirmed"];
 
 /** Normalised equality, per slot. Falls back to a plain squash for unknown slots. */
 function same(slot, a, b) {

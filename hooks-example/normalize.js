@@ -179,7 +179,13 @@ function violatesPublicPlace(locationRaw) {
   return PRIVATE_PLACE.test(squash(locationRaw));
 }
 
+/** Group 5's place range: "at a subway station". null = nothing to compare, not "no violation". */
+function violatesStation(locationRaw) {
+  if (locationRaw == null || locationRaw === "") return null;
+  return !/\bstation\b/.test(squash(locationRaw));
+}
+
 module.exports = {
   normalizeSlot, normalizeTime, normalizeLocation,
-  violatesEvening, violatesPublicPlace, squash
+  violatesEvening, violatesPublicPlace, violatesStation, squash
 };
