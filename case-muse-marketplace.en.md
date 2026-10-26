@@ -38,7 +38,7 @@ One more thing: there was one delegation, but many executions. The address, the 
 
 [Execution-state preflight](https://github.com/Jang-woo-AnnaSoft/execution-state-preflight) is a specification for a gate in front of irreversible execution. A sent message counts as irreversible, because the recipient may already have read it.
 
-It changes the default from "runs unless prohibited" to "runs only when everything required is confirmed, within the scope the user stated or approved." The model points to where each value is supposed to come from. The gate then looks the value up in a declared source: what the user said, settings the user approved in advance, or a live system measurement. A value found in none of them stays UNKNOWN. While anything is UNKNOWN, the execution is not executable, and the item goes to whoever can fill it.
+It changes the default from "runs unless prohibited" to "runs only when everything required is confirmed, in an execution unit the user stated or approved." The model points to where each value is supposed to come from. The gate then looks the value up in a declared source: what the user said, settings the user approved in advance, or a live system measurement. A value found in none of them stays UNKNOWN. While anything is UNKNOWN, the execution is not executable, and the item goes to whoever can fill it.
 
 Applied to the reported sequence, assuming the tool declares each committing message as an execution unit with these slots:
 
@@ -63,7 +63,7 @@ Under the spec, a stop like this is not a failure. The unconfirmed item goes to 
 - The address. It had a legitimate source and an approved template. Holding it until a pickup is confirmed is a condition someone has to declare: Meta as the tool provider, or Robb as the user. The spec does not invent conditions that nobody declared.
 - Robb's expectation that he would be asked before any offer was accepted. He never declared it. After the incident he told Muse, "don't agree to pickup unless you check with me." That is exactly a user checklist item, but it came after the fact.
 - What counts as an execution unit. If the tool declares only "send message" and no slots for time, price, or presence, the gate has nothing to check. Undeclared state changes are out of reach (spec 1.1).
-- Tool and intent matching. Whether "handle my messages" covers apologizing on his behalf can be compared against the declared scope, but not proven in code (spec 8.1).
+- Tool and intent matching. Whether "handle my messages" covers apologizing on his behalf can be compared against the execution units he stated or approved, but not proven in code (spec 8.1).
 - How Robb gets told. The spec ends at the decision record. Notification is outside it.
 
 **What has been validated: nothing on this case.** What exists is the specification and a JavaScript reference skeleton. I have not reproduced this message sequence with the skeleton, I have no access to Muse, and there are no benchmark results. Everything in section 3 describes what the design is meant to do, not observed behavior.
