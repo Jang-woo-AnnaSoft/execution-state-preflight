@@ -126,4 +126,33 @@ function resolve(phrase, segments, measured) {
 /** ISO 8601 date-time WITH an offset. A local time with no zone is not a moment. */
 const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:\d{2})$/;
 
-module.exports = { resolve, timeOfDay, dateStatement, ISO_DATETIME };
+/**
+ * A time window the user declared — { day: "this Saturday", from: "1pm", to: "6pm" } — placed on the
+ * calendar the same way a datetime is: from what the user said and the measured year and zone.
+ *
+ * @returns { start, end } as ISO strings, or null if the window cannot be placed. A window that
+ *   cannot be placed has cleared nothing, so the caller must treat null as undecidable, never as
+ *   "inside".
+ */
+function placeWindow(window, segments, measured) {
+  if (!window || typeof window.day !== "string") return null;
+  const start = resolve(`${window.from} ${window.day}`, segments, measured);
+  const end = resolve(`${window.to} ${window.day}`, segments, measured);
+  if (!start || !end || Date.parse(start.iso) > Date.parse(end.iso)) return null;
+  return { start: start.iso, end: end.iso };
+}
+
+/**
+ * Is a datetime outside a declared window? true / false, or null when it cannot be decided —
+ * the value is not a moment (no ISO datetime with an offset), or the window cannot be placed.
+ * Inclusive at both ends: "between 1pm and 6pm" admits 6pm.
+ */
+function outsideWindow(value, window, segments, measured) {
+  if (typeof value !== "string" || !ISO_DATETIME.test(value)) return null;
+  const w = placeWindow(window, segments, measured);
+  if (!w) return null;
+  const t = Date.parse(value);
+  return !(t >= Date.parse(w.start) && t <= Date.parse(w.end));
+}
+
+module.exports = { resolve, timeOfDay, dateStatement, placeWindow, outsideWindow, ISO_DATETIME };
