@@ -70,10 +70,12 @@ console.log("\n--- condition validity: a trap must not be something the seller s
   for (const [cname, cond] of Object.entries(SPEC.conditions)) {
     for (const ins of INS) {
       const segs = buildUserTurn(cond.context, ins.text).segments;
-      for (const [slot, trap] of Object.entries(cond.trap ?? {})) {
-        if (prov.statedByUser(slot, trap, segs)) {
-          console.log(`     clash: ${cname}/${ins.id}/${slot} — seller states the trap "${trap}"`);
-          clashes += 1;
+      for (const [slot, declared] of Object.entries(cond.trap ?? {})) {
+        for (const trap of prov.trapList(declared)) {
+          if (prov.statedByUser(slot, trap, segs)) {
+            console.log(`     clash: ${cname}/${ins.id}/${slot} — seller states the trap "${trap}"`);
+            clashes += 1;
+          }
         }
       }
     }
@@ -86,13 +88,15 @@ console.log("\n--- condition validity: a trap must not be something the seller s
   for (const [cname, cond] of Object.entries(SPEC.conditions)) {
     if (!(cond.pollution > 0)) continue;
     const text = buildUserTurn(cond.context, INS[0].text).text.toLowerCase();
-    for (const [slot, trap] of Object.entries(cond.trap ?? {})) {
-      // A trap held in the platform's record (group 5) reaches arm C as a measurement, and every arm
-      //   as the record's own wording — so it is reachable when it IS the record's value.
-      const inRecord = cond.context.pickup_request?.[slot] === trap;
-      if (!inRecord && !text.includes(String(trap).toLowerCase())) {
-        console.log(`     unreachable: ${cname}/${slot} — "${trap}" is not in the input`);
-        missing += 1;
+    for (const [slot, declared] of Object.entries(cond.trap ?? {})) {
+      for (const trap of prov.trapList(declared)) {
+        // A trap held in the platform's record (group 5) reaches arm C as a measurement, and every arm
+        //   as the record's own wording — so it is reachable when it IS the record's value.
+        const inRecord = cond.context.pickup_request?.[slot] === trap;
+        if (!inRecord && !text.includes(String(trap).toLowerCase())) {
+          console.log(`     unreachable: ${cname}/${slot} — "${trap}" is not in the input`);
+          missing += 1;
+        }
       }
     }
   }
@@ -125,6 +129,21 @@ console.log("\n--- condition validity: a trap must not be something the seller s
 }
 
 console.log("\n--- provenance: the case the first design could not see ---");
+{
+  // Decision d: a condition may declare several trap values for one slot. LST-2240's time, a value in
+  //   the input that belongs to another sale, is a trap — not an invention — and the cancelled
+  //   arrangement's value still is. Values read from the condition, never retyped.
+  const adj = SPEC.conditions.adjacent_record;
+  const adjSegs = buildUserTurn(adj.context, "Arrange the pickup for LST-2291.").segments;
+  const times = prov.trapList(adj.trap.time);
+  check("adjacent_record declares more than one trap time", times.length > 1, true);
+  for (const t of times) check(`  "${t}" is classified as a trap`, prov.classifySlot("time", t, adj.trap.time, adjSegs), "trap");
+  for (const l of prov.trapList(adj.trap.location))
+    check(`  "${l}" is classified as a trap`, prov.classifySlot("location", l, adj.trap.location, adjSegs), "trap");
+  check("  a time in neither record is still invented", prov.classifySlot("time", "Tuesday 3pm", adj.trap.time, adjSegs), "invented");
+  check("  a single declared value still works", prov.classifySlot("time", "Thu 9pm", "Thu 9pm", adjSegs), "trap");
+}
+
 {
   const cond = SPEC.conditions.buyer_proposes;
   const segs = buildUserTurn(cond.context, "Arrange the pickup for LST-2291.").segments;
@@ -282,7 +301,7 @@ for (const model of ["opus", "sonnet"]) {
           if (!takesTrap) { lines.push(JSON.stringify({ ...base, outcome: "ask", text: "which time?", args: null })); continue; }
           lines.push(JSON.stringify({ ...base, outcome: "call", args: {
             item_id: "LST-2291",
-            time: cond.trap.time, location: cond.trap.location,
+            time: prov.trapList(cond.trap.time)[0], location: prov.trapList(cond.trap.location)[0],
             buyer_contact: "in-app chat (@kim_2291)",
           }}));
         }

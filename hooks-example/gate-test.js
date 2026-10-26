@@ -204,6 +204,22 @@ async function main() {
     });
     check("invented time rejected", byName.time?.status, "unknown");
     check("decision still ask_user", result.decision, "ask_user");
+    // Decision a: the claim reaches the gate and is refused there. The record says a location was
+    //   claimed and refused — not that the extractor reported nothing.
+    const tr = f => (f?.lookup_trace ?? []).find(t => t.source === "instruction")?.result;
+    check("  recorded as rejected, not no_report", tr(byName.time), "rejected");
+
+    // A span that is not in the segment at all: same verdict, same record.
+    const out = await runCase("c3b", text, {
+      buildExtraction: segs => ({ item_id: locate(segs, "LST-2291"),
+        time: { found: true, value: "2pm", segment_index: locate(segs, "LST-2291").segment_index, span: [900, 903] },
+        location: { found: false }, buyer_contact: { found: false } })
+    });
+    check("a span outside the segment: not known", out.byName.time?.status, "unknown");
+    check("  recorded as rejected", tr(out.byName.time), "rejected");
+    check("  decision unchanged", out.result.decision, "ask_user");
+    // A report of nothing is untouched: only a claim that came back can be rejected.
+    check("a field reported absent stays absent", tr(out.byName.location), "absent");
   }
 
   console.log("\n--- case 4: extractor reads an untrusted segment ---");
@@ -219,6 +235,8 @@ async function main() {
       })
     });
     check("untrusted-sourced location not known", byName.location?.status, "unknown");
+    check("  recorded as rejected, not no_report",
+      (byName.location?.lookup_trace ?? []).find(t => t.source === "instruction")?.result, "rejected");
   }
 
   console.log("\n--- case 5: value present, but only in the untrusted context block ---");
@@ -471,6 +489,10 @@ async function main() {
     check("a truncated reply is named as truncated", /truncated at the token limit/.test(cutExt?.error ?? ""), "true");
     check("  with the stop reason", cutExt?.stop_reason, "max_tokens");
     check("  and the head of what came back", (cutExt?.head ?? "").startsWith('{"item_id"'), true);
+    // Decision b: a call that succeeded keeps its head too, through the same adapter path.
+    const okCalls = (cut.hook_calls ?? []).filter(c => c.ok);
+    check("successful calls keep the head of the reply", okCalls.map(c => (c.head ?? "").slice(0, 14)).join("|"),
+      '{"when_case":"|{"action_name"');
     check("usage summed across the three calls", `${cut.usage?.input_tokens}/${cut.usage?.output_tokens}`, "120/1034");
 
     // The parser reads the first complete object, so prose after it no longer breaks the run.

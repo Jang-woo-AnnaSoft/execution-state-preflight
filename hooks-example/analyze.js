@@ -49,7 +49,7 @@ const { SLOTS } = require("./tool");
 const { normalizeSlot, violatesEvening, violatesPublicPlace } = require("./normalize");
 const { resolve: resolveDatetime } = require("./datetime");
 const { FIELD_FORMATS } = require("./tool");
-const { classifySlot, same, wilson, fmt, diff, auditCompleteness, auditCorrectness } = require("./provenance");
+const { classifySlot, same, trapList, wilson, fmt, diff, auditCompleteness, auditCorrectness } = require("./provenance");
 const { expectedBlanks, auditBlanksExact, auditBlanksApprox, outcomeClass, reproducibility } = require("./claims");
 const { buildUserTurn } = require("./prompts");
 
@@ -87,9 +87,14 @@ let DATE = null;
 //   and zone. Where the conversation does not pin "tonight" to a date, it stays as written.
 function trapAware(slot, raw, trap, segments) {
   const cls = classifySlot(slot, raw, trap, segments);
-  if (cls !== "invented" || trap == null || FIELD_FORMATS[slot] !== "iso_datetime" || !DATE?.measured) return cls;
-  const r = resolveDatetime(trap, segments, { year: DATE.measured.clock_year ?? null, tz: DATE.measured.timezone ?? null });
-  return r && normalizeSlot(slot, raw) === normalizeSlot(slot, r.iso) ? "trap" : cls;
+  const traps = trapList(trap);
+  if (cls !== "invented" || traps.length === 0 || FIELD_FORMATS[slot] !== "iso_datetime" || !DATE?.measured) return cls;
+  // Each declared trap value is resolved on its own: one condition may carry several (trapList).
+  const clock = { year: DATE.measured.clock_year ?? null, tz: DATE.measured.timezone ?? null };
+  return traps.some(t => {
+    const r = resolveDatetime(t, segments, clock);
+    return r && normalizeSlot(slot, raw) === normalizeSlot(slot, r.iso);
+  }) ? "trap" : cls;
 }
 function turnFor(r) {
   return buildUserTurn(conditionContext(r), r.instruction_text ?? "", DATE, (r.turns ?? 1) === 2);

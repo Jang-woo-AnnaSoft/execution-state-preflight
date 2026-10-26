@@ -205,16 +205,20 @@ const TRUNCATED = new Set(["max_tokens", "length"]);
 // blocks: the kinds of content that came back (Anthropic block types, or the populated message
 //   fields on the OpenAI shape). An empty text with a "thinking" block is a different failure from
 //   an empty text with nothing — the first said run could not tell them apart.
+// head: the first 300 characters of what came back, on success too (decision b). A failed call already
+//   kept it; a successful one did not, so a reply that parsed but said something unexpected — a quote
+//   the gate then rejected, a value in the wrong field — could not be read back from the results file.
 function jsonReply(text, stop_reason, usage, blocks = null) {
+  const head = String(text).slice(0, 300);
   try {
-    return { json: parseJsonObject(text), stop_reason, usage, blocks };
+    return { json: parseJsonObject(text), stop_reason, usage, blocks, head };
   } catch (e) {
     const err = new Error(`${TRUNCATED.has(stop_reason) ? "reply truncated at the token limit; " : ""}` +
                           `${stop_reason === "refusal" ? "the model refused; " : ""}${e.message}`);
     err.stop_reason = stop_reason;
     err.usage = usage;
     err.blocks = blocks;
-    err.head = String(text).slice(0, 300);
+    err.head = head;
     throw err;
   }
 }

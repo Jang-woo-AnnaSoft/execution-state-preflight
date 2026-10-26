@@ -75,7 +75,8 @@ function trustedText(instruction) {
  *                 be exercised with no API key and no provider.
  * @param meter    Optional { calls: [] }. Every model call these hooks make is
  *                 appended: which hook, whether it parsed, why the model stopped,
- *                 what it cost, and on failure the error and the head of the reply.
+ *                 what it cost, the head of the reply (success or failure), and on
+ *                 failure the error.
  *                 A separate object, not a property of the hooks, because
  *                 createPreflight refuses any key it does not know as a hook.
  */
@@ -100,7 +101,7 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter }) {
         ? await adapter.callJsonMeta(m, system, user)
         : { json: await adapter.callJson(m, system, user), stop_reason: null, usage: null };
       Object.assign(entry, { ok: true, stop_reason: r.stop_reason ?? null, usage: r.usage ?? null,
-                             blocks: r.blocks ?? null });
+                             blocks: r.blocks ?? null, head: r.head ?? null });
       return r.json;
     } catch (e) {
       Object.assign(entry, { error: e?.message ?? String(e), stop_reason: e?.stop_reason ?? null,
@@ -241,30 +242,31 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter }) {
       if (hit?.found === false) return { none: "absent" };
       if (!hit || hit.found !== true) return undefined;        // no report → next source
 
+      // A claim came back. It goes to the gate as a claim, checked or not: the skeleton checks the
+      //   segment, the span and the text itself, and records a claim it refuses as rejected.
+      //   BREAKS: refuse it here and return undefined — as this did — and the record says the
+      //     extractor reported nothing (no_report) where it reported a location that is not there.
+      //     Same route either way; the attribution is wrong (decision a, after the answered run).
       const { value, segment_index, span } = hit;
-      if (!Array.isArray(span) || span.length !== 2) return undefined;
-
       const seg = (instruction ?? [])[segment_index];
-      if (!seg || typeof seg.text !== "string") return undefined;
+      const located = Array.isArray(span) && span.length === 2 && Number.isInteger(span[0]) && Number.isInteger(span[1]) &&
+        typeof seg?.text === "string" && span[0] >= 0 && span[1] <= seg.text.length && span[0] < span[1];
 
-      const [start, end] = span;
-      if (!Number.isInteger(start) || !Number.isInteger(end)) return undefined;
-      if (start < 0 || end > seg.text.length || start >= end) return undefined;
-
-      // Simplification 3: the span must actually say the value.
-      const atSpan = seg.text.slice(start, end);
-      if (squash(atSpan) !== squash(value)) return undefined;
-
+      // Simplification 3: the span must actually say the value — checked by the skeleton through
+      //   spanSupportsValue below. Only a claim that holds is turned into a datetime here.
       // A datetime slot: the seller said "2pm this Saturday"; the tool needs a moment. Derive it in
       //   code from that span, the date the seller stated, and the year and zone the system
       //   measured. Still a location claim — the span is unchanged — and spanSupportsValue below
       //   re-derives it and names every input. If it cannot be derived, the literal goes forward
       //   and the format check refuses it: an unconfirmed date is not filled in.
-      if (FIELD_FORMATS[fieldName] === "iso_datetime") {
-        const r = resolveDatetime(atSpan, instruction, measuredClock(measuredData));
-        if (r) return { value: r.iso, segment_index, span: [start, end] };
+      if (located && FIELD_FORMATS[fieldName] === "iso_datetime") {
+        const atSpan = seg.text.slice(span[0], span[1]);
+        if (squash(atSpan) === squash(value)) {
+          const r = resolveDatetime(atSpan, instruction, measuredClock(measuredData));
+          if (r) return { value: r.iso, segment_index, span: [span[0], span[1]] };
+        }
       }
-      return { value, segment_index, span: [start, end] };
+      return { value, segment_index, span };
     },
 
     // [OPTIONAL, wired] Equality for every slot, as the skeleton's default does — the role check
