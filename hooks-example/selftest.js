@@ -397,6 +397,21 @@ check("Q2 passes (C enumerable, A+B not)",    byId["opus:Q2"], true);
   check("only limit-bearing instructions disagree", noted <= g2, true);
 }
 
+console.log("\n--- Q: what a condition supplies by measurement is not an omission ---");
+{
+  // The first said smoke scored opus's offer_in_range ask (for item_id) as having missed time and
+  //   location — which the pickup request supplies, measured, and the gate rightly did not ask for.
+  const claims = require("./claims");
+  const decl = { settles: ["item_id"] };
+  check("no measurement: time and location are omissions",
+    claims.expectedBlanks(decl).sort().join(","), "location,time");
+  const SLOTS = Object.keys(require("./tool").SLOTS);
+  const pr = Object.keys(SPEC.conditions.offer_in_range.context.pickup_request ?? {}).filter(k => SLOTS.includes(k));
+  check("offer_in_range supplies them by measurement", pr.sort().join(","), "location,time");
+  check("  so they are not omissions there", claims.expectedBlanks(decl, undefined, pr).length, 0);
+  check("  buyer_contact is still never one", claims.expectedBlanks({ settles: [] }).includes("buyer_contact"), false);
+}
+
 console.log("\n--- arm C outcomes: an open route is not a hold ---");
 {
   // Spec 4.5: hold is a check that finished and prohibits. system_lookup, definition_repair and

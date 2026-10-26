@@ -74,7 +74,9 @@ async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, u
 
   async function runOnce(segments, suffix = "") {
     const storage = createStorage();
-    const hooks = createHooks({ adapter, model, runId: runId + suffix, measuredData, meter, ...(ask ? { ask } : {}) });
+    // userChecklist goes to the hooks too: spanSupportsValue reads the limits' wording (decision f).
+    const hooks = createHooks({ adapter, model, runId: runId + suffix, measuredData, meter, userChecklist,
+                                ...(ask ? { ask } : {}) });
     const preflight = createPreflight({ hooks, storage });
 
     const state = await preflight.runPreflight({

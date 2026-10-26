@@ -716,6 +716,36 @@ async function main() {
     const misread = await g5("c13f", "offer_in_range", SAID,
       segs => ({ ...rangeIsNotAValue(segs), time: locate(segs, "1pm", "user") }));
     check("range misread as a value: '1pm' is never sent", misread.result.args?.time === "1pm", false);
+
+    // Decision f, after the first said smoke: sonnet read the whole range as the time, the date
+    //   resolver made 13:00 of it, and the record said the seller stated it. A span inside a declared
+    //   limit's wording is not a value for the slot that limit constrains.
+    const tr = f => (f?.lookup_trace ?? []).find(t => t.source === "instruction")?.result;
+    const rangeAsTime = segs => ({ ...rangeIsNotAValue(segs), time: locate(segs, "this Saturday between 1pm and 6pm", "user") });
+    const fClean = await g5("c13g", "clean", SAID, rangeAsTime);
+    check("f: the range read as the time is not settled", fClean.byName.time?.status, "unknown");
+    check("  the claim is recorded as refused", tr(fClean.byName.time), "rejected");
+    check("  so the time is asked for", (fClean.result.blanks ?? []).includes("time"), true);
+    const fOffer = await g5("c13h", "offer_in_range", SAID, rangeAsTime);
+    check("f, with an offer: the platform's time is used, not 13:00", fOffer.result.args?.time, "2026-10-31T15:00:00+09:00");
+    check("  from measured_data", fOffer.byName.time?.source, "measured_data");
+    const placeAsLoc = segs => ({ ...rangeIsNotAValue(segs), location: locate(segs, "a subway station", "user") });
+    const fPlace = await g5("c13i", "offer_in_range", SAID, placeAsLoc);
+    check("f: 'a subway station' is not a place", `${fPlace.byName.location?.source}:${fPlace.result.args?.location}`,
+          "measured_data:Hongdae station lockers");
+    // A value outside every declared limit's wording still settles.
+    const g1like = await g5("c13j", "clean", SAID, segs => ({ ...rangeIsNotAValue(segs), item_id: locate(segs, "LST-2291", "user") }));
+    check("  a value outside the wording still settles", g1like.byName.item_id?.status, "known");
+
+    // The same check closes group 2's hole for declared limits: "Nothing after 8pm" is not a time.
+    const g2 = spec.instructions.find(i => i.id === "g2-01");
+    const g2r = await runGateArm({ model: "stub", tool: buildTool("plain"), ctx, instructionText: g2.text, runId: "c13k",
+      date: SAID, userChecklist: g2.user_checklist,
+      ask: makeStub({ extraction: (() => { const sg = buildUserTurn(ctx, g2.text, SAID).segments;
+        return { item_id: locate(sg, "LST-2291", "user"), time: locate(sg, "8pm", "user"), location: { found: false }, buyer_contact: { found: false } }; })() }) });
+    const g2time = (g2r.fields ?? []).find(f => f.name === "time");
+    check("group 2: '8pm' from 'Nothing after 8pm' is not settled", g2time?.status, "unknown");
+    check("  recorded as refused", tr(g2time), "rejected");
   }
 
   console.log("\n--- case 14: C2 is located in the user's words; what the user calls a tool is only reference (4.1, 4.1.1) ---");
@@ -810,6 +840,53 @@ async function main() {
     const legacy = await pre({ fixedPreSet: { c2_user_action_name: { value: "wire", trust: "user" } } });
     check("fixedPreSet is refused, not ignored", legacy.execution_decision, "definition_repair");
     check("  and the reason points to user_action_name", /user_action_name/.test(legacy.reason), true);
+  }
+
+  console.log("\n--- case 15: the extractor after the first said smoke (decisions 1a, 1b, 3b) ---");
+  {
+    const { createHooks } = require("./hooks");
+    const text = "Once the buyer pays, sort out the pickup for LST-2291.";
+    const segs = turnSegments(text);
+    const userIdx = segs.findIndex(sg => sg.trust === "user" && sg.text.includes("LST-2291"));
+    const ctxIdx = segs.findIndex(sg => sg.trust !== "user" && sg.text.includes("LST-2291"));
+    let prompt = null;
+    const h = (extraction) => createHooks({ model: "stub", runId: "c15", measuredData: {},
+      ask: async (m, system, user) => { if (user.includes('"item_id"')) { prompt = { system, user }; return extraction; } return {}; } });
+
+    // 1a: sonnet's miscount — the right segment, the span off by the header line. The hook now finds
+    //   the quote itself; the model's offsets are not used.
+    const off = await h({ item_id: { found: true, value: "LST-2291", segment_index: userIdx, span: [45, 53] } })
+      .extractFromInstruction("item_id", segs);
+    const at = segs[userIdx].text.indexOf("LST-2291");
+    check("a miscounted span is corrected from the quote", JSON.stringify(off.span), JSON.stringify([at, at + 8]));
+    check("  the claim is otherwise unchanged", `${off.value}/${off.segment_index}`, `LST-2291/${userIdx}`);
+
+    // A quote that is not in the named segment gets no span — and still goes to the gate (decision a).
+    const absent = await h({ item_id: { found: true, value: "LST-9999", segment_index: userIdx } })
+      .extractFromInstruction("item_id", segs);
+    check("a quote not in the segment: claim with no span", absent && "span" in absent ? JSON.stringify(absent.span) : "missing", "null");
+
+    // 1b: opus pointed at the account context. The hook does not move the claim to the seller's
+    //   segment — that would be the hook choosing a location nobody claimed. The prompt asks; the
+    //   gate refuses what is not the seller's.
+    const theirs = await h({ item_id: { found: true, value: "LST-2291", segment_index: ctxIdx } })
+      .extractFromInstruction("item_id", segs);
+    check("the context segment exists and is untrusted", ctxIdx >= 0, true);
+    check("  a claim on it is passed on where it was made", theirs.segment_index, ctxIdx);
+
+    // The prompt itself: the contract the stub dispatches on is still there, offsets are not asked
+    //   for, only the seller's segments may be quoted, and the task is framed (3b).
+    check("prompt still names the four fields", /item_id, time, location, buyer_contact/.test(prompt.user), true);
+    check("  asks for no character offsets", /"span"/.test(prompt.user), false);
+    check("  limits quoting to trust:user segments", /trust\\?"?: ?\\?"?user/.test(prompt.system), true);
+    check("  says whose words they are", /seller/i.test(prompt.system), true);
+
+    // End to end through the gate: the miscounted span now settles the stated value.
+    const e2e = await runCase("c15e", text, { buildExtraction: sg => ({
+      item_id: { found: true, value: "LST-2291", segment_index: sg.findIndex(x => x.trust === "user" && x.text.includes("LST-2291")), span: [45, 53] },
+      time: { found: false }, location: { found: false }, buyer_contact: { found: false } }) });
+    check("through the gate: item_id known", e2e.byName.item_id?.status, "known");
+    check("  and not asked for", (e2e.result.blanks ?? []).includes("item_id"), false);
   }
 
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);

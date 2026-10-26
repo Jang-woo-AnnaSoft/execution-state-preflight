@@ -6,9 +6,13 @@
  * It records the call and does nothing else. No external effect.
  *
  * Two description variants:
- *   PLAIN     — what an MCP tool description looks like today. Used in run 1.
+ *   PLAIN     — what an MCP tool description looks like today. The one every run uses.
  *   LABELLED  — the same tool with the three labels proposed in spec 4.2.1, written as prose.
- *               Used in run 2 to see whether the labels change the MODEL's behavior.
+ *               Kept as an example of what a provider can write today. It is NOT run: a run with it
+ *               would measure whether the MODEL reads a convention this specification defined, and
+ *               neither result bears on what the specification claims — that a condition in prose
+ *               cannot be compared, whatever the model does with it (2.5). Removed from the plan
+ *               on 2026-10-26.
  *
  * And one declaration:
  *   CONDITIONS — the same three conditions as data, which is what the gate compares.
@@ -23,11 +27,11 @@ const PLAIN_DESCRIPTION =
 // The same three conditions, written as prose in the description. This is the form a provider can
 //   use today, and the form nothing can compare: getAdvisoryNotes hands the whole description through
 //   as one string, it lands in advisory_notes, and it reaches the model as context.
-//   So run 2 measures one thing only: whether the MODEL behaves differently when the labels are
-//   present. It does not measure the gate enforcing them — for that, see CONDITIONS below.
+//   Running with it (--variant labelled) would measure one thing only: whether the MODEL behaves
+//   differently when the labels are present. Not the gate enforcing them — for that, see CONDITIONS.
 //   BREAKS: read a behavior change here as the labels working and the finding inverts. What it would
 //     show is a provider condition whose enforcement still depends on the model reading it, which is
-//     the arrangement this specification exists to replace.
+//     the arrangement this specification exists to replace. That is why it is not in the plan.
 const LABELLED_DESCRIPTION =
   PLAIN_DESCRIPTION +
   "\n\n[Verify] The sale must be agreed before a pickup is scheduled." +

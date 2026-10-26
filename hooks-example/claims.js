@@ -33,9 +33,13 @@ const MEASURABLE = ["buyer_contact"];
  * in an untrusted segment is NOT a source — that is the whole point — so a
  * buyer's proposal still leaves the slot omitted.
  */
-function expectedBlanks(instruction, required = SLOT_NAMES) {
+function expectedBlanks(instruction, required = SLOT_NAMES, measuredHere = []) {
+  // measuredHere: slots this run's CONDITION supplies by measurement — group 5's pickup request is a
+  //   platform record, measured for arm C. Not an omission, the same way buyer_contact is not. The
+  //   first said smoke scored an offer_in_range ask as having missed time and location, which the
+  //   gate rightly did not ask for (it asked for item_id).
   const settles = new Set(instruction?.settles ?? []);
-  return required.filter(name => !MEASURABLE.includes(name) && !settles.has(name));
+  return required.filter(name => !MEASURABLE.includes(name) && !measuredHere.includes(name) && !settles.has(name));
 }
 
 /**

@@ -177,7 +177,10 @@ function aggregate(runs) {
       if (!decl || !Array.isArray(decl.settles)) {
         c.blanks_undeclared += 1;
       } else {
-        const want = expectedBlanks(decl);
+        // Slots the condition supplies by measurement are not omissions (group 5's pickup request).
+        const measuredHere = Object.keys(CONDITIONS[r.condition ?? "clean"]?.context?.pickup_request ?? {})
+          .filter(k => SLOT_NAMES.includes(k));   // the record also carries display text ("shown")
+        const want = expectedBlanks(decl, undefined, measuredHere);
         const q = r.arm === "C" ? auditBlanksExact(r, want) : auditBlanksApprox(r, want);
         if (r.arm === "C") c.blanks_enumerable += 1;
         if (q.complete) c.blanks_complete += 1;

@@ -13,10 +13,9 @@
     "valuetest": "node value-source-test.js",
     "conditiontest": "node provider-conditions-test.js",
     "paymenttest": "node payment-limit-test.js",
-    "models": "node runner.js --check",
-    "smoke": "node runner.js --repeats 1 --arms A,C",
-    "run1": "node runner.js --variant plain",
-    "run2": "node runner.js --variant labelled",
+    "models": "node runner.js --check --models opus,sonnet --date said",
+    "smoke": "node runner.js --models opus,sonnet --arms A,C --date said --repeats 1",
+    "run1": "node runner.js --models opus,sonnet --arms A,C --date said --repeats 5",
     "policy": "node policy-test.js"
   },
   "dependencies": {

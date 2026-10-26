@@ -7,7 +7,7 @@
  *   node runner.js --models opus             one model
  *   node runner.js --models opus,gpt,llama   across providers
  *   node runner.js --repeats 2 --arms A      a smoke test before spending
- *   node runner.js --variant labelled        run 2 (provider labels)
+ *   node runner.js --variant labelled        the labelled description (an example, not in the plan; see tool.js)
  *   node runner.js --check                   validate registry and keys, call nothing
  *   node runner.js --date said               where the date comes from: none (default, the first
  *                                            smoke runs) | said | answered. See instructions.json
@@ -211,7 +211,10 @@ async function main() {
     }
   }
 
-  process.stdout.write(`\ndone → ${outPath}\n`);
+  // Exit explicitly. A finished run used to leave the process waiting on whatever the provider SDK
+  //   still held open, and a run in the background looked like it never ended (first said smoke).
+  //   The results file is complete before this line: every row is appended synchronously.
+  process.stdout.write(`\ndone → ${outPath}\n`, () => process.exit(0));
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
