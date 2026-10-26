@@ -98,9 +98,9 @@ A limit is not a value. "Nothing after 8pm" contains a time and settles none, so
 
 Two gates. Neither produces a value or a justification, and neither executes — they look things up and record what they found.
 
-**Gate 1 — is this the right tool?** A **model judgment, not a deterministic check**: whether an action really is this tool is decided from prose. In most systems this belongs in the prompt, and the specification puts tool selection under residual risk for the same reason.
+**Gate 1 — what did the user ask for, and is this the tool for it?** Two halves. The first is code: the act is settled only from words the user typed in this request, located and checked like a value (spec 4.1). Nothing else fills it — not pre-set settings, not a record of names. This is where spec 1.1 lands: an execution unit the user did not state or approve is not attempted, so an act the user never named cannot become theirs. The second half matches that act against the tool. When the record of what the user calls a tool names it (4.1.1), that is a lookup; otherwise it is a **model judgment, not a deterministic check**, decided from prose. That half can live in the prompt, and the specification puts tool selection under residual risk for that reason (8.1). Neither half judges the role of the words: "if it's full, don't cancel" contains "cancel".
 
-**Gate 2 — where did each value come from?** This is the one that has to be code, and its core is one function, `lookupField`. It walks five sources in order and records which one answered.
+**Gate 2 — where did each value come from?** Code as well, and its core is one function, `lookupField`. It walks five sources in order and records which one answered.
 
 | # | source | meaning |
 |---|--------|---------|

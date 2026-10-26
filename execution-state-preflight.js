@@ -7,13 +7,15 @@
  * This skeleton does not improve selection. It keeps a wrong one out of execution.
  *
  * Three checks run in order, and each one writes a verdict rather than executing or blocking:
- *   intent gate (Step 1-a)  — was the action settled at all
+ *   intent gate (Step 1-a)  — was the action settled at all, in the user's own words
  *   tool gate   (Step 1-c)  — is this action really this tool
  *   value gate  (Step 5-6)  — are all slots and checklist items settled
- * Only two things here are deterministic: lookupField, which walks five sources and never
- * generates a value, and the value gate's count. The tool gate is judged from the tool's
- * description, which is prose — it is mitigation, not verification, and belongs on the
- * principle side. The Background, decision path, and principles are in the [APPENDIX].
+ * Deterministic here: lookupField, which walks five sources and never generates a value; the
+ * location check on C2, which settles the act only from words the user typed (4.1); the tool
+ * gate's lookup in the record of what the user calls a tool, when that record names C2 (4.1.1);
+ * and the value gate's count. The tool gate's other half — judging the act against the tool's
+ * description when no record names it — is prose: mitigation, not verification, and it belongs
+ * on the principle side. The Background, decision path, and principles are in the [APPENDIX].
  *
  * ASSUMPTION: one call is one execution unit (spec 1.1). What is gated is a state change left
  * outside, not a call, but this skeleton runs once per tool call and cannot see state changes.
@@ -22,9 +24,11 @@
  * to group. Neither is detected here.
  *
  * Apply it only to irreversible actions, and take only the parts that fit.
- * The intent and tool gates are often better placed in the prompt. Asking the user is handled
- * by built-in functionality in most agent frameworks now. Much of the rest exists to make the
- * structure explicit; what has to be code is `lookupField` and the shape of the record.
+ * What has to be code is `lookupField`, the C2 location check, and the shape of the record. The C2
+ * check is where spec 1.1 lands — no execution unit can be added to the ones the user set — so
+ * moving it into the prompt hands that boundary back to the model. The tool gate's judgment half
+ * is often better placed in the prompt. Asking the user is handled by built-in functionality in
+ * most agent frameworks now. Much of the rest exists to make the structure explicit.
  * ============================================================================
  */
 
