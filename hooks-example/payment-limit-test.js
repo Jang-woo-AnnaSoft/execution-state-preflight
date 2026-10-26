@@ -50,6 +50,7 @@
  */
 
 const { createPreflight } = require("../execution-state-preflight");
+const { locatedActionName } = require("./c2-stub");
 
 // ── 1. Declared by a person, from the handbook table. Not read by a model. ─────────
 const APPROVAL_MATRIX = {
@@ -112,7 +113,7 @@ function erpInvoice({ id, amount, approverRole, approvalRecord = true }) {
 function createHooks({ runId, conditions, override }) {
   return {
     classifyWhenCase: () => "immediate",
-    extractUserActionName: () => "pay approved invoices",
+    extractUserActionName: locatedActionName(),   // a located claim (4.1); see c2-stub.js
     // Single tool, nothing to choose between. Spec 8.1: not verified by code anyway.
     confirmToolNameMatchesIntent: (name, tool) =>
       ({ approved: true, reason: `single-tool test: '${name}' accepted for '${tool?.name}'` }),

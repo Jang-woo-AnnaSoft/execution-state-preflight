@@ -182,16 +182,37 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter }) {
       return v;
     },
 
-    // [REQUIRED-OP] From trusted segments only.
+    // [REQUIRED-OP] From trusted segments only. Returns a located claim; the gate checks it (4.1).
+    //   The model quotes the words and names the segment; this hook finds the quote in that segment and
+    //   returns the span. It does not pre-check: a quote that is not in the segment goes back as a claim
+    //   with no span, and the gate records it as rejected — not as "the user named no act".
+    //   BREAKS: return undefined when the quote is not found — as the value extractor once did — and an
+    //     extractor that paraphrased is recorded as a user who said nothing (unresolved, not rejected).
     async extractUserActionName(instruction) {
+      const segments = (instruction ?? [])
+        .map((s, i) => ({ index: i, trust: s?.trust, text: s?.text }))
+        .filter(s => s.trust === "user");
       const system =
-        "You report what the speaker calls the action they are asking for, in their own words.\n" +
-        "Use a short noun phrase taken from their wording. Do not use tool names. Return JSON only.";
+        "You report what the speaker calls the action they are asking for, quoting their own words.\n" +
+        "Quote a short phrase exactly as it appears in one segment. Do not paraphrase, translate, " +
+        "reformat, or use tool names. Return JSON only.";
       const out = await call(model, system,
-        `Text:\n${trustedText(instruction)}\n\nReply as {"action_name": "..."}`, "action_name");
-      const name = String(out?.action_name ?? "").trim();
-      if (!name || name.length > 60) throw new Error("action name unusable");
-      return name;
+        "Segments:\n" + JSON.stringify(segments, null, 2) +
+        '\n\nReply as {"action_name": "<the exact words, copied from one segment>", "segment_index": <int>}, ' +
+        'or {"action_name": null} if the speaker names no action.', "action_name");
+      // A report that the user's words name no act. Passed on as a report, not thrown.
+      if (out && "action_name" in out && out.action_name === null) return { none: "absent" };
+      const quote = typeof out?.action_name === "string" ? out.action_name.trim() : "";
+      if (!quote || quote.length > 60) throw new Error("action name unusable");
+      const idx = out?.segment_index;
+      const text = Number.isInteger(idx) ? (instruction ?? [])[idx]?.text : undefined;
+      let at = typeof text === "string" ? text.indexOf(quote) : -1;
+      // Case only: the gate folds case too, so a quote that differs only in case is the same words.
+      if (at < 0 && typeof text === "string") {
+        const lower = text.toLowerCase().indexOf(quote.toLowerCase());
+        if (lower >= 0 && text.slice(lower, lower + quote.length).toLowerCase() === quote.toLowerCase()) at = lower;
+      }
+      return { value: quote, segment_index: idx ?? null, span: at >= 0 ? [at, at + quote.length] : null };
     },
 
     // [REQUIRED-SAFETY] Simplification 1. Disclosed above.

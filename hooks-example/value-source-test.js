@@ -35,6 +35,7 @@
  */
 
 const { createPreflight } = require("../execution-state-preflight");
+const { locatedActionName } = require("./c2-stub");
 
 let failures = 0;
 function check(label, got, want) {
@@ -98,7 +99,7 @@ function createStorage() {
 function createHooks({ locate, measured, acceptPriorState, whenCase, allowed, measure, policy, extract, support }) {
   return {
     classifyWhenCase: () => whenCase ?? "immediate",
-    extractUserActionName: () => "pay the supplier",
+    extractUserActionName: locatedActionName(),   // a located claim (4.1); see c2-stub.js
     confirmToolNameMatchesIntent: (name, tool) =>
       ({ approved: true, reason: `single-tool test: '${name}' for '${tool?.name}'` }),
 

@@ -32,6 +32,7 @@
  */
 
 const { createPreflight } = require("../execution-state-preflight");
+const { locatedActionName } = require("./c2-stub");
 
 let failures = 0;
 const SEEN = new Set();
@@ -53,7 +54,7 @@ function hooks({ measured, conditions, verify, format }) {
   const m = measured ?? { amount: AMOUNT, payee_account: ACCOUNT };
   return {
     classifyWhenCase: () => "immediate",
-    extractUserActionName: () => "pay the supplier",
+    extractUserActionName: locatedActionName(),   // a located claim (4.1); see c2-stub.js
     confirmToolNameMatchesIntent: (n, t) => ({ approved: true, reason: `single tool: '${n}' / '${t?.name}'` }),
     extractFromInstruction: () => undefined,
     measureFromEnvironment: (f) => (f in m ? { valid: true, value: m[f] } : undefined),

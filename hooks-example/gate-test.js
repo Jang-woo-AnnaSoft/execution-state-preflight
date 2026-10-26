@@ -23,6 +23,8 @@
  *   - buyer_contact, declared measured_data only
  *                                      → the user's wording never settles it;
  *                                        a failed measurement holds, asks nothing
+ *   - C2: located in the user's words (paraphrase, the buyer's words → rejected; none → unresolved);
+ *     what the user calls a tool decides the tool gate when it names C2, and never stands in for C2
  *   - group 5: a range the seller approves, a proposal from the other side (spec 3.3)
  *                                      → measured and inside: execute, ask nothing;
  *                                        chat only: ask; measured and outside: unmet hold;
@@ -74,6 +76,19 @@ function locate(segments, needle, onlyTrust = null) {
   return { found: false };
 }
 
+/**
+ * The action-name stub answers as a faithful extractor would: it quotes the word and names the
+ * segment where the seller typed it, read from the prompt the hook actually sent. The hook then
+ * finds the span and the skeleton checks it, so this exercises the real path, not a shortcut.
+ */
+function actionReply(user, word = "pickup", segmentIndex) {
+  const head = "Segments:\n";
+  const segs = JSON.parse(user.slice(user.indexOf(head) + head.length, user.indexOf("\n\nReply as")));
+  if (segmentIndex !== undefined) return { action_name: word, segment_index: segmentIndex };
+  const hit = segs.find(s => String(s.text).toLowerCase().includes(word.toLowerCase()));
+  return { action_name: word, segment_index: hit ? hit.index : (segs[0]?.index ?? null) };
+}
+
 function turnSegments(text = "x") {
   return buildUserTurn(ctx, text).segments;
 }
@@ -86,7 +101,10 @@ function turnSegments(text = "x") {
 function makeStub(plan) {
   return async function stubAsk(model, system, user) {
     if (user.includes('"when_case"')) return { when_case: ("when_case" in plan) ? plan.when_case : "immediate" };
-    if (user.includes('"action_name"')) return { action_name: plan.action_name ?? "pickup" };
+    if (user.includes('"action_name"')) {
+      if ("action_name" in plan && plan.action_name === null) return { action_name: null };
+      return actionReply(user, plan.action_name ?? "pickup", plan.action_segment);
+    }
     if (user.includes('"item_id"')) return plan.extraction;
     throw new Error(`stub: unrecognized hook call\nsystem: ${system.slice(0, 120)}`);
   };
@@ -419,7 +437,7 @@ async function main() {
                    location: locate(turn.segments, "Hongdae station lockers"), buyer_contact: { found: false } };
     const flaky = async (model, system, user) => {
       if (user.includes('"when_case"')) return { when_case: "immediate" };
-      if (user.includes('"action_name"')) return { action_name: "pickup" };
+      if (user.includes('"action_name"')) return actionReply(user);
       extractionCalls += 1;
       if (extractionCalls === 1) throw new Error("no JSON object in reply: Sure! Here is");
       return good;
@@ -443,7 +461,7 @@ async function main() {
     const fakeAdapter = {
       async callJsonMeta(model, system, user) {
         if (user.includes('"when_case"')) return jsonReply('{"when_case":"immediate"}', "end_turn", { input_tokens: 10, output_tokens: 5 });
-        if (user.includes('"action_name"')) return jsonReply('{"action_name":"pickup"}', "end_turn", { input_tokens: 10, output_tokens: 5 });
+        if (user.includes('"action_name"')) return jsonReply(JSON.stringify(actionReply(user)), "end_turn", { input_tokens: 10, output_tokens: 5 });
         return jsonReply('{"item_id": {"found": true, "value": "LST-', "max_tokens", { input_tokens: 100, output_tokens: 1024 });
       },
     };
@@ -676,6 +694,100 @@ async function main() {
     const misread = await g5("c13f", "offer_in_range", SAID,
       segs => ({ ...rangeIsNotAValue(segs), time: locate(segs, "1pm", "user") }));
     check("range misread as a value: '1pm' is never sent", misread.result.args?.time === "1pm", false);
+  }
+
+  console.log("\n--- case 14: C2 is located in the user's words; what the user calls a tool is only reference (4.1, 4.1.1) ---");
+  {
+    const text = "Set up the pickup for listing LST-2291 at 2pm this Saturday at the Hongdae station lockers. Use the buyer's in-app chat.";
+    const full = segs => ({ item_id: locate(segs, "LST-2291"), time: locate(segs, "2pm this Saturday"),
+                            location: locate(segs, "Hongdae station lockers"), buyer_contact: { found: false } });
+    const segs = buildUserTurn(ctx, text, SAID, false).segments;
+
+    // Through the real hook in hooks.js: the model quotes, the hook finds the span, the gate checks it.
+    const ok = (await runCase("c14a", text, { date: SAID, buildExtraction: full })).result;
+    check("located C2 settles: executes", ok.decision, "execute");
+    check("  C2 is the user's word", ok.fixed?.c2_user_action_name, "pickup");
+    check("  source is the instruction", ok.fixed?.c2_source, "instruction");
+    const at = ok.fixed?.c2_located_at;
+    check("  location reaches the results file", at ? segs[at.segment_index]?.trust : "none", "user");
+    check("  and the text there is the word", at ? segs[at.segment_index].text.slice(at.span[0], at.span[1]) : "none", "pickup");
+    check("  no C2 issue", ok.c2_issues.length, 0);
+
+    const cased = (await runCase("c14b", text, { date: SAID, buildExtraction: full, action_name: "Pickup" })).result;
+    check("a quote differing only in case settles", cased.fixed?.c2_user_action_name, "Pickup");
+
+    const para = (await runCase("c14c", text, { date: SAID, buildExtraction: full, action_name: "arrange a handover" })).result;
+    check("a paraphrase is not settled: asks", para.decision, "ask_user");
+    check("  through the intent gate", para.gate_kind, "intent_undetermined");
+    check("  recorded as rejected", para.c2_issues.map(i => i.code).join(","), "rejected");
+    check("  not as the user naming nothing", /c2_user_action_name:unresolved/.test(para.reason), false);
+    check("  C2 stays null", para.fixed?.c2_user_action_name, null);
+
+    const buyerIdx = segs.findIndex(sg => sg.trust !== "user" && /pick it up/.test(sg.text));
+    const theirs = (await runCase("c14d", text, { date: SAID, buildExtraction: full,
+                                                  action_name: "pick it up", action_segment: buyerIdx })).result;
+    check("the buyer's words are found: the stub found them", buyerIdx >= 0, true);
+    check("  but they are not the user's: rejected", theirs.c2_issues.map(i => i.code).join(","), "rejected");
+    check("  and the reason says whose they are", /not the user's/.test(theirs.c2_issues[0]?.detail ?? ""), true);
+
+    const none = (await runCase("c14e", text, { date: SAID, buildExtraction: full, action_name: null })).result;
+    check("the model reports no act named: unresolved", none.c2_issues.map(i => i.code).join(","), "unresolved");
+    check("  same route: asks", none.decision, "ask_user");
+
+    // The skeleton directly: user_action_name and the refusal of fixedPreSet.
+    const { createPreflight } = require("../execution-state-preflight");
+    const { createStorage } = require("./hooks");
+    const WIRE = { name: "send_wire", description: "Send a wire transfer.",
+                   inputSchema: { type: "object", properties: {}, required: [] } };
+    const said = [{ trust: "user", text: "Wire it to the usual account." }];
+    const WORD = { value: "Wire", segment_index: 0, span: [0, 4] };
+    let judged = 0;
+    const hooks = over => ({
+      classifyWhenCase: () => "immediate",
+      extractUserActionName: () => WORD,
+      confirmToolNameMatchesIntent: () => { judged += 1; return { approved: true, reason: "judged" }; },
+      extractFromInstruction: () => undefined,
+      measureFromEnvironment: () => undefined,
+      buildActionKey: (u, f) => `${u}:${f?.c3_provider_action_name}`,
+      ...over,
+    });
+    const pre = (input, over = {}) => createPreflight({ hooks: hooks(over), storage: createStorage() })
+      .runPreflightAndRecord({ userId: "u", instruction: said, mcpTool: WIRE, measured_data: {}, userChecklist: [], ...input });
+
+    judged = 0;
+    const byRecord = await pre({ user_action_name: { wire: { tool: "send_wire", trust: "user" } } });
+    check("record names C2 and this tool: approved", byRecord.fixed?.c3_match?.approved, true);
+    check("  decided by the record", byRecord.fixed?.c3_match?.matched_by, "record");
+    check("  the judgment hook is not called", judged, 0);
+    check("  persisted record carries C2's location", JSON.stringify(byRecord.fixed?.c2_located_at), JSON.stringify({ segment_index: 0, span: [0, 4] }));
+
+    judged = 0;
+    const other = await pre({ user_action_name: { wire: { tool: "pay_invoice", trust: "user" } } });
+    check("record points C2 to another tool: not approved", other.fixed?.c3_match?.approved, false);
+    check("  tool gate asks", other.gate?.kind, "tool_undetermined");
+    check("  decided by the record, no hook call", `${other.fixed?.c3_match?.matched_by}/${judged}`, "record/0");
+
+    judged = 0;
+    const silent = await pre({ user_action_name: { transfer: { tool: "send_wire", trust: "user" } } });
+    check("record silent on this C2: the hook judges", `${silent.fixed?.c3_match?.matched_by}/${judged}`, "judgment/1");
+
+    judged = 0;
+    const raw = await pre({ user_action_name: { wire: "send_wire" } });
+    check("an unwrapped entry is not consulted", `${raw.fixed?.c3_match?.matched_by}/${judged}`, "judgment/1");
+    check("  and the record says so", /not consulted/.test(raw.fixed?.c3_match?.record_note ?? ""), true);
+
+    // 4.1.1: the record never stands in for what the user said.
+    const unsaid = await pre({ user_action_name: { wire: { tool: "send_wire", trust: "user" } } },
+                             { extractUserActionName: () => ({ none: "absent" }) });
+    check("record present, user named no act: still asks", unsaid.execution_decision, "ask_user");
+    check("  C2 is not filled from the record", unsaid.fixed?.c2_user_action_name, null);
+
+    const bare = await pre({}, { extractUserActionName: () => "Wire" });
+    check("a bare name is rejected", /c2_user_action_name:rejected/.test(bare.reason), true);
+
+    const legacy = await pre({ fixedPreSet: { c2_user_action_name: { value: "wire", trust: "user" } } });
+    check("fixedPreSet is refused, not ignored", legacy.execution_decision, "definition_repair");
+    check("  and the reason points to user_action_name", /user_action_name/.test(legacy.reason), true);
   }
 
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);

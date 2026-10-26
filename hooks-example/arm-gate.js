@@ -139,6 +139,20 @@ function project(state, preflight, tool) {
       id: i.id, status: i.status, source: i.source ?? null, note: i.note ?? null,
     })),
     unsafe_defaults: preflight.unsafeDefaults,
+    // The fixed checklist (4.1, 4.1.1, 6.4): the name the user used, where in their words the gate found
+    //   it, and the tool it was matched against and how. Named field by field — a whitelist, like the rest.
+    //   Without it an intent ask cannot be read from the results file: c2_issues separates "the user's
+    //   words name no act" (unresolved) from "the extractor's claim was refused" (rejected).
+    fixed: state.fixed ? {
+      c1_when_case: state.fixed.c1_when_case ?? null,
+      c2_user_action_name: state.fixed.c2_user_action_name ?? null,
+      c2_source: state.fixed.c2_source ?? null,
+      c2_located_at: state.fixed.c2_located_at ?? null,
+      c3_provider_action_name: state.fixed.c3_provider_action_name ?? null,
+      c3_match: state.fixed.c3_match ?? null,
+    } : null,
+    c2_issues: (state.gate?._diag?.issues ?? [])
+      .filter(i => i.slot === "c2_user_action_name").map(i => ({ code: i.code, detail: i.detail ?? null })),
     // The skeleton's per-slot lookup failures, with the hook's exception text. Harness diagnostics.
     lookup_failures: state.gate?._diag?.lookup_failures ?? []
   };

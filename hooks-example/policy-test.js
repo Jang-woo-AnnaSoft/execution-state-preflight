@@ -26,6 +26,7 @@
  */
 
 const { createPreflight } = require("../execution-state-preflight");
+const { locatedActionName } = require("./c2-stub");
 
 let failures = 0;
 function row(label, got, want, why) {
@@ -55,7 +56,7 @@ const LIMIT_SPAN = [LIMIT_TEXT.indexOf("8pm"), LIMIT_TEXT.indexOf("8pm") + 3];
 function minimalHooks(over = {}) {
   return {
     classifyWhenCase: () => "immediate",
-    extractUserActionName: () => "pay the supplier",
+    extractUserActionName: locatedActionName(),   // a located claim (4.1); see c2-stub.js
     confirmToolNameMatchesIntent: (n, t) => ({ approved: true, reason: `single tool: ${t?.name}` }),
     extractFromInstruction: () => undefined,
     measureFromEnvironment: () => undefined,

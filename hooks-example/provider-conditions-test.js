@@ -39,6 +39,7 @@
  */
 
 const { createPreflight } = require("../execution-state-preflight");
+const { locatedActionName } = require("./c2-stub");
 
 let failures = 0;
 function check(label, got, want) {
@@ -70,7 +71,7 @@ const MEASURED = { amount: 4200, recipient: "ACCT-77" };
 function createHooks({ runId, conditions, conditionsThrow, measured }) {
   const hooks = {
     classifyWhenCase: () => "immediate",
-    extractUserActionName: () => "send the wire",
+    extractUserActionName: locatedActionName(),   // a located claim (4.1); see c2-stub.js
     confirmToolNameMatchesIntent: (name, tool) =>
       ({ approved: true, reason: `single-tool test: '${name}' for '${tool?.name}'` }),
     extractFromInstruction: () => undefined,
@@ -112,7 +113,7 @@ async function run(runId, opts = {}) {
   });
   return preflight.runPreflightAndRecord({
     userId: "u_test",
-    instruction: [{ trust: "trusted", text: "send the wire" }],
+    instruction: [{ trust: "user", text: "send the wire" }],
     mcpTool: SEND_WIRE,
     measured_data: {},
     userChecklist: opts.userChecklist ?? [],
@@ -354,7 +355,7 @@ function len(x) { return (x ?? []).length; }
     const flagged = (preflight.unsafeDefaults ?? []).includes("verifyProviderCondition");
     const r = await preflight.runPreflightAndRecord({
       userId: "u_test",
-      instruction: [{ trust: "trusted", text: "send the wire" }],
+      instruction: [{ trust: "user", text: "send the wire" }],
       mcpTool: SEND_WIRE,
       measured_data: {},
       userChecklist: [],
