@@ -238,8 +238,16 @@ Every value, condition, and intent item is registered in an external checklist, 
 - Tool match validity: does this tool actually provide the requested state change?
 - Timing: immediate, at a set time, or when a specific event occurs? A time contained in the action is an argument, not a timing. Only a call that is itself postponed is scheduled or conditional.
 - Intent: the purpose of use and the desired state change.
+- What the user calls it: the name the user gives this action, which may differ from the tool name the system set. It is taken, with its location specified, from what the user said in this request (5.2), and is not filled from any other source.
 
 **Role of the fixed checklist: the minimum needed to settle the execution unit. The tool match depends on it, so it comes before the intent in 4.3.**
+
+#### 4.1.1 The record of what the user calls a tool
+
+- A user may call a tool by a name other than the one the system set. Which name points to which tool is the user's declaration, and it differs from user to user.
+- This record is not pre-set settings. Pre-set settings hold slot values and are a source in the search order of 5.2. The record of what the user calls a tool confirms no slot; it is used only as reference in tool matching.
+- It does not stand in for what the user said in this request. If the user did not name the action, the recorded name does not fill that place, and the user is asked again (4.5). A record that stands in for the words records something not said this time as said.
+- The record keeps a correspondence settled in conversation, with the user's consent (6.2). When the record changes, tool matching based on it is judged again (6.1).
 
 ### 4.2 Provider Checklist: varies per tool.
 
@@ -323,7 +331,7 @@ user_answer → instruction → pre_set_data → measured_data → prior_state
 
 - user_answer: a response the user entered directly after an ask_user interaction. Empty on the first round.
 - instruction: a value taken, with its location specified, from a segment the user typed directly.
-- pre_set_data: settings the user approved and stored in advance. A value that was used can become pre_set_data with the user's approval.
+- pre_set_data: settings the user approved and stored in advance. A value that was used can become pre_set_data with the user's approval. The record of what the user calls a tool is not part of it (4.1.1).
 - measured_data: system state confirmed on the spot by calling a system API. The lookup must be a live measurement.
 - prior_state: a value inherited from a previous execution that the record confirms was executed. Applies to values only; conditions are not inherited. Inheritance alone does not confirm a slot. The value counts only after the user confirms it.
   - A value found at this source does not end the lookup. Once the user confirms it, it is confirmed as user_answer.
@@ -381,7 +389,7 @@ The two items below are different in kind. They concern tool selection, so viola
 - Records for the same execution unit accumulate under one key. Both instruction time and trigger time must be kept.
 - An agent session starts without memory of earlier runs. A stopped execution continues from the records under its key, not from the model's memory.
 
-Field names and structure are up to the adopting system. The decision record must hold each slot's state, source, and kind; the route each UNKNOWN took; unknown_count; and the unmet items. When no verdict has been made yet, unknown_count is stored as a distinct value, not as 0.
+Field names and structure are up to the adopting system. The decision record must hold each slot's state, source, and kind; the route each UNKNOWN took; unknown_count; the unmet items; and the name the user used, with the tool it was matched against. When no verdict has been made yet, unknown_count is stored as a distinct value, not as 0.
 
 ```json
 {
@@ -464,7 +472,7 @@ With authority outside the model, decisions and accountability stay with the par
 
 - A tool name is a label, separate from what the tool can do. Different names can produce the same state change, and a matching name can come with a different capability.
 - Tool selection is not verified by code. Narrow down to a single candidate without asking, and a tool may be chosen just because it is on the list. Whether it passes is then decided by that tool's input schema.
-- Mitigation: state-change declarations depend on the description, so this point leans more on intent confirmation. Recording what the user calls the action helps.
+- Mitigation: state-change declarations depend on the description, so this point leans more on intent confirmation. Recording what the user calls the action (4.1.1) helps.
 
 ### 8.2 Forged records and hook implementation
 
@@ -523,7 +531,7 @@ Provenance-based gates have been explored in injection defense, and the blank pr
 - This specification is not a technique for removing hallucination. The model's output remains, as it is, the input for preparing execution.
 - Its goal is not to block execution, but to establish what execution needs and settle an executable state. Safety follows from that.
 - It changes the default. Instead of running whatever is not prohibited, only what is confirmed, in an execution unit the user stated or approved, reaches an executable state.
-- The black box is not fully opened. What is opened is what went into the verdict and what came out. After an incident, what you usually need is not the model's internal state but where the values came from, so this scope answers a good share of the questions.
+- The black box is not fully opened. What is opened is what went into the verdict and what came out. After an incident, what you usually need is not the model's internal state but where the values came from, so this much already answers a good share of the questions.
 
 The authority to decide what gets checked and the authority to judge whether it was checked belong outside the model. Things went wrong not because these authorities were in the model, but because they were nowhere. The model filled the empty place. What narrows is the model's authority. What widens is what the model can be used for.
 

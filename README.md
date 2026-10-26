@@ -141,8 +141,8 @@ const { createPreflight } = require("./execution-state-preflight");
 const preflight = createPreflight({
   hooks: {
     classifyWhenCase,             // → "immediate" | "scheduled" | "conditional" | "recurring" | null (undecidable)
-    extractUserActionName,        // → what the user calls this action
-    confirmToolNameMatchesIntent, // → { approved, reason }
+    extractUserActionName,        // → { value, segment_index, span } in a user segment | { none: "absent" } | undefined
+    confirmToolNameMatchesIntent, // → { approved, reason } — called only when user_action_name says nothing
     extractFromInstruction,       // → { value, segment_index, span } | { none: "absent" | "no_place" } | undefined
     measureFromEnvironment,       // → { valid, value } | { valid: false } | { none: "absent" | "no_place" } | undefined
     buildActionKey,               // → opaque string; sets the blast radius of prior_state

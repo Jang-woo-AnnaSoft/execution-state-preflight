@@ -15,6 +15,12 @@
  * description, which is prose — it is mitigation, not verification, and belongs on the
  * principle side. The Background, decision path, and principles are in the [APPENDIX].
  *
+ * ASSUMPTION: one call is one execution unit (spec 1.1). What is gated is a state change left
+ * outside, not a call, but this skeleton runs once per tool call and cannot see state changes.
+ * A call that makes more than one state change must be split into units by the adopting system
+ * before it reaches this gate; several calls that make one state change are the adopting system's
+ * to group. Neither is detected here.
+ *
  * Apply it only to irreversible actions, and take only the parts that fit.
  * The intent and tool gates are often better placed in the prompt. Asking the user is handled
  * by built-in functionality in most agent frameworks now. Much of the rest exists to make the
@@ -123,18 +129,28 @@
  * @property {number|null} [next_tool_attempt]   // Same, as input.tool_attempt. Tool gate only.
  * @property {Object} [_diag]           // Logs only. Never expose (candidate_tool, hook exception text).
  *
- * @typedef {Object} FixedPreSet
- * @property {PreSetEntry} [c2_user_action_name]  // C2 fallback for THIS request. Separate input, not part
- *   // of preSetData: the pre_set_data step reads every key there, so a reserved key would collide with a same-named field.
- *   // Not the place for a standing C2→C3 mapping — see POLICY (learned mapping) on confirmToolNameMatchesIntent.
- *   // BREAKS: a c1_when_case entry here is ignored. C1 comes from the utterance only.
+ * @typedef {Object} UserActionNameEntry
+ * @property {string} tool              // The system's name for the tool (C3) that this user's name points to.
+ * @property {"user"} trust             // Only a correspondence the user settled, with consent (4.1.1, 6.2).
+ * @property {string} [origin]          // Where it was settled. For records and questions.
+ *   // input.user_action_name["<what the user calls it>"] = UserActionNameEntry.
+ *   // The record of what the user calls a tool (spec 4.1.1). The user may call a tool by a name other
+ *   //   than the system's. NOT pre-set settings: it confirms no slot and is never a source for C2. It is
+ *   //   read only by the tool gate (Step 1-c), as reference for matching C2 against C3.
+ *   // BREAKS: read it as C2 when the utterance names no action — as fixedPreSet.c2_user_action_name was —
+ *   //   and something the user did not say this time is recorded as said (4.1.1). It also makes gate 1
+ *   //   compare the tool against itself: C2 and the match would come from the same record.
+ *   // fixedPreSet is no longer accepted. Passing it is refused at Step 0 (definition_repair), not ignored:
+ *   //   a caller that relied on the fallback would otherwise see its requests start asking with no trace.
  *
  * @typedef {Object} ExecutionState
  * @property {string|null} action_key   // Baseline lineage key. null if it failed before fixed was settled.
  * @property {"at_instruction"|"at_trigger"|null} phase
  *   // Records from both moments accumulate under the same action_key. This is the key that separates them.
  * @property {Object|null} fixed        // C1(When/Case) / C2(User Action Name) / C3(Tool Name)
- *   // Plus c2_source: "instruction"|"pre_set_data"|null, and c3_match: { approved, reason }.
+ *   // Plus c2_source: "instruction"|null, c2_located_at: { segment_index, span } | null (where in the
+ *   //   user's words the gate found C2), and c3_match: { approved, reason, matched_by }.
+ *   //   matched_by: "record" (user_action_name decided it, no hook call) | "judgment" (the hook decided).
  *   // c3_match is the Tool judgment as decided on this run. Not inherited — fixed is rebuilt every run.
  * @property {FieldRecord[]|null} fields  // The materialized SLOTS — what blocks execution.
  *   // null if no decision was made — distinct from [] ("computed, came out empty")
@@ -284,16 +300,38 @@ function usableActionName(v) {
   return typeof v === "string" && v.trim() !== "";
 }
 
-// C2 fallback. Same acceptance conditions as pre_set_data: wrapper shape plus trust "user".
-//   Stricter is defensible, looser is not — C2 feeds action_key, which sets prior_state's blast radius.
-//   BREAKS: accept a raw string and one unwrapped value redefines what action this is.
-function readC2Fallback(fixedPreSet) {
-  const entry = fixedPreSet?.c2_user_action_name;
-  if (!entry || typeof entry !== "object" || !("value" in entry) || entry.trust !== "user") return undefined;
-  return usableActionName(entry.value) ? entry.value : undefined;
+// One folding for every comparison of an action name: case, width and punctuation do not make a
+//   different name. The same folding spanSupportsValue's default applies to values.
+function foldActionText(v) {
+  return String(v).normalize("NFKC").toLowerCase().replace(/[\p{P}\p{S}]+/gu, " ").replace(/\s+/g, " ").trim();
 }
 
-async function resolveFixedChecklist(h, instruction, mcpTool, fixedPreSet) {
+// The C2 location check (4.1, 5.2). The three facts a value from the instruction must show: the segment
+//   is the user's, the span is a real range in it, and the text there says the name. The hook claims
+//   where; the gate checks that the words are there.
+// Returns { ok: true, value, located_at } or { ok: false, why }.
+// NOTE: this proves the words are in the user's segment. It does not prove they ask for this act —
+//   see [LIMIT] in resolveFixedChecklist.
+function checkC2Claim(claim, instruction) {
+  if (typeof claim === "string") return { ok: false, why: "a name with no location" };
+  if (!claim || typeof claim !== "object" || Array.isArray(claim)) return { ok: false, why: "not a located claim" };
+  if ("none" in claim) return { ok: false, why: `unrecognized report ${JSON.stringify(claim.none)}` };
+  const { value, segment_index, span } = claim;
+  if (!usableActionName(value)) return { ok: false, why: "empty name" };
+  const seg = Array.isArray(instruction) && Number.isInteger(segment_index) ? instruction[segment_index] : undefined;
+  if (!seg || typeof seg.text !== "string") return { ok: false, why: `no segment ${JSON.stringify(segment_index ?? null)}` };
+  if (seg.trust !== "user") return { ok: false, why: `segment ${segment_index} is not the user's (${seg.origin ?? seg.trust ?? "?"})` };
+  if (!Array.isArray(span) || span.length !== 2 || !Number.isInteger(span[0]) || !Number.isInteger(span[1]) ||
+      span[0] < 0 || span[0] >= span[1] || span[1] > seg.text.length) {
+    return { ok: false, why: `invalid span ${JSON.stringify(span ?? null)}` };
+  }
+  if (foldActionText(seg.text.slice(span[0], span[1])) !== foldActionText(value)) {
+    return { ok: false, why: "the text at the span is not the name" };
+  }
+  return { ok: true, value, located_at: { segment_index, span: [span[0], span[1]] } };
+}
+
+async function resolveFixedChecklist(h, instruction, mcpTool) {
   const issues = [];
   const fail = slot => e => {
     issues.push({ slot, code: "hook_error", detail: e?.message ?? String(e) });
@@ -316,37 +354,61 @@ async function resolveFixedChecklist(h, instruction, mcpTool, fixedPreSet) {
   }
   const c1Ok = !issues.some(i => i.slot === "c1_when_case");
 
-  // C2: utterance first, pre-set second. Same order as field values, different reason — there instruction
-  //   wins as fresher intent; here the fallback must not OVERRIDE what was just said.
-  //   BREAKS: check the fallback first and a stored name silently redirects a different request.
-  // NOTE: length caps and whole-input echoes remain the hook's post-processing job. An echo is a non-empty
-  //   string, passes usableActionName, and flows into action_key.
+  // C2: what the user calls this act, from the user's words in THIS request only (4.1). One source, and
+  //   no fallback. The record of what the user calls a tool (input.user_action_name, 4.1.1) is not a
+  //   source: it is read by the tool gate, never here. Pre-set settings and measurements are not sources.
+  //   The hook returns a located claim — { value, segment_index, span } — and the gate checks it
+  //   (checkC2Claim), as it checks a value from the instruction.
+  //   Three outcomes besides a settled C2, all routed the same way (the intent gate asks):
+  //     hook_error  the hook threw
+  //     unresolved  the hook reported the user's words name no act ({ none: "absent" }), or reported nothing
+  //     rejected    a claim came back and the gate refused it: no location, not the user's segment, a span
+  //                 that is not there, or text at the span that is not the name
+  //   BREAKS: fold rejected into unresolved and an extractor that misplaces a clear name is recorded as a
+  //     user who did not say what they wanted — a defect on the implementation side attributed to the
+  //     user (7.1). The route is the same on purpose: the user restates, and the ceiling still counts.
+  // NOTE: length caps and whole-input echoes remain the hook's post-processing job. An echo of the user's
+  //   whole segment is located and non-empty, so it passes, and flows into action_key.
+  // [LIMIT] The location check proves the words are in the user's segment. It does not prove they ask
+  //   for this act. "If it's full, don't cancel" contains "cancel", correctly located. This is where spec
+  //   1.1 lands — an execution unit the user did not state or approve is not attempted, and no unit can be
+  //   added to the ones the user set — and the role of the words is not judged by code (8.1). It is the
+  //   same hole as spanSupportsValue's identity comparison for values (a limit is not a value).
+  //   BREAKS: an extractor that picks a word the user used in another role ("cancel" from "don't
+  //     cancel") settles C2, keys the record under it, and gate 1 compares the tool against it.
+  //   POLICY: because code cannot hold this, the adopting system must give it to the model as a
+  //     principle read at EVERY gated execution — put into the context of each call that reaches this
+  //     gate, not written once into a system prompt where it dilutes and nobody can confirm it was
+  //     dropped (spec 6.1). The principle, in the spec's words (1.1, 6.2):
+  //       - Decide the tool only after taking in when the user said to do it and what they called it.
+  //       - An alternative to a blocked or failed execution is a new execution unit. If the user did not
+  //         state or approve it, do not attempt it; bring the block back instead.
+  //     A violation of this principle is not detected by the record. It is mitigation, not verification.
   let c2HookError = null;
-  const fromInstruction = await safeHook(h.extractUserActionName, [instruction],
+  const claim = await safeHook(h.extractUserActionName, [instruction],
     e => { c2HookError = e?.message ?? String(e); return undefined; });
   let c2 = null;
   let c2_source = null;
-  if (usableActionName(fromInstruction)) {
-    c2 = fromInstruction;
-    c2_source = "instruction";
+  let c2_located_at = null;
+  if (c2HookError !== null) {
+    // The hook failed — it did not report that the user's words name no act. Same route as unresolved;
+    //   the record must say which happened (the first said run: a refused model call on "Set up a time
+    //   to hand over LST-2291" was recorded as an empty instruction). Mirror of C1.
+    issues.push({ slot: "c2_user_action_name", code: "hook_error", detail: c2HookError });
+  } else if (claim === undefined || claim === null) {
+    issues.push({ slot: "c2_user_action_name", code: "unresolved", detail: "the hook made no report" });
+  } else if (typeof claim === "object" && claim.none === "absent" && !("value" in claim)) {
+    issues.push({ slot: "c2_user_action_name", code: "unresolved", detail: "the hook reported the user's words name no act" });
   } else {
-    const fallback = readC2Fallback(fixedPreSet);
-    if (fallback !== undefined) {
-      c2 = fallback;
-      c2_source = "pre_set_data";
-    } else if (c2HookError !== null) {
-      // The hook failed — it did not report that the instruction names no action. Recording it as
-      //   "unresolved — instruction and pre-set both empty" said something untrue about the
-      //   instruction (the first said run: a refused model call on "Set up a time to hand over
-      //   LST-2291"). Same route either way; the record must say which happened. Mirror of C1.
-      issues.push({ slot: "c2_user_action_name", code: "hook_error", detail: c2HookError });
+    const checked = checkC2Claim(claim, instruction);
+    if (checked.ok) {
+      c2 = checked.value;
+      c2_source = "instruction";
+      c2_located_at = checked.located_at;
     } else {
-      issues.push({ slot: "c2_user_action_name", code: "unresolved", detail: "instruction and pre-set both empty" });
+      issues.push({ slot: "c2_user_action_name", code: "rejected", detail: checked.why });
     }
   }
-  // NOTE: a fallback that rescues a thrown hook records no exception text — the only trace is
-  //   c2_source === "pre_set_data". Watch that ratio: a rising share means the extractor is degrading
-  //   behind the fallback. Deliberate cost of not asking.
 
   return {
     fixed: {
@@ -354,7 +416,11 @@ async function resolveFixedChecklist(h, instruction, mcpTool, fixedPreSet) {
       c2_user_action_name: c2,
       c3_provider_action_name: mcpTool?.name ?? null,
       // Consumed by buildActionKey and confirmToolNameMatchesIntent. Recorded either way.
+      //   c2_source is "instruction" or null: there is no other source for C2.
       c2_source,
+      // Where in the user's words the gate found C2. A name with no location does not settle C2, so the
+      //   record can be re-checked against the instruction without this gate.
+      c2_located_at,
     },
     issues,
   };
@@ -376,9 +442,17 @@ function classifyWhenCase(instruction) {
   throw new Error("not implemented");
 }
 
-// [REQUIRED-OP] Extract what the user calls this Action.
-// CONTRACT: from trust === "user" segments only. c2 → action_key → the prior_state lookup key.
-// NOTE: block empty strings, excessive length, and whole-input echoes in post-processing.
+// [REQUIRED-OP] Locate what the user calls this Action, in the user's own words (4.1).
+// CONTRACT: return a located claim, never a bare name:
+//     { value: "<the exact words>", segment_index: <int>, span: [start, end] }   half-open, into that
+//                                                                                 segment's text
+//     { none: "absent" }    the user's words name no act (a report, recorded as unresolved)
+//     undefined             no report (unresolved)
+//   The segment must be trust "user". The gate checks the segment, the span and the text (checkC2Claim);
+//   anything that fails is rejected — a bare string included. c2 → action_key → the prior_state lookup key.
+//   BREAKS: pre-check the span in the hook and return undefined when it fails, and the record says the
+//     user named no act where the hook actually misplaced one (unresolved instead of rejected).
+// NOTE: block excessive length and whole-input echoes in post-processing.
 function extractUserActionName(instruction) {
   throw new Error("not implemented");
 }
@@ -389,17 +463,52 @@ function extractUserActionName(instruction) {
 //   vocabulary and need not know the C3 name; string similarity fails them. C2 is settled on arrival —
 //   Step 1-a returns above Step 1-0.
 //   BREAKS: derive C2 from the Tool and the check is circular — the Tool against itself.
-// POLICY (c2_source): the fallback path asks the user nothing, so this gate is the only remaining check
-//   on a fallback-sourced C2. Require an exact match when fixed.c2_source === "pre_set_data".
-//   Mismatch yields ask_user, which routes back to the utterance — the right place to recover.
-// POLICY (learned mapping): persist a C2→C3 mapping settled in conversation ("for this user, 'send' means
-//   transfer_funds") and look it up here. The judgment becomes a lookup, and repeat requests clear this
-//   gate on the first attempt instead of the third.
-//   BREAKS: keeping it in fixedPreSet.c2_user_action_name fails twice. C2 and C3 then derive from one
-//     decision, so the comparison is the Tool against itself and always approves. And the fallback ranks
-//     below the utterance, so the next differently-worded request discards it.
+// NOTE: this hook is the judgment half of the tool gate. It is called only when the record of what the
+//   user calls a tool (input.user_action_name, 4.1.1) says nothing about this C2. When the record names
+//   this C2, the gate decides from it without calling the hook (matchFromUserActionName), and
+//   c3_match.matched_by says which half decided.
+// POLICY (learned mapping): a C2→C3 correspondence settled in conversation ("for this user, 'send' means
+//   transfer_funds") is recorded, with the user's consent, in user_action_name (4.1.1, 6.2). The
+//   judgment becomes a lookup, and repeat requests clear this gate on the first attempt instead of the third.
 function confirmToolNameMatchesIntent(userActionName, mcpTool) {
   throw new Error("not implemented");
+}
+
+// The tool gate's deterministic half (4.1.1). The record of what the user calls a tool is reference for
+//   matching: when it names this C2, it decides; when it does not, the hook judges.
+// Returns { result: { approved, reason, matched_by: "record" } | null, note: string|null }.
+//   result null → the record says nothing about this C2; the hook decides.
+//   An entry without the { tool, trust: "user" } wrapper is not consulted, and neither is a name the
+//   record points to two different tools — note says why, so a defect in the record stays visible.
+// NOTE: it decides "this name is this tool", not "these words ask for this act" ([LIMIT] in
+//   resolveFixedChecklist). A word the user used in another role, correctly located, is approved here
+//   as deterministically as the right one.
+function matchFromUserActionName(c2, toolName, record) {
+  if (!usableActionName(c2) || !record || typeof record !== "object" || Array.isArray(record)) {
+    return { result: null, note: null };
+  }
+  const key = foldActionText(c2);
+  const hits = Object.entries(record).filter(([name]) => foldActionText(name) === key);
+  if (hits.length === 0) return { result: null, note: null };
+  const usable = hits.filter(([, e]) => e && typeof e === "object" && e.trust === "user" && usableActionName(e.tool));
+  if (usable.length === 0) {
+    return { result: null, note: "user_action_name entry not consulted: needs { tool, trust: \"user\" }" };
+  }
+  const tools = [...new Set(usable.map(([, e]) => e.tool))];
+  if (tools.length > 1) {
+    return { result: null, note: `user_action_name not consulted: the name points to ${tools.length} tools` };
+  }
+  const approved = tools[0] === toolName;
+  return {
+    result: {
+      approved,
+      reason: approved
+        ? `user_action_name: the user calls ${toolName} by this name`
+        : `user_action_name: the user calls ${tools[0]} by this name, not ${toolName ?? "this tool"}`,
+      matched_by: "record",
+    },
+    note: null,
+  };
 }
 
 // 3. Provider Checklist — enforceable (inputSchema.required) vs advisory (description)
@@ -562,7 +671,8 @@ function getAdvisoryNotes(mcpTool) {
 // INVARIANT: the provider loop writes only to its own array. It never touches fields, extra_fields,
 //   call_arguments or user_checklist. That is what keeps direction one-way (5.1): a slot is promoted
 //   by being CHECKED, never by being SATISFIED. A condition that holds removes a reason to block and
-//   supplies no grounds to execute — those come from the user's declared intent (4.2.1, Section 0).
+//   supplies no grounds to execute — those come from the execution units the user stated or
+//   approved (4.2.1, Section 0).
 //   BREAKS: let a checked condition settle a slot or satisfy a user item and one upstream edit —
 //     a condition rewritten as always-true — becomes a fail-open switch for every call.
 //
@@ -1124,7 +1234,7 @@ async function runPreflight(h, input) {
 //   specification exists to rule out, so it is absent rather than carried unread.
 //   A policy that must gate execution is declared as a checklist item: it becomes a slot and is
 //   compared like any other.
-async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, fixedPreSet, measured_data, priorExecutionState, userChecklist, userAnswers, checklistAnswers, intent_attempt, tool_attempt, ask_attempt, lookup_attempt }) {
+async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, fixedPreSet, user_action_name, measured_data, priorExecutionState, userChecklist, userAnswers, checklistAnswers, intent_attempt, tool_attempt, ask_attempt, lookup_attempt }) {
   const checklist = userChecklist ?? [];
   // Ceilings on the two resolution routes that can be retried (4.5: asking the user and the system
   //   lookup both have one; the adopting system sets it). Same contract as intent_attempt: the caller
@@ -1161,10 +1271,26 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     };
   }
 
+  // Step 0-b: fixedPreSet is no longer accepted. It used to supply C2 when the utterance named no act; C2
+  //   now comes only from the user's words (4.1, 4.1.1), and what the user calls a tool goes in
+  //   user_action_name, which only the tool gate reads. Refused, not ignored: ignored, a caller that
+  //   relied on the fallback sees its requests start asking with nothing saying why.
+  if (fixedPreSet !== undefined) {
+    return {
+      fixed: null, action_key: null, phase: null, fields: null, advisory_notes: "", user_checklist: checklist,
+      unknown_count: null, unverified_checklist_count: null,
+      provider_checklist: null, unverified_provider_count: null,
+      gate: null,   // Not a question. There is nothing for the user to answer
+      execution_decision: "definition_repair",
+      reason: "definition_repair: fixedPreSet is no longer accepted — C2 comes only from the user's words; " +
+              "pass what the user calls a tool as user_action_name (4.1.1)",
+      timestamp: h.now(),
+    };
+  }
+
   // Step 1: settle Fixed. Hook failures do not throw — they come back as issues.
   //   BREAKS: move this later and later returns record no action_key, severing the lineage.
-  //   fixedPreSet is passed separately from preSetData on purpose — see the FixedPreSet typedef.
-  const { fixed, issues: fixedIssues } = await resolveFixedChecklist(h, instruction, mcpTool, fixedPreSet);
+  const { fixed, issues: fixedIssues } = await resolveFixedChecklist(h, instruction, mcpTool);
 
   // Step 1-a: intent gate. C1 and C2 share one ceiling — same remedy (restate), so separate counters would
   //   allow INTENT_ATTEMPT_LIMIT asks per slot.
@@ -1195,6 +1321,12 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       //   C1/C2 are not required fields and have no key to attach an answer to.
       // exhausted: leave the skeleton; resolve in conversation. Re-entry is a NEW request at attempt 0.
       //   POLICY: resetting the counter every turn restores the loop this ceiling exists to stop.
+      // [LIMIT] These records are not linked to the request that follows. They have no action_key (no C2)
+      //   and sit under UNKEYED_RECORD_KEY; the request settled afterwards in conversation is recorded
+      //   under its own key. Under that key, a request that was refused twice and settled in conversation
+      //   reads as one that passed on the first attempt. Kept apart on purpose: nothing in the next
+      //   request says it is this one, and linking them would be a guess. Reconstructing the path means
+      //   reading the unkeyed bucket alongside, by user and time.
       execution_decision: exhausted ? "exhausted" : "ask_user",
       reason: `${exhausted ? "exhausted" : "ask_user"}: fixed undetermined (${fixedIssues.map(i => `${i.slot}:${i.code}`).join(", ")}) attempt=${attempt}/${INTENT_ATTEMPT_LIMIT}`,
       timestamp: h.now(),
@@ -1234,8 +1366,12 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   //   mcpTool.name. Order owed by the caller: settle C2, then select the Tool from it. Selected earlier,
   //   this gate is validating a guess. A contract, not a guarantee — the gate refuses a Tool without ever
   //   learning how it was chosen.
-  const matchResult = await safeHook(h.confirmToolNameMatchesIntent, [fixed.c2_user_action_name, mcpTool],
+  // The record decides when it names this C2 (4.1.1); otherwise the hook judges. C2 itself never comes
+  //   from the record — it was settled from the user's words above, or this line is not reached.
+  const fromRecord = matchFromUserActionName(fixed.c2_user_action_name, mcpTool?.name ?? null, user_action_name);
+  const matchResult = fromRecord.result ?? await safeHook(h.confirmToolNameMatchesIntent, [fixed.c2_user_action_name, mcpTool],
     e => ({ approved: false, reason: `hook_error: ${e?.message ?? String(e)}` }));
+  const matchedBy = fromRecord.result ? "record" : "judgment";
   // Shape is checked too. undefined and missing fields are also not approved — a hook's silence is not approval.
   const c3Approved = matchResult?.approved === true;
   const c3Reason = matchResult?.reason ?? (c3Approved ? null : "hook did not return { approved, reason }");
@@ -1245,7 +1381,9 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   //   BREAKS: read c3_match.approved as permission downstream and it is a bypass switch. It records what
   //     was decided here; it does not carry the decision forward.
   // NOTE: reason is the hook's text, stored verbatim in a keyed bucket. No masking hook exists.
-  fixed.c3_match = { approved: c3Approved, reason: c3Reason };
+  // matched_by: which half decided. "record" is a lookup; "judgment" is the hook reading prose (8.1).
+  fixed.c3_match = { approved: c3Approved, reason: c3Reason, matched_by: matchedBy,
+                     ...(fromRecord.note ? { record_note: fromRecord.note } : {}) };
   if (!c3Approved) {
     // ask_user until the ceiling. Undetermined is something to ask about, not a defect.
     // NOTE: an ask/hold choice, not a verdict on the selection. "Chose wrong" and "not yet settled" are
@@ -1923,10 +2061,9 @@ async function runPreflightAndRecord(h, input) {
 
 // [REQUIRED-OP] CONTRACT: key design = the blast radius of prior_state. Treat it as an opaque string.
 //   `${userId}:${c3}` reuses broadly / `${userId}:${c3}:${intent}` groups like intents / unique per run (most conservative)
-// POLICY (c2_source): a fallback-sourced C2 was never confirmed against anything said in this request.
-//   Narrow its blast radius — per-run key for "pre_set_data", shared key for "instruction".
-//   Treated alike, a stale pre-set name inherits the baseline of a request never made.
-//   Signature unchanged: existing implementations keep working, they just stop distinguishing the two.
+// NOTE: C2 is always the user's own words in this request, located (4.1). A key that includes it groups
+//   requests by how the user worded them. Two wordings of one request ("pickup" / "schedule the pickup")
+//   are two keys. The location check narrows the drift to the user's words; it does not remove it.
 function buildActionKey(userId, fixed) {
   throw new Error("not implemented");
 }
@@ -1942,7 +2079,12 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.12",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.13",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.13: fixed.c2_located_at added (where in the user's words C2 was found); c2_source is only
+    //        "instruction" or null — the pre_set_data fallback is gone. fixed.c3_match carries matched_by
+    //        ("record" | "judgment") and, when the record could not be consulted, record_note. A C2 issue
+    //        may carry code "rejected" (a claim the gate refused). A pre-1.13 "pre_set_data" c2_source
+    //        means the name came from the removed fallback, not from what the user said.
     //   1.12: a derived field carries derived_from (every input it rests on, verified by the gate).
     //        On older records derived: true with no derived_from means the inputs were not recorded.
     //   1.11: fields[] carry route (4.5 route of an unknown, 6.3) and lookup_trace (each consulted source
@@ -2174,11 +2316,15 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *      ▼
  * Step 0. checklist id check ────────► "definition_repair" (config defect — before any question is asked)
  *      ▼
+ * Step 0-b. fixedPreSet passed ───────► "definition_repair" (no longer accepted; see user_action_name)
+ *      ▼
  * Step 1. resolveFixedChecklist
  *      │ └─ Extract C1 (When/Case), C2 (User Action Name); C3 = mcpTool.name
- *      │    C2: instruction → fixedPreSet fallback (the fallback must not override the utterance)
+ *      │    C2: the user's words in this request only — a located claim the gate checks. No fallback;
+ *      │        user_action_name is never read here (4.1.1)
  *      │    C1: no fallback. It sets phase and irreversibility — utterance only
- *      │    Hook throw / C1 out of enum / C2 empty → an issue. Unsettled slots stay null, never substituted
+ *      │    Hook throw / C1 out of enum / C2 not reported / C2 claim refused (rejected) → an issue.
+ *      │    Unsettled slots stay null, never substituted
  *      ▼
  * Step 1-a. intent gate  [issues > 0]
  *      ├─ [attempt <  2] ────────────────► "ask_user" (kind: intent_undetermined)
@@ -2186,13 +2332,15 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *      └─ [attempt >= 2] ────────────────► "exhausted" (kind: intent_undetermined_exhausted)
  *                                           └─ next_intent_attempt = null. No auto re-entry; resolve in
  *                                              conversation. Carry-forward is default, reset needs a
- *                                              new-request signal (see POLICY).
+ *                                              new-request signal (see POLICY). Not linked to the
+ *                                              request that follows ([LIMIT] at the intent gate)
  *      ▼
  * Step 1-b. buildActionKey(userId, fixed) → action_key
  *      └─ throws ────────────────────────► "definition_repair" (kind: action_key_failed)
  *      │ └─ Both the record key and the prior_state lookup key. It sets the blast radius.
  *      ▼
- * Step 1-c. confirmToolNameMatchesIntent
+ * Step 1-c. tool gate: user_action_name names this C2 → decided by the record (matched_by "record")
+ *                     otherwise confirmToolNameMatchesIntent judges (matched_by "judgment")
  *      ├─ [approved !== true, tool_attempt <  2] ► "ask_user" (kind: tool_undetermined)
  *      │                                    └─ next_tool_attempt = attempt+1; reselect mcpTool, re-call
  *      ├─ [approved !== true, tool_attempt >= 2] ► "exhausted" (kind: tool_undetermined_exhausted)
@@ -2276,14 +2424,18 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *
  * - Position:   sits in front of a validator (Pydantic)
  * - Design:     intent and context are judged by fixed, tool-independent questions (guarding against unrequested execution)
+ * - Unit:       one call is treated as one execution unit (spec 1.1); splitting and grouping are the adopting system's
  * - Data:       lookup, not generation. All empty means unknown
  * - Slots:      materialized from schema + already-grounded state. Root required[] is one case of that, not the rule
  * - Payload:    slots are what must be settled, arguments are what gets sent. Four separate facts:
  *               where values may come from / what must be settled / whether it was settled from a
  *               permitted source / whether the whole object is legal
  * - Input:      only inputs carrying a trust label can produce known (both instruction and pre-set data)
- *               same for the C2 fallback: wrapper plus trust "user", never a raw string
+ *               same for user_action_name entries: { tool, trust: "user" }, never a raw string
  *               values from the instruction must name their coordinates via a span within a segment; unnamed means rejected
+ *               C2 the same: a located claim in a user segment, or rejected. The words being there is checked;
+ *               what role they play is not — see [LIMIT] in resolveFixedChecklist
+ *               user_action_name (what the user calls a tool, 4.1.1) is reference for the tool gate, never a source
  * - Inheritance: the first source is never erased by any path
  *               prior_state never settles: an executed record's value becomes a candidate the user confirms (5.2)
  * - Timing:     values at instruction time, conditions at trigger time. Only values that cannot be asked for now get pending_at_trigger
