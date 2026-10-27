@@ -29,9 +29,11 @@
  *      run showed why that was wrong: with no format check the value gate sent
  *      "2pm this Saturday" to a datetime slot. A span that is real is not yet a
  *      value of the declared kind.
- *      getAllowedSources IS wired, before run 1, for one slot: buyer_contact may
- *      come only from measured_data (tool.js ALLOWED_SOURCES). Every other slot
- *      permits all five. The cost: a contact the user types in the instruction is
+ *      getAllowedSources IS wired: buyer_contact may come only from measured_data
+ *      (tool.js ALLOWED_SOURCES), and time and location — values settled at
+ *      execution time (SETTLED_AT_EXECUTION) — may come from measured_data only
+ *      when the seller declared a range for them (spec 3.3, 4.5). Every other
+ *      slot permits all five. The cost: a contact the user types in the instruction is
  *      not consulted, and a conflict between it and the measurement is not
  *      recorded. No instruction here states a contact that contradicts the
  *      measured one.
@@ -54,7 +56,7 @@
  */
 
 const { squash, violatesEvening, violatesPublicPlace, violatesStation } = require("./normalize");
-const { ALLOWED_SOURCES, FIELD_FORMATS } = require("./tool");
+const { ALLOWED_SOURCES, SETTLED_AT_EXECUTION, FIELD_FORMATS } = require("./tool");
 const { resolve: resolveDatetime, ISO_DATETIME, placeWindow, outsideWindow } = require("./datetime");
 
 const WHEN_CASES = ["immediate", "scheduled", "conditional", "recurring"];
@@ -343,8 +345,18 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter, userChec
     },
 
     // [OPTIONAL] Reads the declaration in tool.js. null = all five (skeleton default).
+    // [OPTIONAL, wired] Reads the declarations in tool.js. A value settled at execution time may be
+    //   taken from a measurement only when the user declared a range for that slot (spec 3.3, 4.5).
+    //   Without one, measured_data is not consulted: the slot stays a blank, so the user is asked at
+    //   instruction time, and a run with nobody to ask is held. The record's allowed_sources shows it.
+    //   No new gate logic: this is the existing per-slot declaration, conditioned on the user's items.
     getAllowedSources(fieldName) {
-      return ALLOWED_SOURCES[fieldName] ?? null;
+      const declared = ALLOWED_SOURCES[fieldName] ?? null;
+      if (!SETTLED_AT_EXECUTION.includes(fieldName)) return declared;
+      const ranged = (userChecklist ?? []).some(i => Array.isArray(i?.constrains) && i.constrains.includes(fieldName));
+      if (ranged) return declared;
+      const all = declared ?? ["user_answer", "instruction", "pre_set_data", "measured_data", "prior_state"];
+      return all.filter(s => s !== "measured_data");
     },
 
     // [REQUIRED-OP] Most conservative key: unique per run, so prior_state never

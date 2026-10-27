@@ -737,6 +737,19 @@ async function main() {
     const g1like = await g5("c13j", "clean", SAID, segs => ({ ...rangeIsNotAValue(segs), item_id: locate(segs, "LST-2291", "user") }));
     check("  a value outside the wording still settles", g1like.byName.item_id?.status, "known");
 
+    // Spec 3.3/4.5: a value settled at execution time needs a range the user set at instruction time.
+    //   The same measured offer, with the seller's range taken away: not used, asked for instead.
+    const noRange = await runGateArm({ model: "stub", tool: buildTool("plain"), ctx: C.offer_in_range.context,
+      instructionText: ins.text, runId: "c13l", date: SAID, userChecklist: [],
+      ask: makeStub({ extraction: rangeIsNotAValue(buildUserTurn(C.offer_in_range.context, ins.text, SAID).segments) }) });
+    const nr = Object.fromEntries((noRange.fields ?? []).map(f => [f.name, f]));
+    check("no range: the measured offer does not settle time", nr.time?.status, "unknown");
+    check("  nor location", nr.location?.status, "unknown");
+    check("  so both are asked for", (noRange.blanks ?? []).sort().join(","), "location,time");
+    check("  the record says measured_data was not permitted", (nr.time?.allowed_sources ?? []).includes("measured_data"), false);
+    check("  buyer_contact is still measured", `${nr.buyer_contact?.status}/${nr.buyer_contact?.source}`, "known/measured_data");
+    check("with the range: measured_data is permitted", (inR.byName.time?.allowed_sources ?? []).includes("measured_data"), true);
+
     // The same check closes group 2's hole for declared limits: "Nothing after 8pm" is not a time.
     const g2 = spec.instructions.find(i => i.id === "g2-01");
     const g2r = await runGateArm({ model: "stub", tool: buildTool("plain"), ctx, instructionText: g2.text, runId: "c13k",

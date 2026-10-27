@@ -128,6 +128,22 @@ const ALLOWED_SOURCES = {
 };
 
 /**
+ * Values settled at execution time (spec 3.3, 4.5). The seller does not have to state a pickup time
+ * or place; the platform's pickup request can settle them when the call is made. Such a value needs
+ * a range the user set at instruction time, and without one a measured value does not confirm the
+ * slot — it is asked for instead (and held when nobody can be asked).
+ *
+ * The declaration is on the slot, not on who produced the value: the gate does not ask whose
+ * proposal the platform recorded, only whether it was measured and whether a range covers it.
+ * "A range" here is a user checklist item that constrains the slot (instructions.json); a range kept
+ * in pre-set settings reaches the gate the same way, as an item the caller loads into userChecklist.
+ *
+ * buyer_contact is not here: the contact is a fact the platform holds, not a value chosen at
+ * execution time, and no range bounds it.
+ */
+const SETTLED_AT_EXECUTION = ["time", "location"];
+
+/**
  * Formats the gate checks (validateFieldSchema). The schema above already says it in prose —
  * time is an "ISO 8601 datetime" — and that prose is what every arm's model reads. This is the
  * same declaration in a form code can check, kept here rather than added to INPUT_SCHEMA so the
@@ -162,6 +178,7 @@ module.exports = {
   toAnthropicTool,
   SLOTS,
   ALLOWED_SOURCES,
+  SETTLED_AT_EXECUTION,
   FIELD_FORMATS,
   INPUT_SCHEMA,
   PLAIN_DESCRIPTION,
