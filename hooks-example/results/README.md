@@ -9,7 +9,8 @@ Each `.jsonl` file is one run of `runner.js`. The first line is `kind: "meta"`: 
 | `run-plain-said-2026-10-26T08-36-04-505Z.jsonl` | Smoke run, before the extraction prompt quoted only the seller's text | `051ed42` | 140 (1 repeat) | Gate refusals of values pointed at other people's text |
 | `run-plain-said-2026-10-26T11-35-44-960Z.jsonl` | Run 1 | `0fd62d0` | 700 (5 repeats) | All results, first run |
 | `run-plain-said-2026-10-27T03-27-32-125Z.jsonl` | Run 2, independent | `ad64c0f` | 700 (5 repeats) | All results, second run |
-| `run-plain-said-2026-10-27T02-16-29-053Z.jsonl` | Run 2's first attempt. The codespace stopped on its 30-minute idle timeout and the run ended at 327 of 700. Not analysed | `ad64c0f` | 327 of 700 | No |
+
+A first attempt at run 2 stopped at 327 of 700 when the codespace hit its 30-minute idle timeout. It was discarded rather than completed, and run 2 above was started from scratch.
 
 All runs: `claude-opus-5-5` and `claude-sonnet-5-5` on the Anthropic API, arms A and C, date mode `said`, provider defaults, no sampling parameters sent.
 
