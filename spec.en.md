@@ -191,7 +191,8 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 
 - Values, conditions, and intent are all treated as verification slots. A value is what goes into a tool argument; a condition is a fact whose truth is checked before execution (balance, permission, and so on); intent is the execution unit the user wants. Because the verdict is about the action, conditions need no separate mechanism. Counting works the same way for all three, and in the order of settling, intent comes first.
 - Conditions divide into three by what they ask for: do not do this, get approval first, and tell me. A value is a number or a string and has a format; a condition has this distinction instead. The distinction is independent of who declared it. Declared by the provider or by the user, a condition is one of the three, and the labels in 4.2.1 are their names.
-- A condition can be declared as a range, by the provider or by the user. If the values or state confirmed at execution time fall within that range, the condition is met. This holds even for a value the other party proposed, as long as it was confirmed by measurement rather than read out by the model, and nobody is asked again (5.2).
+- A condition can be declared as a range, by the provider or by the user. If a value or state confirmed by measurement at execution time falls within that range, the condition is met and nobody is asked again. Who produced the value does not matter, only whether it was confirmed by measurement. A value the model read out is not a measurement (5.2).
+- A value settled at execution time — one the user does not set when instructing, settled instead by the state at execution time — needs a range. The user sets that range at instruction time (4.5). Without it, the value does not confirm the slot even when measured. If the situation changes by execution time, the value is judged within that range. Which values are settled at execution time is declared by whoever declares the slot.
 - Confidence scores are not used. A slot's state is settled by whether it was looked up from a declared source, which is a fact rather than a probability.
 - Once the verdict is separated from execution, a slot can be in the state "condition not checked." Only then can free-text conditions become something to verify.
 
@@ -290,7 +291,7 @@ Items are counted the same way, but resolve differently when unconfirmed. An imp
   - (c) Definition repair (definition_repair): the condition itself was never declared, or the middleware cannot interpret it. No user answer fills this; it is a gap on the provider's or the implementer's side. A failed lookup hook also belongs here.
 - Hold is not a resolution route. It is the case where the condition was checked and it prohibits execution: the slot is KNOWN, does not go back to asking, and is recorded as unmet. Hold is a finished check (insufficient balance); definition repair is a missing check (an undeclared condition). Merge the two into "cannot resolve" and you lose the information about where the work should go.
 - Resolution routes have a ceiling, both asking the user and the system lookup. A route that reaches its ceiling has finished and is not tried again. What the slot becomes when no route remains is settled by 5.1. The adopting system sets the ceiling.
-- What is confirmed by asking the user is confirmed at instruction time. Everything else is checked again at trigger time.
+- What is confirmed by asking the user is confirmed at instruction time, and so is the range for a value settled at execution time (3.3). Everything else is checked again at trigger time.
 
 ### 4.6 Carrying out the ask
 
@@ -356,7 +357,7 @@ user_answer → instruction → pre_set_data → measured_data → prior_state
 
 ### 6.2 Principles
 
-The seven items below are examples of the preceding rules written as prompt sentences. They are not new rules, so violations are detected in the decision record. They can be added to or changed.
+The eight items below are examples of the preceding rules written as prompt sentences. They are not new rules, so violations are detected in the decision record. They can be added to or changed.
 
 - Slots come from the checklist, values from lookup, and whatever is missing from the user and from observation. Do not assemble.
 - If the timing is unclear, ask. Do not default to immediate execution.
@@ -365,6 +366,7 @@ The seven items below are examples of the preceding rules written as prompt sent
 - If it is not at the designated place, write that it is not there; if there is no place to check, write that. Both are normal output, and both differ from writing nothing.
 - Record reusable values with the user's consent.
 - Look up recorded values instead of asking again. Do not pull them from memory in the model's context.
+- For a value settled at execution time, have the user set its range when giving the instruction.
 
 The two items below are different in kind. They concern tool selection, so violations are not detected by code and are mitigated by the prompt only.
 

@@ -158,6 +158,9 @@ const state = await preflight.runPreflightAndRecord({
     { text: "<forwarded email body>", trust: "untrusted", origin: "gmail:msg_881" },
   ],
   mcpTool, preSetData, measured_data, priorExecutionState, userChecklist,
+  // Optional. What this user calls a tool, settled earlier in conversation with consent (spec 4.1.1).
+  //   Read only by the tool gate, as reference; it never stands in for what the user said now.
+  user_action_name: { "send": { tool: "transfer_funds", trust: "user" } },
 });
 
 // NOTE: this branch is NOT the separation the specification asks for (3.5). A conforming
