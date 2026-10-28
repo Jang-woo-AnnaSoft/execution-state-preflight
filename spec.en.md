@@ -484,7 +484,7 @@ With authority outside the model, decisions and accountability stay with the par
 ### 8.3 The gap between check and execution
 
 - A gap remains between the measurement at trigger time and the actual execution. The gate does not execute, so it cannot close this gap.
-- The gap has to be closed at execution: the tool handles the condition at the moment it executes (conditional execution), or uses an idempotency key and confirms with a measurement afterwards.
+- The gap has to be closed at execution: the tool enforces the condition together with the effect, at the moment it executes (conditional execution: checking the condition and producing the effect happen as one step, e.g. compare-and-swap, a lock, a transaction). An idempotency key and a measurement afterwards do not close this gap. The key prevents a duplicate effect, and the measurement establishes what happened; neither prevents the first effect after the condition has changed.
 - If a tool cannot guarantee the condition at execution time, the provider declares that. The user is informed in advance through [Notice], and whether to accept the risk is the adopting system's policy.
 - What the system cannot guarantee is not replaced with user confirmation. The user cannot verify the state at that moment, so the confirmation becomes a click-through (2.2).
 
