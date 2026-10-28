@@ -22,6 +22,10 @@ Governance is about the actor and the process. Loop engineering is about the out
 
 Governance confirms the actor was permitted. Loop engineering proves the artifact passed. Neither asks which values the execution started from.
 
+These practices came from enterprise systems — security, compliance, guardrails — and they sort everything by permission. The agent and its model are treated as one actor and given permissions the way a person is. In those systems that was enough: a person typed the values into a form, so whoever entered a value was its source. With agents, the model writes the first draft. The controls came over; the premise that made them enough did not.
+
+Permission answers who may act. Where the act happens, three things still have to be checked: intent, values, and conditions. The user's words settle the intent, and the agent checks it; the provider says what must be filled, and the user fills what remains. Today, values are checked by the input schema for shape, not for origin. Provider conditions are blocked after the call by the server, or by the name of a permission. Intent and the user's own conditions are left to the model's judgment.
+
 > **The actor is authorized. The output is proven. The start is declared.**
 
 ### The addition
