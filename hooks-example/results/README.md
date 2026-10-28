@@ -46,4 +46,4 @@ cd hooks-example
 node analyze.js results/run-plain-said-2026-10-27T03-27-32-125Z.jsonl
 ```
 
-The analyzer reads the declarations from the file's own meta line, not from the checkout, so an older file is analysed against the instructions and conditions it was run with. To run the test again, see `../README.md` ("돌리는 법"): `npm run run1` makes a new file here.
+The analyzer reads the declarations from the file's own meta line, not from the checkout, so an older file is analysed against the instructions and conditions it was run with. To run the test again, see `../README.md` ("How to run"): `npm run run1` makes a new file here.
