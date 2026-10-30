@@ -20,7 +20,7 @@ It does not replace a governance framework or an agent loop. It is added to both
 - **Done is an exit code, not a claim.** A completion condition written as prose is not a condition.
 - **The record is append-only, and when a check did not run, that is recorded too.**
 
-Governance is about the actor and the process. Loop engineering is about the output. Neither is about the inputs.
+Governance is about the actor and the process. Loop engineering is about the output. Governance can set rules for inputs — a transfer limit, an approval requirement — but setting a rule is not checking the values that actually enter an execution against it. A policy can say a transfer stays within the user's limit; it does not say where the amount the model proposed came from, or whether the limit was checked before the tool was called. Here, those rules become checklist lines that the gate checks at every execution (spec 7.2).
 
 Governance confirms the actor was permitted. Loop engineering proves the artifact passed. **Neither asks whether the values the execution started from are the user's or the model's.**
 
