@@ -1,6 +1,6 @@
 # Hook examples and the repeated-run test
 
-*An example implementation of the hooks in [`execution-state-preflight.js`](../execution-state-preflight.js), and the tests run with it. The [main README](../README.md)'s "The code" section leads here.*
+*An example implementation of the hooks in [`execution-state-preflight.js`](../execution-state-preflight.js), and the tests run with it. The [main README](../README.md) links here from "Where to read what".*
 
 This document says only **what the code in this folder does and how to use it**. Why it has to be done that way is in the specification ([`../spec.en.md`](../spec.en.md), [`../spec.ko.md`](../spec.ko.md)); here it points to the relevant section. Run results are in [`results/`](./results/), with the raw data. Questions this harness may raise (is it a tool, why the hooks are long, why not governance) are answered in the [Author's note](#authors-note) at the end.
 
