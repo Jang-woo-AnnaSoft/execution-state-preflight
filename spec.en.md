@@ -211,7 +211,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 - The executing party sits outside this specification and decides separately whether to execute, consulting only the decision record.
 - A structure that branches on the return value of the verdict function is not separation. There must be no execution path that does not go through the record.
 - The gate does not judge an actor's authority. Authority is granted to an actor, so whether a grant still holds and when it is revoked have to be handled separately, and that belongs to the executing party or a policy layer. The gate compares declared conditions against the state at execution time, so an execution outside those conditions is not one whose authority expired. It was outside the range from the start.
-- The grounds for execution have no validity period. What the user declared (instruction, answers, pre-set settings) holds until the user changes it, and a change is a new declaration that is judged again (6.1, 6.3). A changed checklist is judged again as well (6.1). System state is never carried over: it is measured again at trigger time (4.5), and the gap between that measurement and execution is closed at execution (8.3). The validity period of an actor's authority is a separate matter and outside the scope of this specification.
+- The grounds for execution have no validity period. What the user declared (instruction, answers, pre-set settings) holds until the user changes it (a pre-set setting declared for one use ends once it has been used), and a change is a new declaration that is judged again (6.1, 6.3). A changed checklist is judged again as well (6.1). System state is never carried over: it is measured again at trigger time (4.5), and the gap between that measurement and execution is closed at execution (8.3). The validity period of an actor's authority is a separate matter and outside the scope of this specification.
 
 ---
 
@@ -332,7 +332,7 @@ user_answer → instruction → pre_set_data → measured_data → prior_state
 
 - user_answer: a response the user entered directly after an ask_user interaction. Empty on the first round.
 - instruction: a value taken, with its location specified, from a segment the user typed directly.
-- pre_set_data: settings the user approved and stored in advance. A value that was used can become pre_set_data with the user's approval. The record of what the user calls a tool is not part of it (4.1.1).
+- pre_set_data: settings the user approved and stored in advance. A value that was used, or a proposal the user accepted, can become pre_set_data with the user's approval. A setting may hold until changed, or end once it has been used. The system stores the approved value as approved; the model does not (6.3). The record of what the user calls a tool is not part of it (4.1.1).
 - measured_data: system state confirmed on the spot by calling a system API. The lookup must be a live measurement.
 - prior_state: a value inherited from a previous execution that the record confirms was executed. Applies to values only; conditions are not inherited. Inheritance alone does not confirm a slot. The value counts only after the user confirms it.
   - A value found at this source does not end the lookup. Once the user confirms it, it is confirmed as user_answer.
@@ -509,6 +509,12 @@ With authority outside the model, decisions and accountability stay with the par
 
 - Putting the checklist in the prompt and receiving JSON back hands the authority to decide what to ask back to the model. If the model is the one judging that a slot is empty, its report that the slot was filled cannot be verified from outside.
 - This specification requires two things: the checklist lives outside the prompt, and code does the counting.
+
+### 8.8 Accepting a proposal
+
+- A value the model proposed and the user accepted can become pre-set data (5.2). A proposed act cannot. The act is settled only from the user's words in this request (4.1), so an acceptance that carries no act, such as "yes", does not settle the intent.
+- This specification does not decide whether an acceptance may serve as the source of the act. Whether pressing a button that names the act counts as the user's words is an example. If it does, an act the user never stated can become theirs (1.1).
+- Whether to allow it is for a regulator's rules or the adopting system's policy; this specification provides the record needed for that judgment.
 
 ---
 
