@@ -253,6 +253,7 @@ Every value, condition, and intent item is registered in an external checklist, 
 ### 4.2 Provider Checklist: varies per tool.
 
 - Required arguments, and their type and format.
+- What counts as the value, and how it is checked. Words are easily misread: a range or a negation the user stated can be read as a value, and the gate checks only that the words are in the user's text (5.2). For example, a time is a single point, and a range is not a value.
 - Conditions that prohibit or permit execution: ownership, access permission, checks before execution or termination, safety, permitted execution modes (whether split execution is allowed, and so on).
 - Declaration of the state change that execution causes.
 
@@ -272,6 +273,7 @@ A condition can also declare how it is to be checked (by user approval, or by lo
 
 - Making intent and context specific.
 - Execution limits and ranges, checks before execution or termination, safety, user preferences, and so on.
+- When the user sets a rule, the model may ask how the rule should be checked. What settles it is the user's answer.
 
 **Role of the user checklist: sets the ranges of values and state within the settled execution unit. It is filled in after the unit is settled, so it comes after the intent in 4.1.**
 
