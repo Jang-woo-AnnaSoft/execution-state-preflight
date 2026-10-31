@@ -10,37 +10,53 @@ So this does not ask the model whether it knows. Against a checklist kept outsid
 
 ## Where this sits
 
-It does not replace a governance framework or an agent loop. It is added to both.
+Where work can be undone, let the model act and verify the result; fixing it afterwards is cheaper. An irreversible execution is different. The result cannot be fixed after the fact, so the model has to move inside a declared frame, and the inputs have to be confirmed before execution (spec 1.1).
 
-**Governance settles who may act, and under what process.** Risk tiering, approval paths, access control, audit logging, model risk policy. It is the layer that says where a person signs off and what must be logged for traceability.
+That frame is already being built. This does not replace it. It adds back one premise the frame cannot restore.
 
-**Loop engineering settles whether the work came out right.** Orient, act, verify, record, repeat. Three things are agreed:
+### The frame: what already exists
 
-- **Whoever wrote it does not grade it.** The maker and the checker are separated.
-- **Done is an exit code, not a claim.** A completion condition written as prose is not a condition.
-- **The record is append-only, and when a check did not run, that is recorded too.**
+**Governance settles who may act, and under what process.** Risk tiering, approval paths, access control, audit logging, model risk policy. Lately it has come down to a runtime layer that intercepts a tool call just before execution and checks it against policy. Whether a transfer amount is within the limit can be checked there too.
 
-Governance is about the actor and the process. Loop engineering is about the output. Governance can set rules for inputs — a transfer limit, an approval requirement — but setting a rule is not checking the values that actually enter an execution against it. A policy can say a transfer stays within the user's limit; it does not say where the amount the model proposed came from, or whether the limit was checked before the tool was called. Here, those rules become checklist lines that the gate checks at every execution (spec 7.2).
+**Harness engineering builds the environment around the model.** What matters here is the part that decides what the agent can reach: which tools it can call, which data it can access, whether inputs and outputs match their formats.
 
-Governance confirms the actor was permitted. Loop engineering proves the artifact passed. **Neither asks whether the values the execution started from are the user's or the model's.**
+**Loop engineering settles whether the result is right.** Act, verify, record, repeat. The maker and the checker are separated, and done is a passed check, not a claim.
 
-In governance, the model and the agent are treated as one actor and given permissions the way a person is. In earlier systems that was enough: a person typed the values into a form, so whoever entered a value was its source. With agents, the model writes the first draft. The controls came over; the premise that made them enough did not.
+Together they come close to the domain modeling and finite-state machines of earlier systems. Which values are allowed, and which transitions are possible from which state, are fixed outside the model, and the model moves inside them.
 
-The model and the agent are not one actor. Permission comes from ownership, not accuracy, and a model that answers for nothing cannot hold it (spec 2.1). The agent — the code around the model — has to check the model's draft. **Where the act happens.**
+### The broken premise
 
-**Where the act happens**, three things have to be checked: intent, values, and conditions. The user's words settle the intent, and the agent checks it. The provider says what must be filled and which conditions apply; the user adds their own rules and fills what remains.
+The frame checks whether a value is allowed and whether a transition is possible. It does not check who set the value. It never had to.
 
-Today, only values are checked, by the input schema, and only for shape, not for origin. The user's intent, the provider's conditions and the rules the user added are left to the model's judgment.
+In earlier systems a person logged in and typed the values into a form. Short of tampering, the source of a value could only be that person. The input path itself was the proof of origin, and the controls were built on that premise.
 
-**What is left in a prompt is forgotten as the conversation grows, and gone when the conversation changes.**
+With agents, the user still logs in, and the execution still runs under that person's session and permissions. The audit log still says "the user executed with this value." But the model wrote the value. Nobody tampered with anything, and the premise still breaks. The controls came over; the premise that made them enough did not.
 
-The same rigor, applied to the inputs:
+So there are wrong executions that pass the whole frame. [The reported Meta Muse case](./case-muse-marketplace.en.md) is one. The seller handed his sale messages to Muse and chose "Allow Always." When the buyer proposed 8 to 10 p.m., Muse agreed in the seller's name, and the buyer came to the seller's building. The seller was not home and did not know anyone was coming. The permission was there, the format was right, and no policy was broken. One thing was wrong: the seller had not set that time.
 
-- every value and condition entering an execution is **checked against a declared source**,
-- **where it came from is written into the record**,
-- and what cannot be confirmed is not made up by the model — it comes back to the user as a blank.
+The model and the agent are not one actor. Permission comes from ownership, not accuracy, and a model that answers for nothing cannot hold it (spec 2.1). The model writes the draft; the agent — the code around the model — checks it. **Where the act happens.**
 
-Not a new layer. It is what the verify stage already does to outputs, done to inputs.
+### What this adds
+
+What login and direct input used to guarantee is checked again, for every execution. Three things are checked:
+
+- **Intent** — what, and when. Settled only from what the user said in this request.
+- **Values** — whether each value came from a declared source. If it came from the user's words, its place is checked against the original text.
+- **Conditions** — whether the provider's declared conditions and the user's limits were confirmed.
+
+Three rules:
+
+- Every value and condition entering an execution is **checked against a declared source.** Not being prohibited is not a ground for execution.
+- **Where it came from is written into the record.** The source and the place in the original text are kept, so anyone other than the gate can check them again. Blocked executions and checks that did not run are recorded too.
+- What cannot be confirmed is not made up by the model; it **comes back as a blank to whoever can fill it.** What the user can answer goes to the user, what the system can look up goes to the system, and what was never declared goes to whoever declares it.
+
+The rules are declared by whoever holds the knowledge, not by one team for everything as before. The provider declares the tool's conditions, the user declares limits and preferences, and the adopting system declares the rules common to every execution.
+
+**Rules left in a prompt are forgotten as the conversation grows, and gone when the conversation changes.** So these rules live in a checklist outside the model, and code does the counting.
+
+Security research asks where values come from as well. [CaMeL](https://arxiv.org/abs/2503.18813), [FIDES](https://arxiv.org/abs/2505.23643), [PACT](https://arxiv.org/abs/2605.11039) and [ROPE](https://arxiv.org/abs/2608.27496) track the origin of each argument and keep untrusted data out of sensitive arguments; some, like ROPE, go as far as requiring a confirmed origin. What differs here is that no attack is assumed. Without any attack, the model still fills in what is missing. This does not stop at blocking that blank; it sends it back to whoever can fill it, and it counts intent and conditions the same way as values.
+
+Not a new layer. It does for the owner of each value what the frame already does for the actor and the result.
 
 ### What that gets you
 
@@ -58,7 +74,7 @@ Not a new layer. It is what the verify stage already does to outputs, done to in
 
 **It opens other ways to improve.** It shows what to fix without retraining the model. None of the three types needs a training budget (spec 7.1). Rules become data and change without a deploy, and the gate code stays the same as tools are added or models are swapped. Decision records become data by failure type, an input to model development (spec 7.2).
 
-[A reported Meta Muse incident](./case-muse-marketplace.en.md) took this shape: the buyer proposed an evening window, the agent agreed in the seller's name, and the seller heard about it fifty minutes after the buyer had come and gone. The case report maps the message log onto the checklists and is explicit about what this gate would **not** have caught.
+[The case report](./case-muse-marketplace.en.md) maps this incident's message log onto the checklists and is explicit about what this gate would **not** have caught.
 
 ---
 
