@@ -902,6 +902,45 @@ async function main() {
     check("  and not asked for", (e2e.result.blanks ?? []).includes("item_id"), false);
   }
 
+  console.log("\n--- case 16: a required slot left out of the candidate set (spec 3.4, 4.5) ---");
+  {
+    // getCandidateSlots may narrow what is looked up. A required slot it leaves out is never looked up,
+    //   so it is unknown. Before this case it was unknown with no route: every routed list stayed empty,
+    //   the gate read clean, the default validatePayload checked nothing, and the decision was execute
+    //   with a required slot missing. Found by a reader of the code (Hugging Face thread, 2026-11-01).
+    const { createPreflight } = require("../execution-state-preflight");
+    const { createStorage } = require("./hooks");
+    const SEND = { name: "send_money", description: "Send money.",
+                   inputSchema: { type: "object", properties: { account: { type: "string" }, amount: { type: "number" } },
+                                  required: ["account", "amount"] } };
+    const text = "Send it to account 123-45.";
+    const said = [{ trust: "user", text }];
+    const at = word => ({ value: word, segment_index: 0, span: [text.indexOf(word), text.indexOf(word) + word.length] });
+    const hooks = over => ({
+      classifyWhenCase: () => "immediate",
+      extractUserActionName: () => at("Send"),
+      confirmToolNameMatchesIntent: () => ({ approved: true, reason: "one tool" }),
+      extractFromInstruction: name => (name === "account" ? at("123-45") : { none: "absent" }),
+      measureFromEnvironment: () => undefined,
+      buildActionKey: (u, f) => `${u}:${f?.c3_provider_action_name}`,
+      ...over,
+    });
+    const run = over => createPreflight({ hooks: hooks(over), storage: createStorage() })
+      .runPreflightAndRecord({ userId: "u", instruction: said, mcpTool: SEND, measured_data: {}, userChecklist: [] });
+
+    const narrowed = await run({ getCandidateSlots: () => ["account"] });
+    const amount = (narrowed.fields ?? []).find(f => f.name === "amount");
+    check("candidate set drops a required slot: not executed", narrowed.execution_decision, "definition_repair");
+    check("  the slot is unknown", amount?.status, "unknown");
+    check("  and routed, not left without a route", amount?.route, "definition_repair");
+    check("  the gate names it", (narrowed.gate?.definition_repair_fields ?? []).map(f => f.name).join(","), "amount");
+    check("  unknown_count still counts it", narrowed.unknown_count, 1);
+
+    // The default candidate set is every declared name, so the same input does not reach that path.
+    const full = await run({});
+    check("default candidate set: amount is looked up, not skipped", (full.fields ?? []).find(f => f.name === "amount")?.note === "slot was not in the candidate set", false);
+  }
+
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
   process.exit(failures === 0 ? 0 : 1);
 }
