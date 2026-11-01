@@ -593,8 +593,9 @@ function readSchemaShape(inputSchema) {
 
 // [REQUIRED-OP] Names the lookup chain may try. A superset of the slot list: branch selection needs
 //   grounded values before the list exists, and optional arguments have to be recoverable.
-// POLICY: cost lives here — one instruction/measurement lookup per candidate. Narrow it freely; never widen it past
-//   what the schema declares.
+// POLICY: cost lives here — one instruction/measurement lookup per candidate. Narrow the optional names freely;
+//   never drop a name that can become required, and never widen it past what the schema declares.
+//   A required slot left out is never looked up: it is unknown, routed to definition_repair (Step 3-1).
 function getCandidateSlots(mcpTool) {
   const schema = mcpTool?.inputSchema;
   const shape = readSchemaShape(schema);
@@ -753,6 +754,18 @@ function routeFor(rec, allowed_sources, trace = []) {
   const open = trace.filter(t => t.result !== "absent");
   if (open.some(t => t.source === "measured_data")) return "system_lookup";
   return "definition_repair";
+}
+
+// Backstop for the gate's lists. Every unknown goes down one of the three routes of 4.5, and the
+//   decision reads those lists, not unknown_count. An unknown with no route would be in none of them and
+//   the gate would read clean (3.4 counts it; the decision would not). Any such slot is held for
+//   definition repair, and the route is written on the slot so the record and the lists agree.
+//   The one known source, a slot left out of the candidate set, is routed where it is made; this is
+//   for the next one.
+function holdUnroutedForRepair(fields) {
+  for (const f of fields ?? []) {
+    if (f && f.status === "unknown" && !f.route) f.route = "definition_repair";
+  }
 }
 
 // 5.1: the slot is NULL when every declared check reported nothing and no route remains. Every
@@ -1534,8 +1547,13 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   const byName = new Map(resolvedAll.map(f => [f.name, f]));
   const slotNames = new Set(slotSet.required);
   // A slot outside the candidate set was never looked up. Unknown, never assumed absent.
+  //   It never went through routeFor, so its route is set here: definition_repair (4.5c). No user answer
+  //   fixes a candidate set that skipped a required slot; whoever narrowed getCandidateSlots does.
+  //   BREAKS: leave the route off — as this did — and the slot sits in no routed list, the gate reads
+  //     clean, and the decision is execute with a required slot unknown (3.4).
   const fields = slotSet.required.map(name => byName.get(name) ?? {
     name, value: undefined, status: "unknown", source: null, origin_source: null,
+    allowed_sources: null, route: "definition_repair", lookup_trace: [],
     pending_at_trigger: false, note: "slot was not in the candidate set", resolved_at: h.now(),
   });
   const extra_fields = resolvedAll.filter(f => !slotNames.has(f.name));
@@ -1545,6 +1563,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   //   Passing a deferred record straight to executeIfReady violates the contract. Non-immediate means deferred, not skipped.
   // NOTE: passing here is a preliminary decision. requiredFields is a snapshot and may differ at trigger time.
   if (phase === "at_instruction") {
+    holdUnroutedForRepair(fields);
     const unknownNow = fields.filter(f => f.status === "unknown");
     // Same routes as the immediate path, read from each slot. What blocks the scheduling is only what
     //   can be settled NOW: a blank the user can answer, while the user is still here, and a gap in a
@@ -1793,6 +1812,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   // no user answer fixes a hook that crashed, and asking sends the user a question that will come
   // back identically next run while the one person who can fix it never hears about it.
   // Per 4.5 this is the definition-repair route, not the user-query route.
+  holdUnroutedForRepair(fields);
   const allUnknown = fields.filter(f => f.status === "unknown");
   // 4.5 splits the unknowns by who can resolve them, and the slot's declared sources decide — not the
   //   model, and not this code. The route is already on each slot (routeFor, 6.3); these lists are
@@ -2083,7 +2103,10 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.13",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.14",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.14: every unknown field carries a route. A required slot left out of the candidate set is routed
+    //        definition_repair (note "slot was not in the candidate set"). On a 1.13 or older record such a
+    //        slot has no route, and its execution_decision may read execute with that slot unknown.
     //   1.13: fixed.c2_located_at added (where in the user's words C2 was found); c2_source is only
     //        "instruction" or null — the pre_set_data fallback is gone. fixed.c3_match carries matched_by
     //        ("record" | "judgment") and, when the record could not be consulted, record_note. A C2 issue
