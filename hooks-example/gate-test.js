@@ -913,14 +913,14 @@ async function main() {
     const SEND = { name: "send_money", description: "Send money.",
                    inputSchema: { type: "object", properties: { account: { type: "string" }, amount: { type: "number" } },
                                   required: ["account", "amount"] } };
-    const text = "Send it to account 123-45.";
+    const text = "Send 500 to account 123-45.";
     const said = [{ trust: "user", text }];
     const at = word => ({ value: word, segment_index: 0, span: [text.indexOf(word), text.indexOf(word) + word.length] });
     const hooks = over => ({
       classifyWhenCase: () => "immediate",
       extractUserActionName: () => at("Send"),
       confirmToolNameMatchesIntent: () => ({ approved: true, reason: "one tool" }),
-      extractFromInstruction: name => (name === "account" ? at("123-45") : { none: "absent" }),
+      extractFromInstruction: name => (name === "account" ? at("123-45") : name === "amount" ? at("500") : { none: "absent" }),
       measureFromEnvironment: () => undefined,
       buildActionKey: (u, f) => `${u}:${f?.c3_provider_action_name}`,
       ...over,
@@ -939,6 +939,24 @@ async function main() {
     // The default candidate set is every declared name, so the same input does not reach that path.
     const full = await run({});
     check("default candidate set: amount is looked up, not skipped", (full.fields ?? []).find(f => f.name === "amount")?.note === "slot was not in the candidate set", false);
+    check("  and the same input executes", full.execution_decision, "execute");
+
+    // The scheduled path. Before the fix the unrouted slot fell outside both repairNow and the blocking
+    //   list, so the scheduling was accepted as deferred, and at the trigger the immediate path executed it.
+    //   Pointed out by the same reader: case 16 above pins the immediate path only.
+    const scheduled = { classifyWhenCase: () => "scheduled" };
+    const later = await run({ ...scheduled, getCandidateSlots: () => ["account"] });
+    const laterAmount = (later.fields ?? []).find(f => f.name === "amount");
+    check("scheduled, candidate set drops a required slot: not scheduled", later.execution_decision, "definition_repair");
+    check("  on the instruction-time path", later.phase, "at_instruction");
+    check("  nothing kept for the trigger", later.deferred_input === undefined, true);
+    check("  the slot is unknown", laterAmount?.status, "unknown");
+    check("  and routed", laterAmount?.route, "definition_repair");
+    check("  the gate names it", (later.gate?.definition_repair_fields ?? []).map(f => f.name).join(","), "amount");
+
+    // Control: the same scheduled input with the default candidate set is scheduled as usual.
+    const laterFull = await run(scheduled);
+    check("scheduled, default candidate set: deferred", laterFull.execution_decision, "deferred");
   }
 
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
