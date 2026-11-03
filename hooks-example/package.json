@@ -16,7 +16,8 @@
     "models": "node runner.js --check --models opus,sonnet --date said",
     "smoke": "node runner.js --models opus,sonnet --arms A,C --date said --repeats 1",
     "run1": "node runner.js --models opus,sonnet --arms A,C --date said --repeats 5",
-    "policy": "node policy-test.js"
+    "policy": "node policy-test.js",
+    "crosscheck": "node crosscheck/run_crosscheck.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "*"
