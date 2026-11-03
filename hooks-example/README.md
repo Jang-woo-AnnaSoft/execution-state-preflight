@@ -413,6 +413,7 @@ Arms A and B call the model once per run; arm C calls it per hook (extraction on
 | `version.js` | The code information written into result files |
 | `analyze.js`, `provenance.js`, `claims.js` | Aggregation, source classification and record audit, pre-registered predictions |
 | `c2-stub.js` | A located C2 answer for tests unrelated to C2 |
+| `crosscheck/` | Runs someone else's case file through the actual skeleton and compares decisions ([`crosscheck/README.md`](./crosscheck/README.md)). Not part of `npm run check` |
 | `*-test.js`, `selftest.js` | Offline checks (above) |
 | `results/` | Run results and analysis output ([`results/README.md`](./results/README.md)) |
 
