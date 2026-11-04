@@ -7,7 +7,7 @@
  *
  * Two description variants:
  *   PLAIN     — what an MCP tool description looks like today. The one every run uses.
- *   LABELLED  — the same tool with the three labels proposed in spec 4.2.1, written as prose.
+ *   LABELLED  — the same tool with the three labels proposed in spec 4.2.1 (kinds in 3.3), as prose.
  *               Kept as an example of what a provider can write today. It is NOT run: a run with it
  *               would measure whether the MODEL reads a convention this specification defined, and
  *               neither result bears on what the specification claims — that a condition in prose
@@ -47,8 +47,8 @@ const LABELLED_DESCRIPTION =
 //   next to INPUT_SCHEMA, which is the other half of the same declaration.
 //
 // Arriving as a structured field rather than parsed out of the prose above changes nothing the gate
-//   sees. It only removes the parsing contract (4.2.1: trusted declarer, fixed syntax, deterministic
-//   parsing), which is why a provider who owns both sides of the call has no reason to use the prose.
+//   sees. It only removes the translation step (4.2.1, 3.3: the sentence put into a comparable form
+//   and confirmed at declaration), which is why a provider who owns both sides of the call has no reason to use the prose.
 //
 // What each label commits the declarer to:
 //   [Required] — name the system source. A user answer cannot satisfy it, and the skeleton enforces
