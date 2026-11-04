@@ -207,7 +207,7 @@ const slotOf = state => (state.fields ?? []).find(f => f.name === SLOT) ?? {};
     check("instruction over pre_set_data: source", slotOf(b).source, "instruction");
     check("instruction over pre_set_data: value", slotOf(b).value, ACCOUNT);
     // The instruction seat records WHERE, not just that it was the instruction, so a third party
-    //   can re-check it without taking the gate's word (4.2 / 2.4).
+    //   can re-check it without taking the gate's word (5.2 / 2.4).
     check("and it records where in the text", JSON.stringify(slotOf(b).located_at?.span),
       JSON.stringify(ins.locate.span));
   }
