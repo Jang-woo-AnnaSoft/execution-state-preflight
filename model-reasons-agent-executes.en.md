@@ -88,7 +88,7 @@ Current practice checks capability and permission, leaves the rest to the model,
 | The question | How far can we trust the model? | Has everything this execution needs been confirmed? |
 | Model and agent | Treated as one. Reasoning and execution share a single flow | The model reasons, the agent executes. What the model makes up does not get into the agent |
 | Who sets the criteria | Nobody, so the model decides on every call. Nothing is kept as a rule, so the rules can't be listed | Providers, users, and the adopting team declare them in checklists outside the model. They change without a deploy and can be listed |
-| Where to write them | The input schema holds argument names and types. Conditions and intent have no field | Values, conditions, and intent are slots of the same kind |
+| Where to write them | The input schema holds argument names and types. Intent and conditions have no field | Intent, values, and conditions are slots of the same kind |
 | Grounds to trust a value | A looked-up value and a made-up one are the same string. Any source label is written by the model too | The location the model points to is queried directly in a declared source |
 | Tool | The model picks one. If the input schema passes, it runs | Compared with what the user called the action and when they asked for it. Not provable in code |
 | Blanks | The model fills them and leaves no sign it did | They stay unknown. Nothing the model filled in passes through |
