@@ -25,7 +25,7 @@ Existing work raises model accuracy and validates input arguments with schemas a
 | **Who judges that what was filled is everything** | The model hands over a neat, completed form and a person clicks through (2.2). | Counting code does. People receive blanks, not a filled-in form, and only the items only they can answer come back to them (3.5). |
 | **Who decides to execute** | Validation is a branch inside the execution flow, so it can be skipped, and the skip leaves no trace. | The verdict ends in a record. An external executing party reads that record and makes its own decision. No execution path bypasses the record. |
 
-**The default changes.** Today, an execution that nothing prohibits goes ahead. Nobody can write down everything that should be prohibited, so whatever is left unwritten stays permitted. Under this specification, only an execution unit the user stated or approved (in the instruction, in answers, or in pre-set settings; 5.2) can reach an executable state, and only when everything it needs is confirmed and no confirmed condition prohibits it. That nothing prohibited it is not grounds for execution.
+**The default changes.** Today, an execution that nothing prohibits goes ahead. Nobody can write down everything that should be prohibited, so whatever is left unwritten stays permitted. Under this specification, only an execution unit the user stated or approved (in the instruction or in answers; 5.2) can reach an executable state, and only when everything it needs is confirmed and no confirmed condition prohibits it. That nothing prohibited it is not grounds for execution.
 
 **Stopping is not a failure.** Today, stopping counts as a failure and finishing by any other route counts as a success, so when something is blocked, the agent looks for a way around it that nobody asked for (1.1). Under this specification, an execution that does not run because something was not confirmed is a normal outcome, recorded with its reason (6.4), and the blank goes back to whoever can fill it (4.5).
 
@@ -211,7 +211,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 - The executing party sits outside this specification and decides separately whether to execute, consulting only the decision record.
 - A structure that branches on the return value of the verdict function is not separation. There must be no execution path that does not go through the record.
 - The gate does not judge an actor's authority. Authority is granted to an actor, so whether a grant still holds and when it is revoked have to be handled separately, and that belongs to the executing party or a policy layer. The gate compares declared conditions against the state at execution time, so an execution outside those conditions is not one whose authority expired. It was outside the range from the start.
-- The grounds for execution have no validity period. What the user declared (instruction, answers, pre-set settings) holds until the user changes it (a pre-set setting declared for one use ends once it has been used), and a change is a new declaration that is judged again (6.1, 6.3). A changed checklist is judged again as well (6.1). System state is never carried over: it is measured again at trigger time (4.5), and the gap between that measurement and execution is closed at execution (8.3). The validity period of an actor's authority is a separate matter and outside the scope of this specification.
+- The grounds for execution have no validity period. What the user declared (instruction, answers, pre-set settings) holds until the user changes it (a one-use setting ends once it has been used), and a change is a new declaration that is judged again (6.1, 6.3). A changed checklist is judged again as well (6.1). System state is never carried over: it is measured again at trigger time (4.5), and the gap between that measurement and execution is closed at execution (8.3). The validity period of an actor's authority is a separate matter and outside the scope of this specification.
 
 ---
 
@@ -334,7 +334,7 @@ user_answer → instruction → pre_set_data → measured_data → prior_state
 
 - user_answer: a response the user entered directly after an ask_user interaction. Empty on the first round.
 - instruction: a value taken, with its location specified, from a segment the user typed directly. When segments are labeled as the user's, pasted text, forwarded or quoted text, and attachments are excluded; they stay in the input as untrusted segments, even inside the user's message. The labels are set by the adopting system when the message arrives, before the model sees it, never by the model. Where the input path does not preserve that distinction, the labels cannot be trusted either.
-- pre_set_data: settings the user approved and stored in advance. A value that was used, or a proposal the user accepted, can become pre_set_data with the user's approval. A setting may hold until changed, or end once it has been used. The system stores the approved value as approved; the model does not (6.3). The record of what the user calls a tool is not part of it (4.1.1).
+- pre_set_data: settings the user approved and stored in advance. A value that was used, or a value the model proposed, can become pre_set_data when the user approves it. A pre-set setting is either standing, holding until the user changes it, or one-use, ending once it has been used. The system stores the approved value as approved; the model does not (6.3). The record of what the user calls a tool is not part of it (4.1.1).
 - measured_data: system state confirmed on the spot by calling a system API. The lookup must be a live measurement.
 - prior_state: a value inherited from a previous execution that the record confirms was executed. Applies to values only; conditions are not inherited. Inheritance alone does not confirm a slot. The value counts only after the user confirms it.
   - A value found at this source does not end the lookup. Once the user confirms it, it is confirmed as user_answer.
@@ -456,7 +456,7 @@ With authority outside the model, decisions and accountability stay with the par
 - Rules become data. A tool provider's conditions, your own rules, and rules from policy bodies, companies or regulators all register as a line in a checklist, change without a deploy, and can be listed in full. Rules are changed by whoever is responsible for them, and developers maintain the verdict structure. A rule declared as a single line of plain language that the gate cannot yet check does not pass: it stays unknown and routes to definition repair (6.3).
 - Adding a tool does not change the execution path. A new tool adds a declaration, not new execution logic.
 - Scaling cost is fixed and independent of model performance. Adding tools and conditions, or swapping the model, leaves the gate code unchanged.
-- Questions don't multiply; they become visible. Values and conditions were always the user's to decide. Only the blanks go back to the user, and items that keep coming up are promoted to pre-set settings.
+- Questions don't multiply; they become visible. Values and conditions were always the user's to decide. Only the blanks go back to the user, and items that keep coming up are promoted to pre-set settings when the user approves them.
 - Decision records become input for model development. You get data by failure type, and undeclared and unsourced cases are separated out.
 
 ### 7.3 Why now
@@ -512,11 +512,11 @@ With authority outside the model, decisions and accountability stay with the par
 - Putting the checklist in the prompt and receiving JSON back hands the authority to decide what to ask back to the model. If the model is the one judging that a slot is empty, its report that the slot was filled cannot be verified from outside.
 - This specification requires two things: the checklist lives outside the prompt, and code does the counting.
 
-### 8.8 Accepting a proposal
+### 8.8 Approving a proposal
 
-- A value the model proposed and the user accepted can become pre-set data (5.2). A proposed act cannot. The act is settled only from the user's words in this request (4.1), so an acceptance that carries no act, such as "yes", does not settle the intent.
-- This specification does not decide whether an acceptance may serve as the source of the act. Whether pressing a button that names the act counts as the user's words is an example. If it does, an act the user never stated can become theirs (1.1).
-- Whether to allow it is for a regulator's rules or the adopting system's policy; this specification provides the record needed for that judgment.
+- A value the model proposed and the user approved can become pre-set data (5.2). A proposed act cannot. The act is settled only from the user's words in this request (4.1), so an approval that carries no act, such as "yes", does not settle the intent.
+- This specification does not decide whether an approval may serve as the source of the act. Whether pressing a button that names the act counts as the user's words is an example. If it does, an act the user never stated can become theirs (1.1).
+- Whether to allow it, and whether a value the model introduced first and the user then repeated in their own words must also go through a one-use setting's approval (by default it is a value the user typed, 5.2), is for a regulator's rules or the adopting system's policy; this specification provides the decision record needed for that judgment, and the adopting system the conversation record.
 
 ---
 
