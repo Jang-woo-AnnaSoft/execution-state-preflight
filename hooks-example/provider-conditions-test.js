@@ -13,17 +13,17 @@
  *
  * Three properties are being checked.
  *
- *   DIRECTION (spec 5.1, 4.2.1). A provider condition can only block. Satisfying
+ *   DIRECTION (spec 5.1, 3.3). A provider condition can only block. Satisfying
  *     one promotes nothing: no slot becomes known, no user item becomes verified,
  *     nothing enters call_arguments. So an upstream edit that rewrites a condition
  *     as always-true cannot become a fail-open switch — the worst it does is
  *     remove a reason to block.
  *
- *   ROUTING (spec 4.2.1, 4.5). The label decides where an unresolved condition
+ *   ROUTING (spec 3.3, 4.5). The label decides where an unresolved condition
  *     goes, and nothing here is a judgment call. [Verify] can be answered by the
  *     user, so it asks. [Required] cannot, so it is a gap in the declaration or
- *     the lookup path and goes to definition_repair. [Notice] is attached to a
- *     constraint rather than a condition and is not a gate at all.
+ *     the lookup path and goes to definition_repair. [Notice] is the kind
+ *     that does not block and is not a gate at all.
  *
  *   FAIL-CLOSED DECLARATION. An unrecognized label, a crashed fetch, and an
  *     unwired verification hook all hold. A declaration the gate cannot read is
@@ -31,7 +31,7 @@
  *     single failure this list exists to prevent.
  *
  * The case that matters most is 3. [Required] means "confirmed only from the
- * declared system source; user approval does not satisfy it" (4.2.1), and 8.4
+ * declared system source; user approval does not satisfy it" (3.3), and 8.4
  * turns entirely on a user's request not being an allowed source. Here the hook
  * returns "checked" with source user_answer — the shape of "the CFO approved on a
  * call, so the limit doesn't apply" — and the gate must refuse it. If this rule
@@ -177,7 +177,7 @@ function len(x) { return (x ?? []).length; }
       check(`${src} refused`, item.status, "unverified");
       check(`${src} → definition_repair, not ask_user`, item.route, "definition_repair");
       check(`${src} → decision definition_repair`, r.execution_decision, "definition_repair");
-      check(`${src} note names the rule`, /4\.2\.1/.test(item.note ?? ""), "true");
+      check(`${src} note names the rule`, /declared system source \(3\.3\)/.test(item.note ?? ""), "true");
     }
     // The one source that does satisfy it, so the test is not passing by refusing everything.
     const ok = await run("c3-sys", { conditions: [cond("c_limit", "Required", CHECKED)] });
