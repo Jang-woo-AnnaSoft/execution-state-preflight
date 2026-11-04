@@ -187,14 +187,31 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 - Moving the verdict from the generated answer to the action has three consequences. An action is a fact, not a probability, so it is judged by counting, not scoring. An unconfirmed value, condition, or intent is in every case the same action, "proceeding without checking," so one counter covers all three. And an action is decided before it happens, so the verdict can come before execution.
 - This axis sits at a different layer from an actor's authority. Authority asks whether this actor may perform this action. This specification asks what has to be declared for this execution to stand, and whether it was confirmed. The question is not who holds the authority but whether the grounds for the execution were expressed and verified. The two do not replace each other, and judging authority is outside the scope of this specification.
 
-### 3.3 Slots on the same footing (Value, Condition, Intent)
+### 3.3 Adding intent and conditions (Intent, Condition)
 
-- Values, conditions, and intent are all treated as verification slots. A value is what goes into a tool argument; a condition is a fact whose truth is checked before execution (balance, permission, and so on); intent is the execution unit the user wants. Because the verdict is about the action, conditions need no separate mechanism. Counting works the same way for all three, and in the order of settling, intent comes first.
-- Conditions divide into three by what they ask for: do not do this, get approval first, and tell me. A value is a number or a string and has a format; a condition has this distinction instead. The distinction is independent of who declared it. Declared by the provider or by the user, a condition is one of the three, and the labels in 4.2.1 are their names.
-- A condition can be declared as a range, by the provider or by the user. If a value or state confirmed by measurement at execution time falls within that range, the condition is met and nobody is asked again. Who produced the value does not matter, only whether it was confirmed by measurement. A value the model read out is not a measurement (5.2).
-- A value settled at execution time — one the user does not set when instructing, settled instead by the state at execution time — needs a range. The user sets that range at instruction time (4.5). Without it, the value does not confirm the slot even when measured. If the situation changes by execution time, the value is judged within that range. Which values are settled at execution time is declared by whoever declares the slot.
-- Confidence scores are not used. A slot's state is settled by whether it was looked up from a declared source, which is a fact rather than a probability.
-- Once the verdict is separated from execution, a slot can be in the state "condition not checked." Only then can free-text conditions become something to verify.
+Verification today looks at values only. The input schema checks a value's type and format, and has no place for intent or conditions (2.5). This specification adds intent and conditions to what is verified, alongside values.
+
+- Intent: the execution unit the user wants in this request. It has three parts.
+  - Act: what state change is wanted, and for what. It is settled from the user's words in this request, with its location specified (5.2), and nothing else fills it. The user may call the act by a name other than the tool name the system set, and which name points to which tool differs from user to user.
+  - Timing: whether it runs now, or at a given time or when a given event happens. A time inside the act is an argument, not a timing. Only when the call itself is put off is it scheduled or conditional.
+  - Tool: whether that tool actually provides the requested state change.
+- Value: what goes into that unit's tool arguments. What is needed, its format, and what counts as the value, the provider declares; the blanks that remain, the user fills.
+  - Words are easily misread. A range or a negation the user stated can be read as a value, and the gate checks only that the words are in the user's text (5.2). That is why criteria are needed. For example, a time is a single point, and a range is not a value.
+  - A value that may be confirmed only from a system source is marked [Required]. It is not filled from the user's words or answers.
+  - A value settled at execution time, one the user does not set when instructing but that is decided by the state at execution, needs a range. The user sets that range at instruction time (4.5). Without a range, the value does not confirm the slot even if it was measured. If the situation changes at execution time, the value is judged within that range. Which values are settled at execution time is declared by whoever declares the slot.
+- Condition: what must be confirmed to hold before execution. The provider declares the conditions under which the tool must not run; the user declares the ranges of values and state. A condition never creates a reason to execute; it only adds reasons not to. The grounds for execution come from the execution unit the user stated or approved (Section 0).
+  - Conditions split three ways by what they require. The split does not depend on who declares them: whether the provider or the user declares it, a condition is one of the three.
+    - [Required]: something that must be confirmed. It is confirmed only from a declared system source, and user approval does not satisfy it. If it does not hold, the execution does not run.
+    - [Verify]: something that needs the user's approval. It creates a user approval slot.
+    - [Notice]: something the user must be told before execution. It does not block.
+  - A condition can be declared as a range, by the provider or by the user. If a value or state confirmed by measurement at execution time falls within that range, the condition is met and the user is not asked again. Who produced the value is not considered; only whether it was confirmed by measurement. A value the model read is not a measurement (5.2).
+  - Conditions are declared in natural language. When a sentence is clear, the user, the provider and a third party can all check it. A declared sentence is put into a form that can be compared, and shown with the original so that its declarer confirms it. A user's condition is put into that form by the model and confirmed by the user, and the model asks when the meaning is not clear. At execution time, only the confirmed form is compared. A condition that could not be put into that form, or was not confirmed, stays unconfirmed (4.5).
+
+#### 3.3.1 Slots on the same footing (Value, Condition, Intent)
+
+- Intent, values and conditions are all treated as verification slots. Because the verdict is about the action, conditions need no separate mechanism. Counting works the same way for all three, and in the order of settling, intent comes first.
+- Confidence scores are not used. A slot's state is decided by whether it was looked up in a declared source, which is a fact, not a probability.
+- Once the verdict is separated from execution, "the condition was not checked" can exist as a slot state. Only then do free-text conditions become something that can be verified.
 
 ### 3.4 Deterministic slot counter gate
 
@@ -210,14 +227,14 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 - The gate only checks unconfirmed slots and records the result.
 - The executing party sits outside this specification and decides separately whether to execute, consulting only the decision record.
 - A structure that branches on the return value of the verdict function is not separation. There must be no execution path that does not go through the record.
-- The gate does not judge an actor's authority. Authority is granted to an actor, so whether a grant still holds and when it is revoked have to be handled separately, and that belongs to the executing party or a policy layer. The gate compares declared conditions against the state at execution time, so an execution outside those conditions is not one whose authority expired. It was outside the range from the start.
+- The gate does not judge an actor's authority. Authority is granted to an actor, so whether a grant still holds and when it is revoked have to be handled separately, and that belongs to the executing party or a policy layer. The gate compares declared conditions against the state at execution time, so an execution outside those conditions is not one whose authority expired. It was outside what the conditions allowed from the start.
 - The grounds for execution have no validity period. What the user declared (instruction, answers, pre-set settings) holds until the user changes it (a one-use setting ends once it has been used), and a change is a new declaration that is judged again (6.1, 6.3). A changed checklist is judged again as well (6.1). System state is never carried over: it is measured again at trigger time (4.5), and the gap between that measurement and execution is closed at execution (8.3). The validity period of an actor's authority is a separate matter and outside the scope of this specification.
 
 ---
 
 ## 4. Declarative slot system
 
-Every value, condition, and intent item is registered in an external checklist, separated by the party that holds definition authority. Who defines an item and what resolves it are different axes. A condition declared by the provider may be resolved by a system measurement. Section 4 covers who defines; Section 5 covers the sources that resolve.
+Every value, condition, and intent item is registered in an external checklist, separated by the party that holds definition authority. Who defines an item and what resolves it are different axes. A condition declared by the provider may be resolved by a system measurement. Section 4 covers who defines; Section 5 covers the sources that resolve. The definitions of intent, value and condition are in 3.3.
 
 ```
                   ┌─────────────────────────────────────────┐
@@ -228,7 +245,7 @@ Every value, condition, and intent item is registered in an external checklist, 
             ▼                                                     ▼
 ┌───────────────────────────────────────┐ ┌───────────────────────────────────────┐
 │       Provider Checklist              │ │         User Checklist                │
-│ - Schema / Type Validation            │ │ - User Intent / Context               │
+│ - Schema / Type Validation            │ │ - User Context                        │
 │ - Mandatory Pre-conditions (Balance)  │ │ - Execution Limits & Ranges           │
 │ - State Changes & Action Labels       │ │ - User Preference / Approval          │
 └───────────────────────────────────────┘ └───────────────────────────────────────┘
@@ -236,46 +253,35 @@ Every value, condition, and intent item is registered in an external checklist, 
 
 ### 4.1 Fixed Checklist: settles the execution unit. Applies to every tool call.
 
-- Tool match validity: does this tool actually provide the requested state change?
-- Timing: immediate, at a set time, or when a specific event occurs? A time contained in the action is an argument, not a timing. Only a call that is itself postponed is scheduled or conditional.
-- Intent: the purpose of use and the desired state change.
-- What the user calls it: the name the user gives this action, which may differ from the tool name the system set. It is taken, with its location specified, from what the user said in this request (5.2), and is not filled from any other source.
+- Intent (3.3) is confirmed here: the act, the timing and the tool.
+- The act is settled only from the user's words in this request, and nothing else fills it.
 
-**Role of the fixed checklist: the minimum needed to settle the execution unit. The tool match depends on it, so it comes before the intent in 4.3.**
+**Role of the fixed checklist: the minimum needed to settle the execution unit. Tool matching depends on it, so it comes before the user checklist.**
 
 #### 4.1.1 The record of what the user calls a tool
 
-- A user may call a tool by a name other than the one the system set. Which name points to which tool is the user's declaration, and it differs from user to user.
-- This record is not pre-set settings. Pre-set settings hold slot values and are a source in the search order of 5.2. The record of what the user calls a tool confirms no slot; it is used only as reference in tool matching.
-- It does not stand in for what the user said in this request. If the user did not name the action, the recorded name does not fill that place, and the user is asked again (4.5). A record that stands in for the words records something not said this time as said.
-- The record keeps a correspondence settled in conversation, with the user's consent (6.2). When the record changes, tool matching based on it is judged again (6.1).
+- Other names the user uses for a tool are recorded with the user's consent (6.2), and used only as reference material in tool matching.
+- This record is not pre-set data and confirms no slot. It never stands in for what the user said in this request, so if the user did not name the act, the user is asked again (4.5). When the record changes, tool matches based on it are judged again (6.1).
 
 ### 4.2 Provider Checklist: varies per tool.
 
-- Required arguments, and their type and format.
-- What counts as the value, and how it is checked. Words are easily misread: a range or a negation the user stated can be read as a value, and the gate checks only that the words are in the user's text (5.2). For example, a time is a single point, and a range is not a value.
-- Conditions that prohibit or permit execution: ownership, access permission, checks before execution or termination, safety, permitted execution modes (whether split execution is allowed, and so on).
-- Declaration of the state change that execution causes.
+- The values needed, their format, and what counts as the value (values in 3.3).
+- The conditions under which this tool must not run, and how each is checked: ownership, access permission, checks before execution or termination, safety, permitted execution modes (whether split execution is allowed, and so on) (conditions in 3.3).
+- The state change that execution causes.
 
 **Role of the provider checklist: declares the conditions under which this tool must not run. The declaring party is whoever built the tool, and that role does not disappear when the agent and the tool are built by the same side.**
 
-#### 4.2.1 Description labels
+#### 4.2.1 How to write them in the tool description (Description Labels)
 
-Providers already describe conditions in the tool description. The description arrives with the tool list, so string parsing alone turns it into slots. What keeps it from being an enforced checklist is that nobody has agreed on what is required. Three labels are proposed.
-
-- [Required]: attached to an argument or a condition. An item whose source location must be matched against an external source. On a condition, user approval does not satisfy it; it is confirmed only from the declared system source.
-- [Verify]: attached to a condition. Creates a user approval slot.
-- [Notice]: attached to a constraint. The user must be informed before execution.
-
-A condition can also declare how it is to be checked (by user approval, or by looking up and comparing a particular system state). Conditions declared by the provider serve only as grounds not to execute. Passing a condition does not justify execution. The grounds for execution come from the execution units the user stated or approved (Section 0). Provider conditions only add reasons not to execute within them. Using the labels as an enforced checklist makes the parsing contract part of the gate: the declaring party is trusted, the syntax is fixed, and parsing is deterministic.
+- Providers already write conditions in the tool description. Written with the labels for the three kinds of condition (3.3), [Required], [Verify] and [Notice], those sentences become the checklist, since the description arrives with the tool list.
+- To use labeled sentences as an enforced checklist, the declaring party must be trusted. Each sentence is put into a form that can be compared, and confirmed, at declaration time; at execution time only that form is compared (3.3).
 
 ### 4.3 User Checklist: varies per user and environment.
 
-- Making intent and context specific.
-- Execution limits and ranges, checks before execution or termination, safety, user preferences, and so on.
-- When the user sets a rule, the model may ask how the rule should be checked. What settles it is the user's answer.
+- The context within the execution unit, ranges of values and state, checks before execution or termination, safety, user preferences (conditions in 3.3).
+- Of the values the provider declares, the blanks that remain are filled by the user (values in 3.3).
 
-**Role of the user checklist: sets the ranges of values and state within the settled execution unit. It is filled in after the unit is settled, so it comes after the intent in 4.1.**
+**Role of the user checklist: sets the ranges of values and state within the settled execution unit. It is filled in after the unit is settled, so it comes after the fixed checklist.**
 
 ### 4.4 When checklists are obtained and slots are created
 
