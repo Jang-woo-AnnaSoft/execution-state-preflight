@@ -43,7 +43,7 @@
  *
  * The decisive question is whether the user can change it. "Nothing after 8pm" is theirs to
  * set; an approval limit is not, and no answer they give satisfies it. That is [Required]
- * (4.2.1), and the skeleton enforces the source restriction rather than trusting this file
+ * (3.3), and the skeleton enforces the source restriction rather than trusting this file
  * to be careful about it — see case 8.
  *
  * The limit values are illustrative placeholders. Replace them with the handbook's.
@@ -302,7 +302,7 @@ async function main() {
     // value and reports the condition cleared, sourced to the user's own words — the
     // mistake an adopter makes by writing an agreeable hook.
     //
-    // [Required] does not accept user_answer as a source (4.2.1), and the skeleton enforces
+    // [Required] does not accept user_answer as a source (3.3), and the skeleton enforces
     // it: the return is demoted to unverified and routed to the provider. So trap 2 fails
     // even against a hook that wants to let it through.
     const s = await runCase("p8", {
@@ -313,7 +313,7 @@ async function main() {
     check("does not execute — goes to repair", s.execution_decision, "definition_repair");
     check("the hook's \"checked\" is refused", itemOf(s).status, "unverified");
     check("routed to the provider, not the user", itemOf(s).route, "definition_repair");
-    check("the refusal cites the rule", /4\.2\.1/.test(itemOf(s).note ?? ""), "true");
+    check("the refusal cites the rule", /declared system source \(3\.3\)/.test(itemOf(s).note ?? ""), "true");
     console.log(`      note: ${itemOf(s).note}`);
   }
 
