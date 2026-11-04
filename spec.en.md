@@ -1,5 +1,5 @@
 # Taking Definition and Verdict Authority Out of the Model
-*Values, conditions, intent: **people** should declare them, not the model.*
+*Intent, values, conditions: **people** should declare them, not the model.*
 
 > This specification deals with missing inputs, not with the correctness of computation.
 > Don't trust what the model says. Have code count only whether each check was carried out.
@@ -19,7 +19,7 @@ Existing work raises model accuracy and validates input arguments with schemas a
 | Axis | Existing | This specification |
 | --- | --- | --- |
 | **Who sets the rules** | Nobody, so the model sets them on every call. What to ask and what to skip changes from call to call, and since nothing is kept as a rule, the rules cannot be listed (2.3). | Parties with definition authority (provider, user, adopting system) declare them in external checklists. They change without a deploy, live in a fixed place, and can be listed. Whoever owns a rule changes it as a single line of plain language, not code; developers only maintain the verdict structure (7.2). |
-| **What gets checked** | Arguments only. Structured Outputs and Tools schemas check data type and format; there is no field for conditions or intent (2.5). | Values, conditions (balance, permission), and intent become slots on the same footing. Because the verdict is about the action, conditions need no separate mechanism, and confidence scores are not used (3.3). |
+| **What gets checked** | Arguments only. Structured Outputs and Tools schemas check data type and format; there is no field for intent or conditions (2.5). | Intent, values, and conditions (balance, permission) become slots on the same footing. Because the verdict is about the action, conditions need no separate mechanism, and confidence scores are not used (3.3). |
 | **Do missing rules show up** | An undeclared item is missing from the record too, so it looks like an item that never existed rather than one that was missed (2.7). | An item that cannot be checked stays UNKNOWN and routes to definition repair (4.5). The gap is not filled, but the record shows who failed to declare what. The model may report a condition missing from the checklist, but the report does not affect execution (4.7). |
 | **Is there a reason to trust a filled value** | A looked-up value and an invented one are the same string, so neither the user nor the validator can tell them apart (2.4). | A value filled in by the model does not settle the slot. What is not there is written down as not there, and a check that has not finished is counted as UNKNOWN by code (5.1, 5.2). |
 | **Who judges that what was filled is everything** | The model hands over a neat, completed form and a person clicks through (2.2). | Counting code does. People receive blanks, not a filled-in form, and only the items only they can answer come back to them (3.5). |
@@ -38,7 +38,7 @@ Two decision authorities move out of the model. Definition authority, the author
 - This is not a new architecture. It extends two assets that already exist: the tool list and the input schema.
 - It does not replace format validators or the validation a tool server performs. This specification only produces a verdict record; both of those stay on the execution path.
 - **It does not replace a permission layer. Authority is granted to a party, so whether a grant still holds and when it is revoked have to be handled separately, and that belongs to the executing party or a policy layer. What this specification looks at is not a party's authority but the state at execution time (3.2, 3.5).**
-- It does not replace a layer that validates after the fact either. This specification counts whether the values, conditions, and intent were confirmed from declared sources before execution, and settles deterministically whether the state is executable (3.5). The aim is not to block but to reach a state in which execution can proceed. The verdict record becomes the grounds for execution and for whatever validation follows.
+- It does not replace a layer that validates after the fact either. This specification counts whether the intent, values, and conditions were confirmed from declared sources before execution, and settles deterministically whether the state is executable (3.5). The aim is not to block but to reach a state in which execution can proceed. The verdict record becomes the grounds for execution and for whatever validation follows.
 
 ---
 
@@ -183,8 +183,8 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 ### 3.2 Changing what the verdict is about (right answer → correct execution)
 
 - In irreversible execution, what has to be correct is not the generated text but the action taken. An action is correct when it is the action the user intended and it meets the conditions the provider requires.
-- What this specification judges is input completeness, the precondition for that correctness. Correctness can only be assessed once values, conditions, and intent are all declared and every slot is confirmed from its designated source. Whether the confirmed requirements are met is recorded separately.
-- Moving the verdict from the generated answer to the action has three consequences. An action is a fact, not a probability, so it is judged by counting, not scoring. An unconfirmed value, condition, or intent is in every case the same action, "proceeding without checking," so one counter covers all three. And an action is decided before it happens, so the verdict can come before execution.
+- What this specification judges is input completeness, the precondition for that correctness. Correctness can only be assessed once intent, values, and conditions are all declared and every slot is confirmed from its designated source. Whether the confirmed requirements are met is recorded separately.
+- Moving the verdict from the generated answer to the action has three consequences. An action is a fact, not a probability, so it is judged by counting, not scoring. An unconfirmed intent, value, or condition is in every case the same action, "proceeding without checking," so one counter covers all three. And an action is decided before it happens, so the verdict can come before execution.
 - This axis sits at a different layer from an actor's authority. Authority asks whether this actor may perform this action. This specification asks what has to be declared for this execution to stand, and whether it was confirmed. The question is not who holds the authority but whether the grounds for the execution were expressed and verified. The two do not replace each other, and judging authority is outside the scope of this specification.
 
 ### 3.3 Adding intent and conditions (Intent, Condition)
@@ -207,7 +207,7 @@ Verification today looks at values only. The input schema checks a value's type 
   - A condition can be declared as a range, by the provider or by the user. If a value or state confirmed by measurement at execution time falls within that range, the condition is met and the user is not asked again. Who produced the value is not considered; only whether it was confirmed by measurement. A value the model read is not a measurement (5.2).
   - Conditions are declared in natural language. When a sentence is clear, the user, the provider and a third party can all check it. A declared sentence is put into a form that can be compared, and shown with the original so that its declarer confirms it. A user's condition is put into that form by the model and confirmed by the user, and the model asks when the meaning is not clear. At execution time, only the confirmed form is compared. A condition that could not be put into that form, or was not confirmed, stays unconfirmed (4.5).
 
-#### 3.3.1 Slots on the same footing (Value, Condition, Intent)
+#### 3.3.1 Slots on the same footing (Intent, Value, Condition)
 
 - Intent, values and conditions are all treated as verification slots. Because the verdict is about the action, conditions need no separate mechanism. Counting works the same way for all three, and in the order of settling, intent comes first.
 - Confidence scores are not used. A slot's state is decided by whether it was looked up in a declared source, which is a fact, not a probability.
@@ -234,7 +234,7 @@ Verification today looks at values only. The input schema checks a value's type 
 
 ## 4. Declarative slot system
 
-Every value, condition, and intent item is registered in an external checklist, separated by the party that holds definition authority. Who defines an item and what resolves it are different axes. A condition declared by the provider may be resolved by a system measurement. Section 4 covers who defines; Section 5 covers the sources that resolve. The definitions of intent, value and condition are in 3.3.
+Every intent, value, and condition item is registered in an external checklist, separated by the party that holds definition authority. Who defines an item and what resolves it are different axes. A condition declared by the provider may be resolved by a system measurement. Section 4 covers who defines; Section 5 covers the sources that resolve. The definitions of intent, value, and condition are in 3.3.
 
 ```
                   ┌─────────────────────────────────────────┐
@@ -546,6 +546,7 @@ Provenance-based gates have been explored in injection defense, and the blank pr
 
 - This specification is not a technique for removing hallucination. The model's output remains, as it is, the input for preparing execution.
 - Its goal is not to block execution, but to establish what execution needs and settle an executable state. Safety follows from that.
+- It widens what is verified. To values, the only thing checked today, it adds intent and conditions (3.3), and counts all three the same way: whether each was confirmed from a declared source.
 - It changes the default. Instead of running whatever is not prohibited, only what is confirmed, in an execution unit the user stated or approved, reaches an executable state.
 - The black box is not fully opened. What is opened is what went into the verdict and what came out. After an incident, what you usually need is not the model's internal state but where the values came from, so this much already answers a good share of the questions.
 
