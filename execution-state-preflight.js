@@ -659,9 +659,10 @@ function validatePayload(args, inputSchema, ctx) {
 // Spec 6.3 lists "read labels, expand them into slots, reflect them in the verdict" among the gate's
 //   responsibilities. That is getProviderConditions + verifyProviderCondition, below. This hook is the
 //   OTHER half: whatever the description says that nobody turned into a declaration.
-//   What is still not done here is parsing a condition out of prose, and that is 4.2.1's parsing
-//   contract — trusted declarer, fixed syntax, deterministic parsing — which the specification leaves
-//   to the adopting system rather than to the gate. An adopter who parses labels out of a description
+//   What is still not done here is turning a sentence in prose into a declaration. 4.2.1 and 3.3 set
+//   the contract for that — a trusted declarer, the sentence put into a comparable form and confirmed
+//   by its declarer at declaration time, only that form compared at execution — and the specification
+//   leaves the step to the adopting system rather than to the gate. An adopter who parses labels out of a description
 //   hands the result to getProviderConditions, where it is compared like any other declaration.
 //   BREAKS: lower the bar and the description becomes an input the gate interprets, so a reworded
 //     sentence upstream silently changes what is enforced.
@@ -685,19 +686,20 @@ function getAdvisoryNotes(mcpTool) {
 //   call_arguments or user_checklist. That is what keeps direction one-way (5.1): a slot is promoted
 //   by being CHECKED, never by being SATISFIED. A condition that holds removes a reason to block and
 //   supplies no grounds to execute — those come from the execution units the user stated or
-//   approved (4.2.1, Section 0).
+//   approved (3.3, Section 0).
 //   BREAKS: let a checked condition settle a slot or satisfy a user item and one upstream edit —
 //     a condition rewritten as always-true — becomes a fail-open switch for every call.
 //
 // Item shape (the adopting system owns the field names; these are what the gate reads):
 //   { id, label: "Required"|"Verify"|"Notice", description, constrains: string[] }
 // How the declaration arrives does not matter. Labels parsed out of a description and conditions
-//   handed over as a structured field produce the same comparison; the parsing contract
-//   (4.2.1: trusted declarer, fixed syntax, deterministic parsing) attaches only to the former,
-//   and three fixed tokens settle the last two of those by design.
+//   handed over as a structured field produce the same comparison; the declaration contract
+//   (4.2.1, 3.3: trusted declarer; put into a comparable form and confirmed at declaration; only
+//   that form compared at execution) attaches only to the former. A structured field arrives
+//   already in that form, and three fixed label tokens leave nothing to translate.
 const PROVIDER_LABELS = new Set(["required", "verify", "notice"]);
 
-// [REQUIRED-SAFETY] The sources that can confirm a [Required] condition. 4.2.1: "confirmed only from
+// [REQUIRED-SAFETY] The sources that can confirm a [Required] condition. 3.3: "confirmed only from
 //   the declared SYSTEM source". Of the five sources in 5.2 exactly one is a system source:
 //     measured_data  — system state read on the spot, and 5.2 requires the read to be a live measurement
 //     user_answer    — the user's words
@@ -738,7 +740,7 @@ function getProviderConditions(mcpTool) {
 //   "unverified" — not compared. Routed by label, not by guesswork: [Verify] to the user,
 //               [Required] to definition_repair (4.5c).
 // There is deliberately no "verified" status. A user item can end verified because the user is the
-//   one who declared it; a provider condition is a reason not to execute and nothing more (4.2.1).
+//   one who declared it; a provider condition is a reason not to execute and nothing more (3.3).
 function verifyProviderCondition(condition, ctx) {
   return { status: "unverified", source: null, note: "verifyProviderCondition not wired" };
 }
@@ -1092,7 +1094,7 @@ async function lookupField(h, fieldName, ctx) {
   //   and then as user_answer. So this source NEVER settles. A value found here is recorded as a
   //   candidate, the slot stays unknown, and the question to the user carries the candidate.
   //   Enforced here, not left to applyFieldPolicy — a rule kept by hook discipline is a rule the gate
-  //   does not hold (the same reason [Required] is enforced in the gate, 4.2.1).
+  //   does not hold (the same reason [Required] is enforced in the gate, 3.3).
   //   BREAKS: let it settle — as this did when a policy hook passed it through — and a payment's
   //     amount arrives in a refund as KNOWN (policy-test part 5).
   //   NOTE: "executed" is the ONLY condition checked on the record — not age, not which action wrote
@@ -1736,9 +1738,9 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     }
 
     if (label === "notice") {
-      // [Notice] is attached to a constraint, not a condition (4.2.1). It is a disclosure obligation
+      // [Notice] is the kind of condition that does not block (3.3). It is a disclosure obligation
       //   before execution, not a gate. Gate it and "the user was told" becomes grounds for executing,
-      //   which 4.2.1 rules out, and 2.2 says that confirmation degrades into a click-through anyway.
+      //   which 3.3 rules out (a condition never creates a reason to execute), and 2.2 says that confirmation degrades into a click-through anyway.
       // Unlike advisory_notes this is structured and identified, and it is surfaced in gate.disclosures
       //   so the executing party cannot miss it. It is still not enforced: whether a sentence reached a
       //   human is not observable here.
@@ -1787,14 +1789,14 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       note = `a condition reported unmet must name the source it was checked from (5.1)`;
     }
 
-    // [Required] is confirmed only from a declared system source (4.2.1). Enforced here rather than
+    // [Required] is confirmed only from a declared system source (3.3). Enforced here rather than
     //   left to the hook: 8.4 turns on a user's request not being an allowed source for a provider
     //   condition, and a rule kept only by hook discipline is a rule the gate does not actually hold.
     //   The test is SYSTEM_SOURCES, not "is it user_answer". Four of the five sources are the user
     //   speaking at different times, so naming one of them leaves the other three open.
     if (label === "required" && st !== "unverified" && !SYSTEM_SOURCES.has(out?.source)) {
       st = "unverified";
-      note = `[Required] is confirmed only from a declared system source (4.2.1); hook returned ` +
+      note = `[Required] is confirmed only from a declared system source (3.3); hook returned ` +
              `${JSON.stringify(out?.status)} from ${JSON.stringify(out?.source ?? null)}`;
     }
 
@@ -1913,7 +1915,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       ({ id: c.id, label: c.label, description: c.description, note: c.note ?? null }));
   }
   // [Notice] items. Never counted, never a reason to hold — there is nothing to satisfy, and gating
-  // one would make "the user was told" grounds for executing, which 4.2.1 rules out.
+  // one would make "the user was told" grounds for executing, which 3.3 rules out.
   //   This is a HAND-OFF, not a check. The gate cannot observe whether a sentence reached a human, so
   //   it states the obligation and the executing party discharges it (3.5). A consumer that ignores
   //   this field executes without a disclosure the provider required — the gate records that it said
