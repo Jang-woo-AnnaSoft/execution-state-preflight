@@ -333,7 +333,7 @@ The order below is a search order, not a trust tier. Once a value is confirmed a
 user_answer → instruction → pre_set_data → measured_data → prior_state
 
 - user_answer: a response the user entered directly after an ask_user interaction. Empty on the first round.
-- instruction: a value taken, with its location specified, from a segment the user typed directly.
+- instruction: a value taken, with its location specified, from a segment the user typed directly. When segments are labeled as the user's, pasted text, forwarded or quoted text, and attachments are excluded; they stay in the input as untrusted segments, even inside the user's message. The labels are set by the adopting system when the message arrives, before the model sees it, never by the model. Where the input path does not preserve that distinction, the labels cannot be trusted either.
 - pre_set_data: settings the user approved and stored in advance. A value that was used, or a proposal the user accepted, can become pre_set_data with the user's approval. A setting may hold until changed, or end once it has been used. The system stores the approved value as approved; the model does not (6.3). The record of what the user calls a tool is not part of it (4.1.1).
 - measured_data: system state confirmed on the spot by calling a system API. The lookup must be a live measurement.
 - prior_state: a value inherited from a previous execution that the record confirms was executed. Applies to values only; conditions are not inherited. Inheritance alone does not confirm a slot. The value counts only after the user confirms it.
