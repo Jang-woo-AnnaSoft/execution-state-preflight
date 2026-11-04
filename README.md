@@ -102,7 +102,7 @@ Two gates. Neither produces a value or a justification, and neither executes —
 |---|--------|---------|
 | 0 | `user_answer` | answered by the user after an `ask_user` |
 | 1 | `instruction` | taken from a trusted segment, with its location |
-| 2 | `pre_set_data` | settings the user approved and stored in advance; a proposal the user accepted belongs here too |
+| 2 | `pre_set_data` | settings the user approved and stored in advance; a value the model proposed and the user approved belongs here too |
 | 3 | `measured_data` | measured from the environment |
 | 4 | `prior_state` | a value in a prior `executed` record. Never settles a slot; it is shown to the user as a candidate and counts, as `user_answer`, only once confirmed |
 
