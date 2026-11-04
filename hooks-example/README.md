@@ -82,7 +82,7 @@ This folder's implementation (`hooks.js`):
 
 Returns the timing as one of `immediate` / `scheduled` / `conditional` / `recurring`. If it cannot decide, it returns `null`, recorded as `unresolved`. It throws only when the hook actually failed, recorded as `hook_error`. In both cases the intent gate asks again. It does not default to `immediate` when it cannot decide (spec 6.2).
 
-A time inside the act is an argument, not a timing (spec 4.1). "Set up the pickup for 2pm Saturday" is `immediate`, and 2pm Saturday is an argument. If it is classified `scheduled`, the skeleton treats it as an instruction-time verdict and, even when the values are complete, returns `deferred`, waiting for a trigger instead of executing. This folder's prompt states the distinction.
+A time inside the act is an argument, not a timing (spec 3.3). "Set up the pickup for 2pm Saturday" is `immediate`, and 2pm Saturday is an argument. If it is classified `scheduled`, the skeleton treats it as an instruction-time verdict and, even when the values are complete, returns `deferred`, waiting for a trigger instead of executing. This folder's prompt states the distinction.
 
 ### `measureFromEnvironment`
 
@@ -167,7 +167,7 @@ The skeleton turns an `unmet` without a source into `unverified`. If the slot th
 
 Not plugged in this folder, but the skeleton's rules are:
 
-- The states are `checked` · `unmet` · `unverified`. There is no `verified`. Meeting a condition settles no slot (spec 4.2.1).
+- The states are `checked` · `unmet` · `unverified`. There is no `verified`. Meeting a condition settles no slot (spec 3.3).
 - The label decides the route: an unconfirmed `[Required]` goes to `definition_repair`, an unconfirmed `[Verify]` to `ask_user`, and `[Notice]` is kept in `gate.disclosures` and is not a gate. An unknown label goes to `definition_repair`.
 - `[Required]` is confirmed only by `measured_data`. The skeleton refuses `checked` and `unmet` from any other source.
 - If `constrains` points at a slot not present in this run, the condition is `unverified`.
