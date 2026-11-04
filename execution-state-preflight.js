@@ -37,8 +37,16 @@
 /**
  * @typedef {Object} InstructionSegment
  * @property {string} text
- * @property {"user"|"untrusted"} trust  // user = typed by the user. Everything else is untrusted.
- * @property {string} [origin]           // Origin of an untrusted segment (e.g. "gmail:msg_881"). For records and questions.
+ * @property {"user"|"untrusted"} trust
+ *   // CALLER CONTRACT (spec 5.2): "user" only for text the user typed in this message. When labeling,
+ *   //   exclude pasted, forwarded or quoted text and attachments from "user"; keep them in the input as
+ *   //   "untrusted" segments, so a value inside them is asked about, not settled. The caller sets the
+ *   //   labels when the message arrives, before the model sees it; the model never sets them.
+ *   // The gate trusts the label and cannot check it. A carried segment labeled "user" settles its values
+ *   //   as instruction (hooks-example/crosscheck, case T01). If the input path loses the distinction,
+ *   //   so does the label.
+ * @property {string} [origin]           // Where an untrusted segment came from (e.g. "gmail:msg_881", "pasted",
+ *                                       //   "attachment:invoice.pdf"). For records and questions.
  *
  * @typedef {Object} PreSetEntry
  * @property {*} value
@@ -2458,6 +2466,7 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint };
  *               where values may come from / what must be settled / whether it was settled from a
  *               permitted source / whether the whole object is legal
  * - Input:      only inputs carrying a trust label can produce known (both instruction and pre-set data)
+ *               the trust label is the caller's (spec 5.2): set on arrival, never by the model; the gate cannot check it
  *               same for user_action_name entries: { tool, trust: "user" }, never a raw string
  *               values from the instruction must name their coordinates via a span within a segment; unnamed means rejected
  *               C2 the same: a located claim in a user segment, or rejected. The words being there is checked;
