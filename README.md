@@ -106,7 +106,7 @@ Two gates. Neither produces a value or a justification, and neither executes —
 | 3 | `measured_data` | measured from the environment |
 | 4 | `prior_state` | a value in a prior `executed` record. Never settles a slot; it is shown to the user as a candidate and counts, as `user_answer`, only once confirmed |
 
-A search order, not a ranking by trustworthiness. `instruction` is an array of trust-labeled segments, not a string. Pass a string and the `instruction` source closes; nothing is confirmed from it. Untrusted text — a forwarded email, a tool result, a web page — cannot settle a value on its own. To use something from it, ask the user and take the answer back as `user_answer`.
+A search order, not a ranking by trustworthiness. `instruction` is an array of trust-labeled segments, not a string. Pass a string and the `instruction` source closes; nothing is confirmed from it. Untrusted text — a forwarded email, a tool result, a web page, or text pasted into the user's own message — cannot settle a value on its own. To use something from it, ask the user and take the answer back as `user_answer`. The labels are set by the adopting system when the message arrives, not by the model (spec 5.2).
 
 What comes out is a record, and the record is the point:
 
