@@ -488,6 +488,7 @@ With authority outside the model, decisions and accountability stay with the par
 
 - Separating the verdict from execution exposes an execution without a verdict as an execution without grounds. It does not expose an execution grounded on a forged decision record.
 - This specification does not define how hooks are implemented. If a hook calls a model to decide, that decision is probabilistic, and the gate does not check what the hook returns.
+- Mitigation — keep the decision record append-only, somewhere the agent process cannot rewrite. The store's integrity belongs to the adopting system; this specification does not enforce it.
 
 ### 8.3 The gap between check and execution
 
