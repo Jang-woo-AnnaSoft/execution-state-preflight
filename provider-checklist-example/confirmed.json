@@ -1,0 +1,21 @@
+{
+  "_about": "The adopting system's confirmation list (spec 3.3, 4.2.1). Not part of the MCP tool definition. Each entry is one labelled line of a tool's description, word for word, and the form the gate compares it in, as the provider confirmed it. A line that is not here, word for word, is not confirmed: it is unverified and goes back to the provider. So a reworded line voids its own confirmation.",
+  "tools": {
+    "schedule_pickup": [
+      {
+        "id": "cond_sale_agreed",
+        "label": "Required",
+        "stated_as": "The sale must be agreed before a pickup is scheduled, as shown by the order status.",
+        "compare": { "source": "measured_data", "measure": "order_status", "equals": "agreed" },
+        "constrains": [],
+        "confirmed_by": "provider"
+      },
+      {
+        "id": "cond_buyer_sees",
+        "label": "Notice",
+        "stated_as": "The buyer sees the time and location immediately.",
+        "confirmed_by": "provider"
+      }
+    ]
+  }
+}
