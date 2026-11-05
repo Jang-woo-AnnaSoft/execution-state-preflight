@@ -22,7 +22,7 @@ function check(label, got, want) {
 
 let thread = 0;
 // One run: start the graph, then answer each pause with the next reply in `replies`.
-async function drive(id, condition, replies = [], { proposals = {}, userChecklist } = {}) {
+async function drive(id, condition, replies = [], { proposals = {}, userChecklist, userAnswers } = {}) {
   const ins = S.instructions.find(i => i.id === id);
   const ctx = S.conditions[condition].context, date = S.date_modes.said;
   const calls = [];
@@ -30,7 +30,7 @@ async function drive(id, condition, replies = [], { proposals = {}, userChecklis
   const cfg = { configurable: { thread_id: `t${++thread}` } };
   const requests = [], schemas = [];
   let state = await g.invoke({ segments: buildUserTurn(ctx, ins.text, date).segments, measuredData: measuredFor(ctx, date),
-    userChecklist: userChecklist ?? ins.user_checklist ?? [], proposals }, cfg);
+    userChecklist: userChecklist ?? ins.user_checklist ?? [], proposals, ...(userAnswers ? { userAnswers } : {}) }, cfg);
   for (;;) {
     const pending = (await g.getState(cfg)).tasks.flatMap(t => t.interrupts ?? []);
     if (pending.length === 0) break;
@@ -69,6 +69,12 @@ const LOCKERS = "Hongdae station lockers";
   check("  a key the request did not ask for is dropped", ok.calls[0].args.buyer_contact, "in-app chat (@kim_2291)");
   check("  the gate looked the answers up as user_answer", ok.state.verdict.fields.filter(f => ["time", "location"].includes(f.name)).map(f => f.source), ["user_answer", "user_answer"]);
 
+  // State can carry values the gate did not accept (here, answers loaded by the adopter). The tool still
+  //   gets the gate's arguments and nothing else.
+  const loaded = await drive("g1-01", "clean", [], { userAnswers: { buyer_contact: "call me at 010-0000" } });
+  check("a value in state the gate refused never reaches the tool", [loaded.state.ended, loaded.calls[0]?.args.buyer_contact], ["executed", "in-app chat (@kim_2291)"]);
+  check("  the tool gets exactly the gate's call_arguments", JSON.stringify(loaded.calls[0]?.args) === JSON.stringify(loaded.state.executedWith), true);
+
   console.log("\n--- 3. decline or cancel: nothing runs ---");
   const dec = await drive("g4-01", "clean", [{ action: "decline" }]);
   check("declined: ended, tool not called", [dec.state.ended, dec.calls.length], ["declined", 0]);
@@ -76,10 +82,13 @@ const LOCKERS = "Hongdae station lockers";
   check("cancelled: ended, tool not called", [can.state.ended, can.calls.length], ["cancelled", 0]);
 
   console.log("\n--- 4. a reply that fails the schema's format is asked again, up to the ceiling ---");
-  const bad = await drive("g4-01", "clean", [accept({ time: "Saturday 2pm", location: LOCKERS }), accept({ time: SAT_2PM })]);
+  // The second reply also slips in a location. Only time was asked for, so it must not reach the gate:
+  //   user_answer is looked up before anything else, so a kept key would replace the settled location.
+  const bad = await drive("g4-01", "clean", [accept({ time: "Saturday 2pm", location: LOCKERS }), accept({ time: SAT_2PM, location: "61 Yeonhui-ro" })]);
   check("'Saturday 2pm' is not a date-time: asked again", bad.requests.length, 2);
   check("  the second ask is only for time", Object.keys(bad.requests[1].requestedSchema.properties), ["time"]);
   check("  the location already given is kept", bad.calls[0]?.args.location, LOCKERS);
+  check("  a location slipped into a time-only reply is dropped before the gate", bad.state.userAnswers.location, LOCKERS);
   check("  then executed", bad.state.ended, "executed");
   const odd = await drive("g4-01", "clean", [accept({ time: 1400, location: LOCKERS }), accept({ time: SAT_2PM })]);
   check("response_schema is not enforced: a reply off its type does not throw, the gate asks again", [odd.requests.length, odd.state.ended], [2, "executed"]);
