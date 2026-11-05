@@ -112,7 +112,7 @@ function buildGraph({ ask, callTool, tool = TOOL, confirmed, checkpointer = new 
 
   async function gate(state) {
     round += 1;
-    const hooks = createHooks({ ask, runId: `${runId}-${round}`, tool, measuredData: state.measuredData, ...(confirmed ? { confirmed } : {}) });
+    const hooks = createHooks({ ask, runId: `${runId}-${round}`, tool, ...(confirmed ? { confirmed } : {}) });
     const preflight = createPreflight({ hooks, storage: createStorage() });
     const st = await preflight.runPreflight({
       userId: "seller_1", instruction: state.segments, mcpTool: tool, preSetData: {},

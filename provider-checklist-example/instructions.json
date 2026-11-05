@@ -1,5 +1,5 @@
 {
-  "_about": "Derived from hooks-example/instructions.json. Same instructions, same conditions and same date modes, so a v1 run and a v2 run see the same words. Two changes. (1) Each user item carries the form the gate compares (compare), standing in for what the seller confirmed at instruction time (spec 3.3, 4.4). (2) Every condition context adds order_status, which the platform measures for the provider's [Required] line. The location is a value the seller names (tool.json): the provider declares no condition on it. The seller's own limits on it (chk_public, chk_not_home, chk_station) stay, because the seller stated them and the user checklist is built from what the user stated (4.4). They have no compare: a place's kind cannot be read from its name, so the seller is asked. Their wording still keeps a limit from being taken as a value.",
+  "_about": "Derived from hooks-example/instructions.json. Same instructions, same conditions and same date modes, so a v1 run and a v2 run see the same words. Two changes. (1) Each user item carries the form the gate compares (compare): a JSON Schema the slot's value must satisfy. It stands in for the step where the model puts the seller's sentence into that form and the seller confirms it, at instruction time (spec 3.3, 4.4). Relative words are already resolved in it: 'this Saturday' is 2026-10-31, as the seller confirmed in the said date mode. (2) Every condition context adds order_status, which the platform measures for the provider's [Required] line. The location is a value the seller names (tool.json): the provider declares no condition on it. The seller's own limits on it (chk_public, chk_not_home, chk_station) stay, because the seller stated them and the user checklist is built from what the user stated (4.4). They have no compare: a place's kind cannot be read from its name, so the seller is asked. Their wording still keeps a limit from being taken as a value.",
   "design_note": [
     "TWO AXES, not one.",
     "",
@@ -287,9 +287,10 @@
           ],
           "stated_as": "Nothing after 8pm",
           "compare": {
-            "op": "not_after",
-            "time": "20:00"
-          }
+            "type": "string",
+            "pattern": "T(?:[01][0-9]:[0-5][0-9]:[0-5][0-9]|20:00:00)"
+          },
+          "confirmed_note": "Not after 20:00 on whatever day, in the value's own offset. A limit with no date has no date-time bounds, so the time of day is matched in the value's text."
         },
         {
           "id": "chk_public",
@@ -324,10 +325,10 @@
           ],
           "stated_as": "I don't do evenings",
           "compare": {
-            "op": "not_after",
-            "time": "20:00"
+            "type": "string",
+            "pattern": "T(?:[01][0-9]:[0-5][0-9]:[0-5][0-9]|20:00:00)"
           },
-          "confirmed_note": "\"I don't do evenings\" taken as not after 20:00, as v1 did, so group 2 stays comparable. A stand-in for the seller's confirmation."
+          "confirmed_note": "\"I don't do evenings\" taken as not after 20:00, as v1 did, so group 2 stays comparable. Not after 20:00 on whatever day, in the value's own offset. A limit with no date has no date-time bounds, so the time of day is matched in the value's text."
         },
         {
           "id": "chk_not_home",
@@ -405,20 +406,14 @@
           "constrains": [
             "time"
           ],
-          "window": {
-            "day": "this Saturday",
-            "from": "1pm",
-            "to": "6pm"
-          },
           "stated_as": "Any time this Saturday between 1pm and 6pm works for me",
           "compare": {
-            "op": "within_window",
-            "window": {
-              "day": "this Saturday",
-              "from": "1pm",
-              "to": "6pm"
-            }
-          }
+            "type": "string",
+            "format": "date-time",
+            "formatMinimum": "2026-10-31T13:00:00+09:00",
+            "formatMaximum": "2026-10-31T18:00:00+09:00"
+          },
+          "confirmed_note": "\"this Saturday between 1pm and 6pm\", placed on the calendar when the seller confirmed it. Both ends inside."
         },
         {
           "id": "chk_station",
@@ -451,20 +446,14 @@
           "constrains": [
             "time"
           ],
-          "window": {
-            "day": "this Saturday",
-            "from": "1pm",
-            "to": "6pm"
-          },
           "stated_as": "I'm free this Saturday from 1pm to 6pm",
           "compare": {
-            "op": "within_window",
-            "window": {
-              "day": "this Saturday",
-              "from": "1pm",
-              "to": "6pm"
-            }
-          }
+            "type": "string",
+            "format": "date-time",
+            "formatMinimum": "2026-10-31T13:00:00+09:00",
+            "formatMaximum": "2026-10-31T18:00:00+09:00"
+          },
+          "confirmed_note": "\"this Saturday between 1pm and 6pm\", placed on the calendar when the seller confirmed it. Both ends inside."
         },
         {
           "id": "chk_station",

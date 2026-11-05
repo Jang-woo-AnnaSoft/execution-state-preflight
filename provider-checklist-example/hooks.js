@@ -10,23 +10,51 @@
  *                      labelled lines of the description ([Required], [Verify], [Notice]);
  *                      formats and sources are in the input schema (format, x-allowed-sources,
  *                      x-settled-at-execution)
- *   confirmed.json     the adopting system's: each labelled line, word for word, with the form
- *                      the gate compares it in, as the provider confirmed it (spec 3.3, 4.2.1)
- *   userChecklist      the user's: items with the form the seller confirmed (instructions.json
- *                      stands in for that confirmation, spec 4.4)
+ *   confirmed.json     the provider's, kept by the adopting system: each labelled line, word for
+ *                      word, with how it is checked — a measurement and a JSON Schema — as the
+ *                      provider confirmed it (spec 3.3, 4.2, 4.2.1)
+ *   userChecklist      the user's: items with a JSON Schema the slot's value must satisfy, as the
+ *                      seller confirmed it (instructions.json stands in for that, spec 3.3, 4.4)
  *
  * What this file does is read them, call the model where the model's work is (locating words),
- * and run the small set of comparisons the declarations name. A comparison a declaration names
- * and this file does not know is unverified, never passed.
+ * and evaluate the declared JSON Schemas with a standard validator (Ajv). How a condition is
+ * checked is the declaration's; this file knows no comparison of its own. A schema the validator
+ * cannot compile — an unknown keyword, say — is unverified, never passed.
+ *
+ * Nothing here converts words into values either. "2pm this Saturday" is not turned into a date:
+ * it fails the schema's date-time format and is asked about, where a model can propose the date
+ * and the seller confirm it (graph.js).
  *
  * Compared with hooks-example/hooks.js (v1), what is gone: FIELD_FORMATS, ALLOWED_SOURCES,
- * SETTLED_AT_EXECUTION and CONDITIONS as JS constants, and the rules table keyed by item id
- * (violatesEvening, violatesPublicPlace, violatesStation). isSettledAtExecution is not wired:
- * the skeleton's own reference body reads x-settled-at-execution from the schema.
+ * SETTLED_AT_EXECUTION and CONDITIONS as JS constants; the rules table keyed by item id
+ * (violatesEvening, violatesPublicPlace, violatesStation); and the date parser. isSettledAtExecution
+ * is not wired: the skeleton's own reference body reads x-settled-at-execution from the schema.
  */
 
-const { resolve: resolveDatetime, ISO_DATETIME, outsideWindow, placeWindow } = require("./datetime");
+const Ajv = require("ajv");
+const addFormats = require("ajv-formats");
 const DEFAULT_CONFIRMED = require("./confirmed.json");
+
+// The validator. strict: a keyword it does not know is an error, not something to skip — a declared
+//   check that cannot be run must not read as a check that passed. The two x- keywords are the
+//   schema's own declarations about sources, not checks on the value, so they are registered as
+//   annotations and ignored here.
+const ajv = new Ajv({ strict: true, allErrors: true });
+addFormats(ajv);
+ajv.addVocabulary(["x-allowed-sources", "x-settled-at-execution"]);
+const compiled = new WeakMap();
+
+// { ok: true|false, errors } when the value was checked; { error } when the schema cannot be compiled.
+function checkAgainst(schema, value) {
+  if (!schema || typeof schema !== "object") return { error: "no schema" };
+  let validate = compiled.get(schema);
+  if (!validate) {
+    try { validate = ajv.compile(schema); } catch (e) { return { error: e.message }; }
+    compiled.set(schema, validate);
+  }
+  const ok = validate(value);
+  return { ok, errors: ok ? null : ajv.errorsText(validate.errors) };
+}
 
 const WHEN_CASES = ["immediate", "scheduled", "conditional", "recurring"];
 
@@ -48,12 +76,6 @@ function locateQuote(text, quote) {
 
 function trustedText(instruction) {
   return (instruction ?? []).filter(s => s?.trust === "user").map(s => s.text).join("\n");
-}
-
-// Year and time zone as the system measured them, or nulls. Never from what anyone said.
-function measuredClock(measured) {
-  const y = measured?.clock_year, z = measured?.timezone;
-  return { year: y?.valid === true ? y.value : null, tz: z?.valid === true ? z.value : null };
 }
 
 // ── The provider's declaration ──────────────────────────────────────────────────────────────────
@@ -90,26 +112,6 @@ function providerConditionsFrom(mcpTool, confirmed) {
   });
 }
 
-// ── The user's declaration ──────────────────────────────────────────────────────────────────────
-// The comparisons a user item may name. Each returns true (violated), false (inside), or null
-//   (cannot be decided: the value is not a moment, the window cannot be placed).
-const USER_OPS = {
-  // "Nothing after 8pm": the time of day, in the value's own offset, is not later than the limit.
-  //   20:00 itself is inside.
-  not_after(value, compare) {
-    if (typeof value !== "string" || !ISO_DATETIME.test(value)) return null;
-    const lim = String(compare?.time ?? "").match(/^(\d{1,2}):(\d{2})$/);
-    if (!lim) return null;
-    const m = value.match(/T(\d{2}):(\d{2})/);
-    return (+m[1]) * 60 + (+m[2]) > (+lim[1]) * 60 + (+lim[2]);
-  },
-  // "Any time this Saturday between 1pm and 6pm": placed on the calendar from what the user said and
-  //   the measured year and zone. Inclusive at both ends.
-  within_window(value, compare, ctx) {
-    return outsideWindow(value, compare?.window, ctx?.instruction, measuredClock(ctx?.measured_data));
-  },
-};
-
 // Text inside a declared limit's own wording is not a value for the slot that limit constrains.
 function insideDeclaredLimit(userChecklist, fieldName, textAtSpan) {
   const fold = t => String(t).toLowerCase().replace(/\s+/g, " ").trim();
@@ -125,10 +127,10 @@ function insideDeclaredLimit(userChecklist, fieldName, textAtSpan) {
  * @param ask  The model call: (model, system, user, hook) → parsed JSON. Required here: this folder
  *             has no provider adapter of its own yet, and the comparison runs with a stub.
  * @param confirmed  The confirmation list. Defaults to confirmed.json.
- * @param tool / measuredData  The skeleton calls extractFromInstruction with (fieldName, instruction)
- *             only, so the extractor gets the schema and the measured clock from here.
+ * @param tool  The skeleton calls extractFromInstruction with (fieldName, instruction) only, so the
+ *             extractor gets the schema from here.
  */
-function createHooks({ model = "stub", ask, runId = "run", meter, confirmed = DEFAULT_CONFIRMED, tool, measuredData }) {
+function createHooks({ model = "stub", ask, runId = "run", meter, confirmed = DEFAULT_CONFIRMED, tool }) {
   if (typeof ask !== "function") throw new Error("createHooks: ask is required");
   async function call(system, user, hook) {
     const entry = { hook, ok: false };
@@ -205,8 +207,9 @@ function createHooks({ model = "stub", ask, runId = "run", meter, confirmed = DE
       return { approved: true, reason: `single-tool example: '${userActionName}' accepted for '${mcpTool?.name}' without comparison` };
     },
 
-    // Returns a location, never a value of its own. A date-time slot is derived in code from the span,
-    //   the date the user stated and the measured year and zone; spanSupportsValue re-derives it.
+    // Returns a location and the words at it, never a value of its own. Words that are not in the
+    //   slot's declared form ("2pm this Saturday" for a date-time) fail validateFieldSchema and are
+    //   asked about.
     async extractFromInstruction(fieldName, instruction) {
       let all;
       try { all = await extractAll(instruction, tool); }
@@ -216,34 +219,21 @@ function createHooks({ model = "stub", ask, runId = "run", meter, confirmed = DE
       if (!hit || hit.found !== true) return undefined;
       const { value, segment_index } = hit;
       const seg = (instruction ?? [])[segment_index];
-      const span = locateQuote(seg?.text, value);
-      if (span && tool?.inputSchema?.properties?.[fieldName]?.format === "date-time") {
-        const atSpan = seg.text.slice(span[0], span[1]);
-        const r = resolveDatetime(atSpan, instruction, measuredClock(measuredData));
-        if (r) return { value: r.iso, segment_index, span };
-      }
-      return { value, segment_index, span };
+      return { value, segment_index, span: locateQuote(seg?.text, value) };
     },
 
     spanSupportsValue(value, textAtSpan, fieldName, ctx) {
       if (insideDeclaredLimit(ctx?.userChecklist, fieldName, textAtSpan)) return false;
-      if (ctx?.fieldSchemas?.[fieldName]?.format === "date-time" && ISO_DATETIME.test(String(value))) {
-        const r = resolveDatetime(textAtSpan, ctx?.instruction, measuredClock(ctx?.measured_data));
-        return r && r.iso === value ? { supported: true, derived: true, derived_from: r.derived_from } : false;
-      }
       return squash(value) === squash(textAtSpan);
     },
 
-    // The formats the schema declares. Only date-time is known here; any other format is refused
-    //   rather than waved through, because a format nobody checks is a declaration that does nothing.
+    // The field's own schema, as the provider declared it, checked by the validator. A schema it
+    //   cannot compile refuses the value rather than waving it through.
     validateFieldSchema(value, schema, ctx, fieldName) {
-      const fmt = schema?.format;
-      if (fmt === undefined) return null;
-      if (fmt === "date-time") {
-        return ISO_DATETIME.test(String(value)) ? null
-          : `"${fieldName}" must be an ISO 8601 date-time with an offset; got "${value}"`;
-      }
-      return `"${fieldName}" declares format "${fmt}", which this example does not check`;
+      if (!schema) return null;
+      const out = checkAgainst(schema, value);
+      if (out.error) return `"${fieldName}" has a schema the validator cannot run: ${out.error}`;
+      return out.ok ? null : `"${fieldName}" does not match its declared schema: ${out.errors}; got ${JSON.stringify(value)}`;
     },
 
     measureFromEnvironment(fieldName, ctx) {
@@ -265,14 +255,16 @@ function createHooks({ model = "stub", ask, runId = "run", meter, confirmed = DE
         return { status: "unverified", source: null, note: "this line is not in the confirmation list, word for word" };
       }
       const c = cond.compare;
-      if (c?.source === "measured_data" && typeof c.measure === "string" && "equals" in c) {
-        const m = ctx?.measured_data?.[c.measure];
-        if (m?.valid !== true) return { status: "unverified", source: null, note: `no measurement of ${c.measure}` };
-        return m.value === c.equals
-          ? { status: "checked", source: "measured_data", note: `${c.measure} = ${JSON.stringify(m.value)}` }
-          : { status: "unmet", source: "measured_data", note: `${c.measure} = ${JSON.stringify(m.value)}, not ${JSON.stringify(c.equals)}` };
+      if (c?.source !== "measured_data" || typeof c.measure !== "string") {
+        return { status: "unverified", source: null, note: "the confirmed form names no measurement to check" };
       }
-      return { status: "unverified", source: null, note: "the confirmed form names no comparison this example knows" };
+      const m = ctx?.measured_data?.[c.measure];
+      if (m?.valid !== true) return { status: "unverified", source: null, note: `no measurement of ${c.measure}` };
+      const out = checkAgainst(c.schema, m.value);
+      if (out.error) return { status: "unverified", source: null, note: `the confirmed schema cannot be run: ${out.error}` };
+      return out.ok
+        ? { status: "checked", source: "measured_data", note: `${c.measure} = ${JSON.stringify(m.value)}` }
+        : { status: "unmet", source: "measured_data", note: `${c.measure} = ${JSON.stringify(m.value)}: ${out.errors}` };
     },
 
     verifyUserChecklistItem(item, ctx) {
@@ -284,24 +276,18 @@ function createHooks({ model = "stub", ask, runId = "run", meter, confirmed = DE
         return { ...item, status: answered ? "verified" : "unmet", source: "user_answer",
                  note: answered ? "the seller confirmed it" : "the seller said it does not hold" };
       }
-      const op = USER_OPS[item?.compare?.op];
       const slot = Array.isArray(item?.constrains) ? item.constrains[0] : undefined;
-      if (!op || !slot) {
-        return { ...item, status: "unverified", source: null,
-                 note: item?.compare ? `no comparison "${item.compare.op}" in this example` : "no confirmed comparison form" };
+      if (!item?.compare || !slot) {
+        return { ...item, status: "unverified", source: null, note: "no confirmed comparison form" };
       }
       const field = (ctx?.fields ?? []).find(f => f.name === slot);
-      const violated = op(field?.value, item.compare, ctx);
-      const placed = item.compare.op === "within_window"
-        ? placeWindow(item.compare.window, ctx?.instruction, measuredClock(ctx?.measured_data)) : null;
-      const bounds = placed ? ` ${placed.start}..${placed.end}` : "";
-      if (violated === null) {
-        return { ...item, status: "unverified", source: null,
-                 note: `cannot compare ${slot}=${JSON.stringify(field?.value ?? null)} (${item.compare.op})` };
+      const out = checkAgainst(item.compare, field?.value);
+      if (out.error) {
+        return { ...item, status: "unverified", source: null, note: `the confirmed schema cannot be run: ${out.error}` };
       }
-      return violated
-        ? { ...item, status: "unmet", source: field?.source ?? null, note: `${slot}=${JSON.stringify(field.value)} is outside ${item.compare.op}${bounds}` }
-        : { ...item, status: "verified", source: field?.source ?? null, note: `${slot}=${JSON.stringify(field.value)} is within ${item.compare.op}${bounds}` };
+      return out.ok
+        ? { ...item, status: "verified", source: field?.source ?? null, note: `${slot}=${JSON.stringify(field.value)} satisfies the confirmed schema` }
+        : { ...item, status: "unmet", source: field?.source ?? null, note: `${slot}=${JSON.stringify(field?.value)}: ${out.errors}` };
     },
 
     // Unique per run, so prior_state never carries across runs.
@@ -328,4 +314,4 @@ function createStorage() {
   };
 }
 
-module.exports = { createHooks, createStorage, labelledLines, providerConditionsFrom, USER_OPS, WHEN_CASES };
+module.exports = { createHooks, createStorage, labelledLines, providerConditionsFrom, checkAgainst, WHEN_CASES };

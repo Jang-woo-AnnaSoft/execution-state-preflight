@@ -50,7 +50,7 @@ async function runArm({ ctx, instructionText, userChecklist = [], userAnswers = 
   return { ...turn1, turns: 1 };
 
   async function runOnce(segments, suffix) {
-    const hooks = createHooks({ ask, runId: runId + suffix, tool, measuredData, ...(confirmed ? { confirmed } : {}) });
+    const hooks = createHooks({ ask, runId: runId + suffix, tool, ...(confirmed ? { confirmed } : {}) });
     const preflight = createPreflight({ hooks, storage: createStorage() });
     const state = await preflight.runPreflight({
       userId: "seller_1", instruction: segments, mcpTool: tool, preSetData: {},

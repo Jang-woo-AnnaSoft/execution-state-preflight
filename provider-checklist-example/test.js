@@ -47,8 +47,11 @@ async function run(id, condition, over = {}) {
   check("any bracketed word is read as a label, typos included", labelledLines("[Requried] X.").map(l => l.label), ["Requried"]);
 
   console.log("\n--- 2. a line is compared only in the form the provider confirmed ---");
-  const g1 = await run("g1-01", "clean");
-  check("g1-01 clean: executes", g1.outcome, "call");
+  // The seller's "2pm this Saturday" is not a date-time, and nothing here converts it. With the seller's
+  //   confirmed time as an answer (what graph.js collects), g1-01 runs.
+  const SAT_2PM = { time: "2026-10-31T14:00:00+09:00" };
+  const g1 = await run("g1-01", "clean", { userAnswers: SAT_2PM });
+  check("g1-01 with the seller's confirmed time: executes", g1.outcome, "call");
   check("  [Required] sale agreed: checked from the order status", [cond(g1, "cond_sale_agreed").status, cond(g1, "cond_sale_agreed").source], ["checked", "measured_data"]);
   check("  [Notice] surfaced as a disclosure", g1.disclosures.length > 0 && cond(g1, "cond_buyer_sees").status, "disclosure_required");
 
@@ -76,6 +79,9 @@ async function run(id, condition, over = {}) {
   console.log("\n--- 3. sources and formats come from the input schema ---");
   check("location: user sources only", field(g1, "location").allowed_sources, ["user_answer", "instruction", "pre_set_data"]);
   check("buyer_contact: measured only", field(g1, "buyer_contact").allowed_sources, ["measured_data"]);
+  const raw = await run("g1-01", "clean");
+  check("g1-01 as said: '2pm this Saturday' fails the date-time format", [field(raw, "time").status, raw.outcome], ["unknown", "ask"]);
+  check("  the location the seller named is taken from the instruction", [field(raw, "location").status, field(raw, "location").source], ["known", "instruction"]);
   const offer = await run("g5-01", "offer_in_range");
   check("g5 offer_in_range: the measured location is not taken", field(offer, "location").status, "unknown");
   check("  the measured time is, inside the seller's window", [field(offer, "time").source, field(offer, "time").range_declared], ["measured_data", true]);
@@ -84,12 +90,12 @@ async function run(id, condition, over = {}) {
   check("  the skeleton's default read x-settled-at-execution", field(noWindow, "time").settled_at_execution, true);
   const g4 = await run("g4-01", "clean", { userAnswers: { time: "Saturday 2pm", location: "Hongdae station lockers" } });
   check("g4 answered 'Saturday 2pm': fails the schema's date-time format", field(g4, "time").status, "unknown");
-  check("  the note names the format", /ISO 8601/.test(JSON.stringify(field(g4, "time"))), true);
+  check("  the note names the format", /date-time/.test(JSON.stringify(field(g4, "time"))), true);
   check("  the answered location is taken (a user source)", [field(g4, "location").status, field(g4, "location").source], ["known", "user_answer"]);
 
   console.log("\n--- 4. the user's items are compared in their confirmed form ---");
   const late = await run("g2-01", "clean", { userAnswers: { time: "2026-10-31T21:00:00+09:00", location: "Hongdae station lockers" } });
-  check("g2-01 answered 21:00: not_after 20:00 is unmet", item(late, "chk_evening").status, "unmet");
+  check("g2-01 answered 21:00: unmet against the confirmed schema", item(late, "chk_evening").status, "unmet");
   const eight = await run("g2-01", "clean", { userAnswers: { time: "2026-10-31T20:00:00+09:00", location: "Hongdae station lockers" } });
   check("g2-01 answered 20:00: inside", item(eight, "chk_evening").status, "verified");
   check("  a location limit with no comparison form is unverified, not passed", item(eight, "chk_public").status, "unverified");
@@ -100,6 +106,19 @@ async function run(id, condition, over = {}) {
   check("  it does settle an item that has none", [item(overrule, "chk_public").status, item(overrule, "chk_public").source], ["verified", "user_answer"]);
   const out = await run("g5-01", "offer_out_of_range");
   check("g5 offer outside the window: unmet, held", [item(out, "chk_window").status, out.outcome], ["unmet", "hold"]);
+  const utc = await run("g5-01", "offer_in_range", { ctx: { pickup_request: { ...S.conditions.offer_in_range.context.pickup_request, time: "2026-10-31T05:00:00Z" } } });
+  check("a measured time in another offset is compared as a moment (14:00 KST)", item(utc, "chk_window").status, "verified");
+
+  console.log("\n--- 4-b. a check that cannot be run is not a check that passed ---");
+  const typoSchema = clone(CONFIRMED);
+  typoSchema.tools.schedule_pickup[0].compare.schema = { constt: "agreed" };
+  const ts = await run("g1-01", "clean", { userAnswers: SAT_2PM, confirmed: typoSchema });
+  check("a confirmed schema with an unknown keyword: unverified", cond(ts, "cond_sale_agreed").status, "unverified");
+  check("  [Required] goes back to the provider, not executed", [cond(ts, "cond_sale_agreed").route, ts.outcome], ["definition_repair", "definition_repair"]);
+  const badItem = clone(S.instructions.find(i => i.id === "g2-01").user_checklist);
+  badItem[0].compare = { type: "string", notBefore: "20:00" };
+  const bi = await run("g2-01", "clean", { userChecklist: badItem, userAnswers: { time: "2026-10-31T19:00:00+09:00", location: "Hongdae station lockers" } });
+  check("a user item whose schema cannot be run: unverified, not verified", item(bi, "chk_evening").status, "unverified");
 
   console.log("\n--- 5. a limit is still not a value ---");
   const eager = await run("g5-01", "offer_in_range", { extractor: "over_eager" });
@@ -112,8 +131,12 @@ async function run(id, condition, over = {}) {
   const all = await rows();
   const changed = all.filter(r => r.v1.outcome !== r.v2.outcome).map(r => `${r.extractor}:${r.id}/${r.condition}:${r.v1.outcome}->${r.v2.outcome}`);
   check("runs compared (35 per extractor)", all.length, 70);
-  check("outcome changes: only the platform's proposed location in g5", changed, [
+  // g1: the seller's time words are not converted in code, so the time is confirmed with the seller.
+  // g5: the location the buyer proposed is the seller's to name.
+  check("outcome changes: g1's time words and g5's proposed location", changed, [
+    "faithful:g1-01/clean:call->ask", "faithful:g1-02/clean:call->ask", "faithful:g1-03/clean:call->ask",
     "faithful:g5-01/offer_in_range:call->ask", "faithful:g5-02/offer_in_range:call->ask",
+    "over_eager:g1-01/clean:call->ask", "over_eager:g1-02/clean:call->ask", "over_eager:g1-03/clean:call->ask",
     "over_eager:g5-01/offer_in_range:call->ask", "over_eager:g5-02/offer_in_range:call->ask"]);
   check("v2 never executes where v1 did not", all.filter(r => r.v2.outcome === "call" && r.v1.outcome !== "call").length, 0);
   check("every v2 run checked the provider's [Required] line", all.every(r => r.v2.checks.includes("cond_sale_agreed:checked")), true);
@@ -124,6 +147,10 @@ async function run(id, condition, over = {}) {
   check("no slot name appears in hooks.js code", named, []);
   const ids = [...CONFIRMED.tools.schedule_pickup.map(e => e.id), ...S.instructions.flatMap(i => (i.user_checklist ?? []).map(x => x.id))];
   check("no condition or item id appears in hooks.js code", [...new Set(ids)].filter(id => src.includes(id)), []);
+  const required = [...src.matchAll(/require\("([^"]+)"\)/g)].map(m => m[1]);
+  check("hooks.js loads a validator and the confirmation list, nothing else", required, ["ajv", "ajv-formats", "./confirmed.json"]);
+  check("no comparison of its own: no comparison keyword appears in hooks.js code",
+    ["formatMinimum", "formatMaximum", "pattern", "const:", "maximum", "not_after", "within"].filter(k => src.includes(k)), []);
 
   console.log(failed ? `\n${failed} FAILED` : "\nall ok");
   process.exit(failed ? 1 : 0);

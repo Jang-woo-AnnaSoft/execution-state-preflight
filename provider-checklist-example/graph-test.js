@@ -71,7 +71,7 @@ const LOCKERS = "Hongdae station lockers";
 
   // State can carry values the gate did not accept (here, answers loaded by the adopter). The tool still
   //   gets the gate's arguments and nothing else.
-  const loaded = await drive("g1-01", "clean", [], { userAnswers: { buyer_contact: "call me at 010-0000" } });
+  const loaded = await drive("g1-01", "clean", [], { userAnswers: { time: SAT_2PM, buyer_contact: "call me at 010-0000" } });
   check("a value in state the gate refused never reaches the tool", [loaded.state.ended, loaded.calls[0]?.args.buyer_contact], ["executed", "in-app chat (@kim_2291)"]);
   check("  the tool gets exactly the gate's call_arguments", JSON.stringify(loaded.calls[0]?.args) === JSON.stringify(loaded.state.executedWith), true);
 
@@ -106,6 +106,14 @@ const LOCKERS = "Hongdae station lockers";
   check("edited by the seller: executed with what the seller sent", edited.calls[0]?.args.time, "2026-10-31T15:00:00+09:00");
   const dropped = await drive("g4-01", "clean", [{ action: "cancel" }], { proposals: prop });
   check("proposal shown, then cancelled: not executed", dropped.calls.length, 0);
+
+  // The seller said "2pm this Saturday". Nothing in code turns that into a date. A model reads it as
+  //   Saturday 31 October 14:00 and proposes that; the seller sees it and sends it.
+  const g1 = await drive("g1-01", "clean", [accept({ time: SAT_2PM })], { proposals: { time: SAT_2PM } });
+  check("g1-01: the seller's time words are asked about, with the model's reading as the default",
+    [Object.keys(g1.requests[0].requestedSchema.properties), g1.requests[0].requestedSchema.properties.time.default], [["time"], SAT_2PM]);
+  check("  the location the seller named is not asked again", g1.calls[0]?.args.location, LOCKERS);
+  check("  sent as shown: executed with that moment", [g1.state.ended, g1.calls[0]?.args.time], ["executed", SAT_2PM]);
 
   console.log("\n--- 6. an item only the seller can confirm ---");
   const pub = await drive("g2-01", "clean", [accept({ time: "2026-10-31T19:00:00+09:00", location: LOCKERS }), accept({ [CHECK_PREFIX + "chk_public"]: true })]);
