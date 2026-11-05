@@ -20,6 +20,7 @@
  *   a key absent = undefined (no report); {"__throw__": msg} = the hook threw;
  *   provider_verdicts: {condition_id: verdict}; or provider_verifier "measured", which reads
  *   measured_data[condition.measured_key] = {valid, value} and reports measured_data as the source.
+ *   candidate_slots: string[] = an adopter's getCandidateSlots override (cases in candidate_set_cases).
  */
 const fs = require("fs");
 const path = require("path");
@@ -58,6 +59,8 @@ function hooksFor(c) {
     if (has(H, unsupported)) throw new Error(`case data "${unsupported}" is not wired in this runner yet`);
   }
   return {
+    // An adopter's getCandidateSlots override, as case data. Absent → the skeleton's own reference body.
+    ...(has(H, "candidate_slots") ? { getCandidateSlots: () => clone(val(H.candidate_slots)) } : {}),
     classifyWhenCase: () => val(H.c1),
     extractUserActionName: () => (has(H, "c2_claim") ? val(H.c2_claim) : undefined),
     confirmToolNameMatchesIntent: () => val(H.tool_match),
@@ -143,6 +146,11 @@ function spanWarnings(id, input, hooks) {
   for (const t of cases.transaction_cases ?? []) {
     warnings.push(...spanWarnings(t.id, t.esp_base.input, t.esp_base.hooks));
     for (const v of t.variants) units.push({ id: t.id, variant: v.name, c: compose(t.esp_base, v), want: expTx.get(t.id)?.[v.name] });
+  }
+  const expCs = new Map((expected?.candidate_set ?? []).map(t => [t.id, t.esp]));
+  for (const t of cases.candidate_set_cases ?? []) {
+    warnings.push(...spanWarnings(t.id, t.esp_base.input, t.esp_base.hooks));
+    for (const v of t.variants) units.push({ id: t.id, variant: v.name, c: compose(t.esp_base, v), want: expCs.get(t.id)?.[v.name] });
   }
   const tl = cases.trust_label_case;
   (tl?.label_variants ?? []).forEach((lv, i) => {
