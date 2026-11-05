@@ -794,7 +794,26 @@ async function resolveField(h, fieldName, ctx) {
   //   who cannot see what was permitted cannot tell a value that came from the only allowed source
   //   from one that came from a source nobody meant to permit.
   const declared = await safeHook(h.getAllowedSources, [fieldName, ctx.mcpTool], () => null);
-  const allowed_sources = [...allowedSourceSet(declared)];
+  let allowed_sources = [...allowedSourceSet(declared)];
+  // [SETTLED-AT-EXECUTION] A value settled at execution time needs a range the user set (3.3). Without
+  //   one, a measurement does not confirm the slot, so measured_data is not consulted for it. The
+  //   declaration is the slot declarer's (isSettledAtExecution); whether a range exists is read here,
+  //   from the user checklist: any item that constrains this slot. Enforced in the gate, not in a hook
+  //   body — a rule kept by hook discipline is a rule the gate does not hold.
+  //   A hook that throws or returns anything but false is read as settled at execution: the stricter
+  //   reading, which only stops a measurement from settling the slot.
+  const settledAtExecution = (await safeHook(h.isSettledAtExecution, [fieldName, ctx.mcpTool], () => true)) !== false;
+  const rangeDeclared = (ctx.userChecklist ?? []).some(i => Array.isArray(i?.constrains) && i.constrains.includes(fieldName));
+  if (settledAtExecution && !rangeDeclared) allowed_sources = allowed_sources.filter(s => s !== "measured_data");
+  const settledFacts = settledAtExecution ? { settled_at_execution: true, range_declared: rangeDeclared } : {};
+  if (allowed_sources.length === 0) {
+    // The declarer allowed only a measurement, and the measurement needs a range nobody set. Nothing
+    //   may settle the slot. Not "all five": an empty list here is the rule's result, not a missing
+    //   declaration (allowedSourceSet would read it as one). Back to whoever declared the slot (4.5c).
+    return { name: fieldName, value: undefined, status: "unknown", source: null, origin_source: null,
+             allowed_sources: [], resolved_at, lookup_trace: [], route: "definition_repair", ...settledFacts,
+             note: "settled at execution with no range declared, and no source but measured_data is allowed (3.3)" };
+  }
   const record = await lookupField(h, fieldName, { ...ctx, allowed_sources });
   // lookup_trace and route are the gate's own facts, so they are written last, over whatever a policy
   //   hook returned. A hook may demote a value; it may not rewrite what was consulted or who resolves it.
@@ -805,7 +824,7 @@ async function resolveField(h, fieldName, ctx) {
   const stamp = rec => {
     const status = rec.status === "unknown" && rec.lookup_failed !== true && isNullByTrace(trace)
       ? "null" : rec.status;
-    const out = { ...rec, status, allowed_sources, resolved_at, lookup_trace: trace };
+    const out = { ...rec, status, allowed_sources, resolved_at, lookup_trace: trace, ...settledFacts };
     // The candidate is the gate's fact as well. It survives a policy that rebuilds the record, and it
     //   is dropped once the slot settles (the user confirmed it, as user_answer, or chose otherwise).
     if (status === "unknown" && record.prior_candidate) out.prior_candidate = record.prior_candidate;
@@ -1137,6 +1156,17 @@ function getAllowedSources(fieldName, mcpTool) {
   return null;
 }
 
+// Is this slot's value settled at execution time (3.3)? A value the user does not set when instructing,
+//   but the state at execution decides. The gate then lets a measurement settle it only when the user
+//   checklist holds a range for it (resolveField, [SETTLED-AT-EXECUTION]).
+// CONTRACT: true | false. Do not throw. A throw or a non-boolean is read as true (the stricter reading).
+// POLICY: "which values are settled at execution time is declared by whoever declares the slot" (3.3).
+//   For a provider's slot that is the input schema, so the reference body reads the property's
+//   x-settled-at-execution. An adopter who keeps the declaration elsewhere replaces this body.
+function isSettledAtExecution(fieldName, mcpTool) {
+  return mcpTool?.inputSchema?.properties?.[fieldName]?.["x-settled-at-execution"] === true;
+}
+
 // [REQUIRED-SAFETY] Passes everything through. It used to be where prior_state was refused, and passing it
 //   through was how an adopter "accepted inheritance"; the gate now refuses it itself (5.2: inheritance
 //   alone never confirms), so the branch below never sees a prior_state record. Kept as a guard.
@@ -1466,6 +1496,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   const providerConditions = Array.isArray(rawProviderConditions) ? rawProviderConditions : [];
 
   const ctx = { userAnswers, checklistAnswers, instruction, preSetData, measured_data, priorExecutionState,
+                userChecklist: checklist,   // read by resolveField: does a range exist for a slot settled at execution (3.3)
                 phase,   // The basis for applyFieldPolicy's per-phase judgment
                 fieldSchemas: mcpTool?.inputSchema?.properties ?? {},
                 mcpTool };
@@ -2113,7 +2144,10 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.14",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.15",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.15: a field settled at execution time carries settled_at_execution: true and range_declared.
+    //        Without a range its allowed_sources has no measured_data — the gate removed it (3.3), not
+    //        the declarer. On a 1.14 or older record that removal, if any, was a hook's.
     //   1.14: every unknown field carries a route. A required slot left out of the candidate set is routed
     //        definition_repair (note "slot was not in the candidate set"). On a 1.13 or older record such a
     //        slot has no route, and its execution_decision may read execute with that slot unknown.
@@ -2283,7 +2317,7 @@ const UNSAFE_DEFAULT_HOOKS = ["applyFieldPolicy", "validateFieldSchema", "verify
 const defaultHooks = {
   classifyWhenCase, extractUserActionName, confirmToolNameMatchesIntent,
   getRequiredFields, getCandidateSlots, materializeSlots, getAdvisoryNotes,
-  getProviderConditions, verifyProviderCondition, getAllowedSources,
+  getProviderConditions, verifyProviderCondition, getAllowedSources, isSettledAtExecution,
   extractFromInstruction, spanSupportsValue, measureFromEnvironment,
   applyFieldPolicy, validateFieldSchema, validatePayload, verifyUserChecklistItem,
   formatReason, buildDeferredInput, buildActionKey,
