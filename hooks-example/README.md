@@ -192,7 +192,7 @@ This folder's declarations (`tool.js`):
 | Slot | Allowed sources |
 |---|---|
 | `buyer_contact` | `measured_data` only (`ALLOWED_SOURCES`) |
-| `time`, `location` | Values settled at execution time (`SETTLED_AT_EXECUTION`). `measured_data` is allowed only when a user checklist item constrains the slot (spec 3.3, 4.5). Otherwise measurements are not looked up and the slot becomes a blank |
+| `time`, `location` | Values settled at execution time (`SETTLED_AT_EXECUTION`, through `isSettledAtExecution`). The skeleton allows `measured_data` only when a user checklist item constrains the slot (spec 3.3, 4.5). Otherwise measurements are not looked up and the slot becomes a blank |
 | `item_id` | All five |
 
 Allowed sources decide whether a source may be looked up; `applyFieldPolicy` decides whether to downgrade what answered. A policy hook can only downgrade.

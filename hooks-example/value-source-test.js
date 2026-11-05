@@ -27,6 +27,7 @@
  *   9. a report of nothing — { none: "absent" | "no_place" } — kept apart from no report at all
  *  10. NULL as a slot state, who may report it, and the two route ceilings
  *  11. a derived value names every input it rests on, and the gate checks each one
+ *  12. a value settled at execution time: a measurement settles it only inside a range the user set
  *
  * Part 4 is why this file exists. storage.load is never called by the gate — the caller fetches the
  * prior record with preflight.getPriorExecutionState(key) and passes it in — so until now no test
@@ -96,7 +97,7 @@ function createStorage() {
 }
 
 // ── Hooks. Each seat is wired by what is passed in, not by branching in the hooks. ─
-function createHooks({ locate, measured, acceptPriorState, whenCase, allowed, measure, policy, extract, support }) {
+function createHooks({ locate, measured, acceptPriorState, whenCase, allowed, measure, policy, extract, support, settled }) {
   return {
     classifyWhenCase: () => whenCase ?? "immediate",
     extractUserActionName: locatedActionName(),   // a located claim (4.1); see c2-stub.js
@@ -130,26 +131,28 @@ function createHooks({ locate, measured, acceptPriorState, whenCase, allowed, me
 
     // Part 7. Which seats are permitted at all.
     ...(allowed ? { getAllowedSources: allowed } : {}),
+    // Part 12. Whether the slot is settled at execution time; unwired, the skeleton reads the schema.
+    ...(settled ? { isSettledAtExecution: settled } : {}),
   };
 }
 
 async function run({ locate, instruction, preSetData, measured, userAnswers, prior,
                      acceptPriorState, whenCase, storage, allowed, measure, policy, extract,
-                     ask_attempt, lookup_attempt, intent_attempt, limits, support }) {
+                     ask_attempt, lookup_attempt, intent_attempt, limits, support, settled, userChecklist, tool }) {
   const store = storage ?? createStorage();
   const preflight = createPreflight({
-    hooks: createHooks({ locate, measured, acceptPriorState, whenCase, allowed, measure, policy, extract, support }),
+    hooks: createHooks({ locate, measured, acceptPriorState, whenCase, allowed, measure, policy, extract, support, settled }),
     storage: store,
     ...(limits ? { limits } : {}),
   });
   const state = await preflight.runPreflightAndRecord({
     userId: "u_1042",
     instruction: instruction ?? PLAIN_INSTRUCTION,
-    mcpTool: TOOL,
+    mcpTool: tool ?? TOOL,
     preSetData: preSetData ?? {},
     measured_data: {},
     priorExecutionState: prior ?? null,
-    userChecklist: [],
+    userChecklist: userChecklist ?? [],
     userAnswers: userAnswers ?? {},
     ask_attempt, lookup_attempt, intent_attempt,
   });
@@ -652,6 +655,48 @@ const slotOf = state => (state.fields ?? []).find(f => f.name === SLOT) ?? {};
       measure: (f) => { if (f === "clock_year") throw new Error("clock down"); },
       support: () => ({ supported: true, derived: true, derived_from: [dateDep, yearDep] }) });
     check("re-measuring an input throws: a lookup failure", slotOf(boom).route, "definition_repair");
+  }
+
+  // ── 12. A value settled at execution time. ────────────────────────────────────
+  // 3.3: a value the user does not set when instructing, but the state at execution decides, needs a
+  //   range the user set. Without one, a measurement does not confirm it. The rule is the skeleton's;
+  //   only the declaration (which slots) comes from outside. Before, it lived in a hook body.
+  console.log("\n--- part 12: settled at execution time ---");
+  {
+    const SETTLED_TOOL = { ...TOOL, inputSchema: { ...TOOL.inputSchema,
+      properties: { [SLOT]: { type: "string", "x-settled-at-execution": true } } } };
+    const RANGE = [{ id: "u_range", description: "a payee on the approved list", constrains: [SLOT] }];
+    const viaMeasurement = { measured: { [SLOT]: ACCOUNT } };
+
+    const { state: plain } = await run({ ...viaMeasurement });
+    check("not declared: a measurement settles it", slotOf(plain).source, "measured_data");
+    check("  and the record does not mark it", slotOf(plain).settled_at_execution ?? false, false);
+
+    const { state: noRange } = await run({ ...viaMeasurement, tool: SETTLED_TOOL });
+    check("declared in the schema, no range: not settled", slotOf(noRange).status, "unknown");
+    check("  measured_data is not consulted", (slotOf(noRange).allowed_sources ?? []).includes("measured_data"), false);
+    check("  so it is asked, not looked up", slotOf(noRange).route, "ask_user");
+    check("  the record says why", `${slotOf(noRange).settled_at_execution}/${slotOf(noRange).range_declared}`, "true/false");
+
+    const { state: ranged } = await run({ ...viaMeasurement, tool: SETTLED_TOOL, userChecklist: RANGE });
+    check("declared, with a range the user set: settled", slotOf(ranged).source, "measured_data");
+    check("  the record says a range exists", slotOf(ranged).range_declared, true);
+
+    const { state: byHook } = await run({ ...viaMeasurement, settled: (f) => f === SLOT });
+    check("declared by the hook instead of the schema: same rule", slotOf(byHook).status, "unknown");
+
+    const { state: unsure } = await run({ ...viaMeasurement, settled: () => { throw new Error("no declaration store"); } });
+    check("the hook throws: read as settled, not settled", slotOf(unsure).status, "unknown");
+    const { state: odd } = await run({ ...viaMeasurement, settled: () => "yes" });
+    check("the hook returns a non-boolean: read as settled", slotOf(odd).status, "unknown");
+
+    // The declarer allowed only a measurement. With no range, nothing may settle it — and an empty
+    //   list must not read as "nothing declared", which is all five.
+    const { state: onlyMeasured } = await run({ ...viaMeasurement, tool: SETTLED_TOOL, allowed: () => ["measured_data"] });
+    check("measurement-only and no range: nothing allowed", (slotOf(onlyMeasured).allowed_sources ?? ["?"]).length, 0);
+    check("  not read as all five", slotOf(onlyMeasured).status, "unknown");
+    check("  back to the declarer", slotOf(onlyMeasured).route, "definition_repair");
+    check("  and the run does not execute", onlyMeasured.execution_decision !== "execute", true);
   }
 
   console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`);

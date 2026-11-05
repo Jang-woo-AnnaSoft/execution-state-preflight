@@ -122,6 +122,10 @@ function project(state, preflight, tool) {
       // What the slot was permitted to consult. Without it the record cannot tell
       // a value from the only allowed source from one nobody meant to permit.
       allowed_sources: f.allowed_sources ?? null,
+      // Settled at execution time (spec 3.3), and whether the user set a range for it. Without these a
+      //   missing measured_data above reads as the declarer's choice, when the gate removed it.
+      settled_at_execution: f.settled_at_execution ?? false,
+      range_declared: f.range_declared ?? null,
       // The 4.5 route an unknown took, written on the slot by the gate (6.3). null when settled.
       route: f.route ?? null,
       // Every source consulted and what it returned — absent, no_report, cannot_answer… (5.2). This
