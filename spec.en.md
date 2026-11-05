@@ -287,6 +287,7 @@ Every intent, value, and condition item is registered in an external checklist, 
 
 - Slots are created when each of the three checklists is obtained. The fixed checklist comes before tool selection. The provider checklist comes from the tool's declarations once the tool is settled. The user checklist comes from the trusted segments of the instruction once the execution unit is settled.
 - The user checklist can grow until execution. The user is still in the conversation until the call starts and can add conditions while answering.
+- A condition the user approved in advance as a standing setting also enters the user checklist. The adopting system loads it at instruction time, and it is compared the same way as a condition stated in this instruction (5.2).
 
 ### 4.5 Resolution routes for unconfirmed state
 
