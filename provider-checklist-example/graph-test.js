@@ -28,18 +28,19 @@ async function drive(id, condition, replies = [], { proposals = {}, userChecklis
   const calls = [];
   const g = buildGraph({ ask: makeAsk(id), callTool: async (name, args) => { calls.push({ name, args }); } });
   const cfg = { configurable: { thread_id: `t${++thread}` } };
-  const requests = [];
+  const requests = [], schemas = [];
   let state = await g.invoke({ segments: buildUserTurn(ctx, ins.text, date).segments, measuredData: measuredFor(ctx, date),
     userChecklist: userChecklist ?? ins.user_checklist ?? [], proposals }, cfg);
   for (;;) {
-    const pending = (await g.getState(cfg)).tasks.flatMap(t => t.interrupts ?? []).map(i => i.value);
+    const pending = (await g.getState(cfg)).tasks.flatMap(t => t.interrupts ?? []);
     if (pending.length === 0) break;
-    requests.push(pending[0]);
+    requests.push(pending[0].value);
+    schemas.push(pending[0].response_schema ?? null);
     const reply = replies.shift();
     if (!reply) break;                       // nobody answers: the run stays paused
     state = await g.invoke(new Command({ resume: reply }), cfg);
   }
-  return { state, calls, requests };
+  return { state, calls, requests, schemas };
 }
 const accept = content => ({ action: "accept", content });
 const SAT_2PM = "2026-10-31T14:00:00+09:00";
@@ -56,6 +57,10 @@ const LOCKERS = "Hongdae station lockers";
     type: "string", format: "date-time",
     description: "One moment, not a range, with a time zone offset. The seller states it, or sets a range that a pickup request from the buyer must fall inside" });
   check("  nothing executed while paused", g4.calls.length, 0);
+  const rs = g4.schemas[0];
+  check("  the reply's shape is at Interrupt.response_schema", rs?.properties?.action?.enum, ["accept", "decline", "cancel"]);
+  check("  its content is the request's schema, formats included", rs?.properties?.content?.properties?.time?.format, "date-time");
+  check("  content is exactly the request's requestedSchema", JSON.stringify(rs?.properties?.content) === JSON.stringify(req.requestedSchema), true);
 
   console.log("\n--- 2. accept: the gate judges again, and only its arguments are used ---");
   const ok = await drive("g4-01", "clean", [accept({ time: SAT_2PM, location: LOCKERS, buyer_contact: "call me at 010-0000" })]);
@@ -76,6 +81,8 @@ const LOCKERS = "Hongdae station lockers";
   check("  the second ask is only for time", Object.keys(bad.requests[1].requestedSchema.properties), ["time"]);
   check("  the location already given is kept", bad.calls[0]?.args.location, LOCKERS);
   check("  then executed", bad.state.ended, "executed");
+  const odd = await drive("g4-01", "clean", [accept({ time: 1400, location: LOCKERS }), accept({ time: SAT_2PM })]);
+  check("response_schema is not enforced: a reply off its type does not throw, the gate asks again", [odd.requests.length, odd.state.ended], [2, "executed"]);
   const twice = await drive("g4-01", "clean", [accept({ time: "Saturday 2pm", location: LOCKERS }), accept({ time: "2pm" })]);
   check("two unusable replies: exhausted, not executed", [twice.state.verdict.decision, twice.calls.length], ["exhausted", 0]);
 

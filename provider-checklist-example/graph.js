@@ -74,6 +74,18 @@ function elicitationFor(verdict, tool, proposals) {
   };
 }
 
+// The elicitation reply as JSON Schema: an action, and content in the shape the request asked for.
+function replySchemaFor(request) {
+  return {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["accept", "decline", "cancel"] },
+      content: request.requestedSchema,
+    },
+    required: ["action"],
+  };
+}
+
 // Keeps only what was asked for, of the type asked for. A key the request did not name is dropped, so
 //   a reply cannot add an argument the gate did not ask the seller for. The format is not checked here:
 //   the gate checks it, and asks again if it fails.
@@ -125,7 +137,11 @@ function buildGraph({ ask, callTool, tool = TOOL, confirmed, checkpointer = new 
     // Runs again from the top on resume (LangGraph re-executes the node), so everything before
     //   interrupt() is a pure function of the state.
     const request = elicitationFor(state.verdict, tool, state.proposals);
-    const reply = interrupt(request);
+    // The reply's shape also goes in LangGraph's own slot for it (responseSchema), so a client finds the
+    //   form at Interrupt.response_schema. A JSON Schema there is passed through, not enforced: whether
+    //   the answer counts stays with the gate, so a failed answer is recorded and counted toward the
+    //   ceiling instead of ending the run as a validation error.
+    const reply = interrupt(request, { responseSchema: replySchemaFor(request) });
     if (reply?.action !== "accept") return { ended: reply?.action === "decline" ? "declined" : "cancelled" };
     const { answers, checklist } = acceptContent(request, reply.content);
     return { userAnswers: answers, checklistAnswers: checklist, asks: state.asks + 1 };
@@ -152,4 +168,4 @@ function buildGraph({ ask, callTool, tool = TOOL, confirmed, checkpointer = new 
     .compile({ checkpointer });
 }
 
-module.exports = { buildGraph, elicitationFor, acceptContent, State, CHECK_PREFIX };
+module.exports = { buildGraph, elicitationFor, replySchemaFor, acceptContent, State, CHECK_PREFIX };

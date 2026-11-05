@@ -140,6 +140,11 @@ returns the verdict, so the whole of it is the `gate` node. Everything around it
 - **The shape of the question.** The request is an MCP elicitation form (`mode`, `message`,
   `requestedSchema`), built from the tool's own field schemas, and the resume value is its reply
   (`action`, `content`).
+  The reply's shape also goes in `interrupt`'s `responseSchema` option, so a client finds it at
+  `Interrupt.response_schema` and can render a typed form, with formats such as `date-time`. It is
+  passed as JSON Schema, which LangGraph hands to the client and does not enforce. A Zod schema
+  would make LangGraph reject a bad reply itself. The run would then end in an error, with no record
+  and without counting toward the ceiling, so judging the reply is left to the gate.
 
 What stays in the gate:
 
