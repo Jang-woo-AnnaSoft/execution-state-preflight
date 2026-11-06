@@ -101,6 +101,34 @@ const run = async (id, condition, over = {}, reply) => {
   const broken = await run("g1-01", "clean", { propose: true, ask: async (m, system, user) => { if (user.includes('"proposals"')) throw new Error("model down"); return makeAsk("g1-01")(m, system, user); } });
   check("a failed proposal only means no defaults", [broken.first.status, broken.first.request?.requestedSchema?.properties?.time?.default ?? null], ["waiting", null]);
 
+  console.log("\n--- 4-b. a server that asks for more input does not get it behind the gate ---");
+  check("the MCP client is set not to answer input_required itself", realConnect.CLIENT_OPTIONS.inputRequired?.autoFulfill, false);
+  check("  and declares elicitation, so the request comes back as data", JSON.stringify(realConnect.CLIENT_OPTIONS.capabilities?.elicitation), "{}");
+  check("  and to speak 2026-07-28 when the server offers it", realConnect.CLIENT_OPTIONS.versionNegotiation?.mode, "auto");
+  const ask = { method: "elicitation/create", params: { mode: "form", message: "Card PIN?", requestedSchema: { type: "object", properties: { pin: { type: "string" } } } } };
+  check("an input_required result is handed back as such", realConnect.toToolResult({ resultType: "input_required", inputRequests: { pin: ask } }), { inputRequired: { pin: ask } });
+  const done = { resultType: "complete", content: [{ type: "text", text: "scheduled" }] };
+  check("  a complete result passes through", realConnect.toToolResult(done), done);
+  const sir = standIn("g1-01", "clean");
+  sir.connect.callTool = async (name, args) => { sir.calls.push({ name, args }); return { inputRequired: { pin: ask } }; };
+  const ag = createAgent({ connect: sir.connect, propose: false });
+  await ag.start({ threadId: "sir", message: { typed: "x" }, userChecklist: [] });
+  const sr = await ag.resume({ threadId: "sir", reply: { action: "accept", content: { time: SAT_2PM } } });
+  check("the server asked during the call: stopped, not executed", [sr.status, sr.executedWith], ["input_required", null]);
+  check("  the server's request is returned to the caller", Object.keys(sr.serverRequests ?? {}), ["pin"]);
+  check("  and the call is not retried", sir.calls.length, 1);
+  for (const [label, fail, want] of [
+    ["the tool reports an error: not counted as executed", async () => ({ isError: true, content: [{ type: "text", text: "slot taken" }] }), "tool_error"],
+    ["the call throws: reported, not executed", async () => { throw new Error("connection reset"); }, "call_failed"],
+  ]) {
+    const sf = standIn("g1-01", "clean");
+    sf.connect.callTool = async (n, a) => { sf.calls.push(a); return fail(); };
+    const af = createAgent({ connect: sf.connect, propose: false });
+    await af.start({ threadId: `f${++thread}`, message: { typed: "x" } });
+    const rf = await af.resume({ threadId: `f${thread}`, reply: { action: "accept", content: { time: SAT_2PM } } });
+    check(label, [rf.status, rf.executedWith, sf.calls.length, typeof rf.callError], [want, null, 1, "string"]);
+  }
+
   console.log("\n--- 5. the agent's first verdict is the arm's ---");
   const mismatched = [];
   for (const ins of S.instructions) {

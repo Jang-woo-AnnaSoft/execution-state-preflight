@@ -197,9 +197,10 @@ returns the verdict, so the whole of it is the `gate` node. Everything around it
   ceiling turns repeated failures into `exhausted`.
 - **Where to stop and resume.** A checkpointer and a `thread_id` hold the run while the seller
   answers.
-- **The shape of the question.** The request is an MCP elicitation form (`mode`, `message`,
+- **The shape of the question.** The request has the shape of an MCP elicitation request (`mode`, `message`,
   `requestedSchema`), built from the tool's own field schemas, and the resume value is its reply
-  (`action`, `content`).
+  (`action`, `content`). It is not sent over MCP. In MCP a server asks; here the gate asks, before any
+  call. The shape is borrowed so that a client which renders elicitation forms can render this one.
   The reply's shape also goes in `interrupt`'s `responseSchema` option, so a client finds it at
   `Interrupt.response_schema` and can render a typed form, with formats such as `date-time`. It is
   passed as JSON Schema, which LangGraph hands to the client and does not enforce. A Zod schema
