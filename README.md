@@ -137,6 +137,7 @@ This file is the overview. Each thing below is explained where it lives, not her
 | [**The specification**](./spec.en.md) · [ko](./spec.ko.md) | **the standard.** What counts as confirmed, who judges, what is recorded. The problems this works through are §2; the three checklists are §4; the slot states and sources are §5 |
 | **The skeleton** ([`execution-state-preflight.js`](./execution-state-preflight.js)) | a reference skeleton, not a library. Hook contracts, the record shape, and where it falls short of the specification — in the source comments, beside the code they describe |
 | [**Hook examples**](./hooks-example/) | what has to be declared, and how much of this you have to keep — each shown by putting a piece in and taking it out |
+| [**Adopt example**](./adopt-example/) | the files you keep to use this: the rules written in a tool description, how each is checked, and the connections to your own model, data and tool — nothing else |
 | [**Provider checklist example**](./provider-checklist-example/) | the same tool with every rule moved out of code into declarations — the provider's checklist as labelled lines in a standard MCP description — and what that changes, run against the hook examples on the same inputs |
 | [**A case report**](./case-muse-marketplace.en.md) | a reported incident mapped onto the checklists |
 
