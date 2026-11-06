@@ -1,0 +1,17 @@
+{
+  "name": "adopt-example",
+  "private": true,
+  "description": "The files an adopter keeps: the rules written down, the connections to their own system, and the gate",
+  "scripts": {
+    "start": "node agent.js"
+  },
+  "dependencies": {
+    "@langchain/core": "1.2.20",
+    "@langchain/langgraph": "1.5.2",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "langchain": "1.5.19",
+    "zod": "4.6.7"
+  }
+}

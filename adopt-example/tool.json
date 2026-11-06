@@ -1,0 +1,30 @@
+{
+  "name": "schedule_pickup",
+  "description": "Schedule an in-person pickup for a marketplace item. Creates a commitment that is immediately visible to the buyer. Times are in the time zone of the seller's account region.\n[Required] The sale must be agreed before a pickup is scheduled, as shown by the order status.\n[Notice] The buyer sees the time and location immediately.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "item_id": {
+        "type": "string",
+        "description": "The listing being picked up"
+      },
+      "time": {
+        "type": "string",
+        "format": "date-time",
+        "description": "One moment, not a range, with a time zone offset. The seller states it, or sets a range that a pickup request from the buyer must fall inside",
+        "x-settled-at-execution": true
+      },
+      "location": {
+        "type": "string",
+        "description": "Where the seller and the buyer meet, as the seller names it",
+        "x-allowed-sources": ["user_answer", "instruction", "pre_set_data"]
+      },
+      "buyer_contact": {
+        "type": "string",
+        "description": "How the buyer is reached. Read from the platform, not from what anyone says",
+        "x-allowed-sources": ["measured_data"]
+      }
+    },
+    "required": ["item_id", "time", "location", "buyer_contact"]
+  }
+}
