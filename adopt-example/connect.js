@@ -80,17 +80,38 @@ function labelInput({ typed, context = [] }) {
 
 // ── callTool: the real call ────────────────────────────────────────────────────────────────────
 // Called only with the gate's own arguments, after it decided to execute.
+//
+// MCP 2026-07-28 lets a server answer tools/call with input_required: it asks the user for more input
+//   (an elicitation) before it completes the call. The client would normally answer that itself and
+//   retry. Here it must not: input gathered that way reaches the tool without going through the
+//   gate, and is in no decision record. So the client is set to hand such a result back, and the run
+//   stops there, not executed, and the server's request comes back to you. If your tool needs that
+//   input, declare it in the input schema, where the gate asks for it and checks it.
+// The client declares the elicitation capability so that the server's request comes back as data
+//   you can show, rather than as a refusal. It registers no handler for it: on the 2025 protocol, a
+//   server that asks gets "method not found", and the tool reports an error.
+const CLIENT_OPTIONS = {
+  versionNegotiation: { mode: "auto" },     // 2026-07-28 with a server that offers it, 2025 otherwise
+  inputRequired: { autoFulfill: false },    // never answer a server's request for input behind the gate
+  capabilities: { elicitation: {} },        // so the request is handed back, not refused
+};
+
+// { inputRequired } when the server asked for input instead of completing; the result otherwise.
+function toToolResult(result) {
+  const { isInputRequiredResult } = require("@modelcontextprotocol/client");
+  return isInputRequiredResult(result) ? { inputRequired: result.inputRequests ?? {} } : result;
+}
+
 let mcpClient = null;
 async function callTool(name, args) {
   if (!mcpClient) {
     if (!process.env.MCP_SERVER_URL) throw new Error("set MCP_SERVER_URL");
-    const { Client } = require("@modelcontextprotocol/sdk/client/index.js");
-    const { StreamableHTTPClientTransport } = require("@modelcontextprotocol/sdk/client/streamableHttp.js");
-    const client = new Client({ name: "adopt-example", version: "1.0.0" });
+    const { Client, StreamableHTTPClientTransport } = require("@modelcontextprotocol/client");
+    const client = new Client({ name: "adopt-example", version: "1.0.0" }, CLIENT_OPTIONS);
     await client.connect(new StreamableHTTPClientTransport(new URL(process.env.MCP_SERVER_URL)));
     mcpClient = client;
   }
-  return mcpClient.callTool({ name, arguments: args });
+  return toToolResult(await mcpClient.callTool({ name, arguments: args }, { allowInputRequired: true }));
 }
 
 // ── store: decision records ────────────────────────────────────────────────────────────────────
@@ -119,4 +140,4 @@ const store = {
 //   PostgresSaver from @langchain/langgraph-checkpoint-postgres.
 const checkpointer = new MemorySaver();
 
-module.exports = { ask, measure, labelInput, callTool, store, checkpointer, MEASUREMENTS };
+module.exports = { ask, measure, labelInput, callTool, store, checkpointer, MEASUREMENTS, CLIENT_OPTIONS, toToolResult };

@@ -9,7 +9,9 @@
  *   let r = await agent.start({ threadId, message: { typed: "Set up the pickup for LST-2291 …" } });
  *   // r.status "waiting": show r.request to the user as a form (r.responseSchema is its shape)
  *   r = await agent.resume({ threadId, reply: { action: "accept", content: { time: "…" } } });
- *   // r.status "executed", or why not: "hold", "definition_repair", "exhausted", "declined", …
+ *   // r.status "executed", or why not: "hold", "definition_repair", "exhausted", "declined",
+ *   //   "input_required" (the server asked for more input; nothing was executed),
+ *   //   "call_failed" (the call threw) or "tool_error" (the tool reported a failure); see callError, …
  *
  * Or from a terminal: node agent.js "Set up the pickup for LST-2291, 2pm this Saturday, Hongdae
  * station lockers." It prints each request and reads your reply as one line of JSON.
@@ -66,6 +68,8 @@ function createAgent({ connect = defaultConnect, tool = TOOL, confirmed = CONFIR
       request: waiting?.value ?? null,
       responseSchema: waiting?.response_schema ?? null,
       executedWith: state.executedWith ?? null,
+      serverRequests: state.serverRequests ?? null,   // the server asked for input instead of completing
+      callError: state.callError ?? null,             // the call itself failed
       verdict: state.verdict,
     };
   }

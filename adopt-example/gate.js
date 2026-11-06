@@ -333,12 +333,17 @@ const State = Annotation.Root({
   verdict: Annotation({ reducer: last, default: () => null }),
   ended: Annotation({ reducer: last, default: () => null }),
   executedWith: Annotation({ reducer: last, default: () => null }),
+  serverRequests: Annotation({ reducer: last, default: () => null }),
+  callError: Annotation({ reducer: last, default: () => null }),
 });
 
 const CHECK_PREFIX = "confirm__";
 
-// The elicitation request for what the gate listed. Field schemas are the tool's own, without its x-
-//   keywords (elicitation takes a flat object of primitive fields). An item the seller must confirm
+// The question for what the gate listed, in the shape of an MCP elicitation request (mode, message,
+//   requestedSchema). It is not sent over MCP: in MCP a server asks, and here the gate asks, before
+//   any call. The shape is borrowed so a client that renders elicitation forms can render this one.
+//   Field schemas are the tool's own, without its x- keywords (an elicitation form takes a flat
+//   object of primitive fields). An item the seller must confirm
 //   becomes a yes/no field.
 function elicitationFor(verdict, tool, proposals) {
   const props = {};
@@ -439,9 +444,24 @@ function buildGraph({ ask, callTool, tool, confirmed, checkpointer = new MemoryS
     return { userAnswers: answers, checklistAnswers: checklist, asks: state.asks + 1 };
   }
 
+  // The server may answer with a request for more input instead of completing (MCP 2026-07-28,
+  //   input_required). That input would not pass the gate, so the run stops: not executed, with the
+  //   server's request kept for the caller to see.
   async function execute(state) {
     const args = state.verdict.call_arguments;
-    await callTool(tool.name, args);
+    let result;
+    // A call that fails is reported, not retried: whether the tool did anything is for the caller to
+    //   find out from the tool's side.
+    try { result = await callTool(tool.name, args); }
+    catch (e) { return { ended: "call_failed", callError: String(e?.message ?? e) }; }
+    if (result && typeof result === "object" && result.inputRequired) {
+      return { ended: "input_required", serverRequests: result.inputRequired };
+    }
+    // The tool ran and reported a failure (MCP's isError). Not "executed": what was asked did not happen.
+    if (result && typeof result === "object" && result.isError === true) {
+      const text = (result.content ?? []).map(c => c?.text ?? "").join(" ").trim();
+      return { ended: "tool_error", callError: text || "the tool reported an error" };
+    }
     return { ended: "executed", executedWith: args };
   }
 

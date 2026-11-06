@@ -8,7 +8,7 @@
   "dependencies": {
     "@langchain/core": "1.2.20",
     "@langchain/langgraph": "1.5.2",
-    "@modelcontextprotocol/sdk": "1.32.1",
+    "@modelcontextprotocol/client": "2.4.0",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "langchain": "1.5.19",

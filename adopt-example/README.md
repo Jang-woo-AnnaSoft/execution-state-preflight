@@ -79,13 +79,31 @@ the gate as it is.
 | The tool | `callTool(name, args)` | Your MCP client call. Set `MCP_SERVER_URL` |
 | Decision records | `store` | Append-only, somewhere the agent cannot rewrite |
 | Waiting runs | `checkpointer` | A persistent LangGraph checkpointer, for example Postgres |
-| The form the user sees | outside this folder | Your client renders `request` (an MCP elicitation form) |
+| The form the user sees | outside this folder | Your client renders `request`. It has the shape of an MCP elicitation request, but the gate asks it, before any call |
 
 **Keys.** Keys and addresses come from environment variables only. Never write them into these
 files.
 
 **Fail-closed.** A measurement you have not connected counts as "not measured". As shipped, nothing
 is connected, so the `[Required]` line is unverified and nothing runs.
+
+**When the server asks for more input.** Under MCP 2026-07-28 a server may answer a tool call with
+`input_required`: it asks the user for something before it completes. The MCP client would normally
+answer that itself and retry. Here it is set not to (`autoFulfill: false`). Input gathered that way
+would reach the tool without passing the gate, and would not be in the record. The run stops with
+status `input_required`, nothing executed, and the server's request is returned to you. If your
+tool needs that input, declare it in the input schema, where the gate asks for it and checks it.
+The client speaks 2026-07-28 to a server that offers it and the 2025 protocol otherwise. On 2025,
+a server that tries to ask gets no answer, and the tool reports an error.
+
+**What a run can end as.** `executed` means the tool completed with the gate's arguments. Anything
+else means it did not complete:
+
+- the gate's own reasons: `hold`, `definition_repair`, `exhausted` …;
+- the user's: `declined`, `cancelled`;
+- the call's: `input_required`, `tool_error` (the tool reported a failure), `call_failed` (the call
+  threw). Neither of the last two is retried. Whether the tool did anything is for you to check on
+  the tool's side.
 
 ## 4. Run
 
