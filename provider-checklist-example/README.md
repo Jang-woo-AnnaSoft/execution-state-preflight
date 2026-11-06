@@ -1,7 +1,12 @@
 # Provider checklist example
 
 The same pickup tool as [`hooks-example/`](../hooks-example/), with every rule moved out of code
-and into a declaration. This folder shows what changes when the provider declares its checklist.
+and into a declaration. This folder shows what changes when the provider declares its checklist,
+and checks it.
+
+**To use it, see [`adopt-example/`](../adopt-example/).** That folder holds only the files you keep.
+The gate code lives there (`gate.js`). This folder holds the comparison with v1 and every test.
+`hooks.js` and `graph.js` here only load `adopt-example/gate.js` with this folder's declarations.
 
 In `hooks-example/` (v1), the hooks hold the rules. `tool.js` keeps the time format, the allowed
 sources and the provider's conditions as JS constants. `hooks.js` decides what "public place",
@@ -128,7 +133,7 @@ seller is asked. They still matter, for two reasons.
 
 ```
 npm run compare      # the table: every instruction, every condition, two stand-in extractors
-npm run check        # test.js, the table, and graph-test.js (needs npm install)
+npm run check        # installs adopt-example's packages, then test.js, the table, graph-test.js and adopt-test.js
 ```
 
 Both arms get the same user turn, the same measurements and the same stand-in model
@@ -156,8 +161,16 @@ over-eager one also quotes the seller's limits.
 - each behaviour above;
 - that the outcome changes are exactly these;
 - that a schema the validator cannot run leaves the check unverified;
-- that `hooks.js` names no slot, condition or item, holds no comparison keyword of its own, and loads
-  nothing but the validator and the confirmation list.
+- that the gate's code (`adopt-example/gate.js`) names no slot, condition or item, holds no
+  comparison keyword of its own, and loads nothing but LangGraph, the skeleton and the validator.
+
+`adopt-test.js` checks `adopt-example/` itself, from here, so that folder holds no test files:
+
+- that it holds only the files an adopter keeps;
+- that what it measures is what the declarations name;
+- that its `connect.js`, as shipped, fails closed;
+- that start, wait, resume and execute run end to end;
+- that its first decision equals this folder's in all 35 runs.
 
 Defects were also put in on purpose to test the tests. These included a location taken from a
 measurement, a reworded line, a reply key that was not asked for, the tool called with the reply,
@@ -166,8 +179,8 @@ removed. Each one fails at least one check.
 
 ## In a LangGraph graph
 
-[`graph.js`](./graph.js) puts the same gate in a [LangGraph](https://docs.langchain.com/oss/javascript/langgraph/interrupts.md)
-graph, without changing the skeleton.
+The gate runs in a [LangGraph](https://docs.langchain.com/oss/javascript/langgraph/interrupts.md) graph (`buildGraph` in `adopt-example/gate.js`),
+without changing the skeleton.
 
 ```
 START → gate ─ execute ─→ execute → END
@@ -212,13 +225,9 @@ What stays in the gate:
 - **The tool is called with the gate's `call_arguments` and nothing else.**
 
 `graph-test.js` checks each of these. It also checks that the graph's first verdict equals the
-arm's in all 35 runs. The validator and LangGraph are dependencies of this folder only. The
-skeleton still has none:
-
-```
-npm install          # pinned: ajv 8.20.0, ajv-formats 3.0.1, @langchain/langgraph 1.5.2, @langchain/core 1.2.20, zod 4.6.7
-node graph-test.js
-```
+arm's in all 35 runs. The validator and LangGraph are installed in `adopt-example/` (pinned: ajv
+8.20.0, ajv-formats 3.0.1, @langchain/langgraph 1.5.2, @langchain/core 1.2.20, zod 4.6.7, langchain
+1.5.19, @modelcontextprotocol/sdk 1.32.1). The skeleton still has none.
 
 ## What this folder does not do yet
 

@@ -1,17 +1,12 @@
 {
   "name": "provider-checklist-example",
   "private": true,
-  "description": "The pickup tool with every rule in a declaration; compared with hooks-example (v1)",
+  "description": "Verifies adopt-example/gate.js: the pickup tool with every rule declared, compared with hooks-example (v1) on the same inputs",
   "scripts": {
-    "check": "node test.js && node compare.js > /dev/null && node graph-test.js",
+    "setup": "npm ci --prefix ../adopt-example",
+    "check": "npm ci --prefix ../adopt-example --silent && node test.js && node compare.js > /dev/null && node graph-test.js && node adopt-test.js",
     "compare": "node compare.js",
-    "graph": "node graph-test.js"
-  },
-  "dependencies": {
-    "@langchain/core": "1.2.20",
-    "@langchain/langgraph": "1.5.2",
-    "ajv": "8.20.0",
-    "ajv-formats": "3.0.1",
-    "zod": "4.6.7"
+    "graph": "node graph-test.js",
+    "adopt": "node adopt-test.js"
   }
 }

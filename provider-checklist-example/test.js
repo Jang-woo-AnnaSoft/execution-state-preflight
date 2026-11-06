@@ -141,15 +141,17 @@ async function run(id, condition, over = {}) {
   check("v2 never executes where v1 did not", all.filter(r => r.v2.outcome === "call" && r.v1.outcome !== "call").length, 0);
   check("every v2 run checked the provider's [Required] line", all.every(r => r.v2.checks.includes("cond_sale_agreed:checked")), true);
 
-  console.log("\n--- 7. the hooks hold no rule of their own ---");
-  const src = fs.readFileSync(path.join(__dirname, "hooks.js"), "utf8").replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, "");
+  console.log("\n--- 7. the gate holds no rule of its own ---");
+  // The code lives in adopt-example/gate.js, the file an adopter copies unchanged.
+  const src = fs.readFileSync(path.join(__dirname, "..", "adopt-example", "gate.js"), "utf8").replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, "");
   const named = Object.keys(TOOL.inputSchema.properties).filter(n => new RegExp(`["'\`]${n}["'\`]`).test(src));
-  check("no slot name appears in hooks.js code", named, []);
+  check("no slot name appears in gate.js code", named, []);
   const ids = [...CONFIRMED.tools.schedule_pickup.map(e => e.id), ...S.instructions.flatMap(i => (i.user_checklist ?? []).map(x => x.id))];
-  check("no condition or item id appears in hooks.js code", [...new Set(ids)].filter(id => src.includes(id)), []);
+  check("no condition or item id appears in gate.js code", [...new Set(ids)].filter(id => src.includes(id)), []);
   const required = [...src.matchAll(/require\("([^"]+)"\)/g)].map(m => m[1]);
-  check("hooks.js loads a validator and the confirmation list, nothing else", required, ["ajv", "ajv-formats", "./confirmed.json"]);
-  check("no comparison of its own: no comparison keyword appears in hooks.js code",
+  check("gate.js loads LangGraph, the skeleton and a validator, nothing else", required,
+    ["@langchain/langgraph", "./execution-state-preflight", "../execution-state-preflight", "ajv", "ajv-formats"]);
+  check("no comparison of its own: no comparison keyword appears in gate.js code",
     ["formatMinimum", "formatMaximum", "pattern", "const:", "maximum", "not_after", "within"].filter(k => src.includes(k)), []);
 
   console.log(failed ? `\n${failed} FAILED` : "\nall ok");

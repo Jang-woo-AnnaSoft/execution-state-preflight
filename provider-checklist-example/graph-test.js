@@ -6,7 +6,7 @@
  *   npm install && node graph-test.js
  */
 
-const { Command } = require("@langchain/langgraph");
+const { Command } = require("./graph");   // the same LangGraph the gate uses (adopt-example)
 const { buildGraph, CHECK_PREFIX } = require("./graph");
 const { runArm, measuredFor } = require("./arm");
 const { buildUserTurn } = require("./prompts");
