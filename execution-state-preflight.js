@@ -960,7 +960,9 @@ async function resolveField(h, fieldName, ctx) {
   //   reading, which only stops a measurement from settling the slot.
   const settledAtExecution = (await safeHook(h.isSettledAtExecution, [fieldName, ctx.mcpTool], () => true)) !== false
     || sourceRule?.settled === true;
-  const rangeDeclared = (ctx.userChecklist ?? []).some(i => Array.isArray(i?.constrains) && i.constrains.includes(fieldName));
+  //   A condition whose form is not confirmed yet is not a range the user set: it does not open the slot
+  //   to a measurement (it is asked about, and confirmed or not, first).
+  const rangeDeclared = (ctx.userChecklist ?? []).some(i => !i?.form_pending && Array.isArray(i?.constrains) && i.constrains.includes(fieldName));
   if (settledAtExecution && !rangeDeclared) allowed_sources = allowed_sources.filter(s => s !== "measured_data");
   const settledFacts = { ...ruleFacts, ...(settledAtExecution ? { settled_at_execution: true, range_declared: rangeDeclared } : {}) };
   if (allowed_sources.length === 0) {
@@ -1600,7 +1602,8 @@ async function withConfirmedForm(h, item, { declared_by, tool, userId, mcpTool }
       compare: approval.form?.compare ?? null,
       constrains: Array.isArray(approval.form?.constrains) ? approval.form.constrains : [],
       ...(declared_by === "user" && typeof approval.form?.description === "string" ? { description: approval.form.description } : {}),
-      form_approval: { key, approved_by: approval.approved_by ?? null, at: approval.at ?? null },
+      form_approval: { key, approved_by: approval.approved_by ?? null, at: approval.at ?? null,
+                       text: describeForm(approval.form, keyLabel) },
     };
   }
   const proposed = await safeHook(h.proposeComparableForm,
@@ -1609,6 +1612,9 @@ async function withConfirmedForm(h, item, { declared_by, tool, userId, mcpTool }
   formRequests.push({
     item_id: item.id ?? null, declared_by, tool, user_id: declared_by === "user" ? (userId ?? null) : null,
     label: keyLabel, wording, key, proposal,
+    // What the proposal would check, in words written by code from the form itself — never by the model
+    //   that proposed it, so the words cannot say one thing while the form does another.
+    proposal_text: proposal ? describeForm(proposal, keyLabel) : null,
   });
   return {
     ...item,
@@ -1618,6 +1624,61 @@ async function withConfirmedForm(h, item, { declared_by, tool, userId, mcpTool }
     compare: null,
     form_pending: { key },
   };
+}
+
+// [FORM IN WORDS] What a form checks, written from the form alone, for whoever confirms it (3.3: shown
+//   with the original). Deterministic: the same form always reads the same, and a form this skeleton
+//   does not read says so instead of guessing. The kinds:
+//     value_source     who may give the slot's value ([VALUE SOURCE])
+//     user_approval    the user confirms it each time, for the values shown ([APPROVAL BINDING])
+//     a measurement    { source: "measured_data", measure, schema } — the adopter's validator compares
+//     a value schema   a JSON Schema the constrained slot's value must satisfy — likewise
+//   label is the line's ("Required", "Verify", or "" for a user's condition).
+function describeSchema(schema) {
+  if (!schema || typeof schema !== "object") return "satisfies an empty check";
+  const keys = Object.keys(schema);
+  if (keys.length === 1 && "const" in schema) return `is exactly ${JSON.stringify(schema.const)}`;
+  if (keys.length === 1 && Array.isArray(schema.enum)) return `is one of ${schema.enum.map(v => JSON.stringify(v)).join(", ")}`;
+  return `satisfies the JSON Schema ${stableJson(schema)}`;
+}
+function describeForm(form, label) {
+  const c = form?.compare;
+  const on = Array.isArray(form?.constrains) && form.constrains.length ? form.constrains.join(", ") : null;
+  const lab = normalizeProviderLabel(label);
+  if (!c || typeof c !== "object") return "no comparison form: nothing would be compared";
+  if (c.kind === "value_source") {
+    const r = valueSourceRule({ label, compare: c });
+    if (!r || r.bad) return `a value_source form that does not fit its label: ${r?.bad ?? "unreadable"}`;
+    if (lab === "required") return `${c.slot} is taken only from a system measurement (measured_data). The user's words and answers never fill it, and the user is not asked for it.`;
+    return `${c.slot} is taken only from the user: what they typed, an answer they gave, or a setting they saved. ` +
+      (r.settled ? "A measurement also counts, but only inside a range the user set for it. " : "") +
+      "A value from anywhere else counts only once the user gives it.";
+  }
+  if (c.kind === "user_approval") {
+    return `the user confirms it, each time${on ? `, for the values of ${on} shown with the question` : ""}. A yes given for other values does not count.`;
+  }
+  if (c.source === "measured_data" && typeof c.measure === "string") {
+    return `holds only when the system measurement ${c.measure} ${describeSchema(c.schema)}. A measurement that cannot be read leaves it unconfirmed, and the run does not execute.`;
+  }
+  if (typeof c.kind === "string") return `a form of kind ${JSON.stringify(c.kind)}, compared by the adopting system's own code: ${stableJson(c)}`;
+  return on
+    ? `holds only when ${on} ${describeSchema(c)}`
+    : `a check that names no value to compare: ${stableJson(c)}`;
+}
+
+// [CONFIRMED FORMS] for the adopting system: each labelled line of a tool's description with the form
+//   confirmed for it, or null. The same lookup the gate makes, so an adopter can see — before a run — which
+//   measurements the confirmed forms read, without keeping its own copy of them.
+async function readConfirmedForms(storage, mcpTool) {
+  const h = { storage };
+  const out = [];
+  for (const l of labelledLines(mcpTool?.description)) {
+    const key = formApprovalKey({ declared_by: "provider", tool: mcpTool?.name ?? null, label: l.label, wording: l.text });
+    const approval = await loadFormApproval(h, key);
+    out.push({ label: l.label, wording: l.text, key, form: approval?.form ?? null,
+               text: approval?.form ? describeForm(approval.form, l.label) : null });
+  }
+  return out;
 }
 
 // The confirmation itself. CONTRACT: request is an entry of gate.form_approvals (or the same fields);
@@ -3180,7 +3241,7 @@ function createPreflight({ hooks = {}, storage, clock, strict = false, limits = 
   };
 }
 
-module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, labelledLines };
+module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, labelledLines, describeForm, readConfirmedForms };
 
 
 /* ============================================================================
