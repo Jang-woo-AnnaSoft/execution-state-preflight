@@ -68,6 +68,10 @@ function hooksFor(c) {
     // Same as the skeleton's reference body: measured_data[field] as given.
     measureFromEnvironment: (f, ctx) => (ctx.measured_data && f in ctx.measured_data) ? val(ctx.measured_data[f]) : undefined,
     buildActionKey: () => `crosscheck:${++seq}`,
+    // Since skeleton 1.16 an unwired validator reads as unverified (definition_repair). The cases do not
+    //   exercise validation (the port they were written against had none), so the runner reports values
+    //   checked unless a case asks for the skeleton's own defaults with hooks.validators: "default".
+    ...(H.validators === "default" ? {} : { validateFieldSchema: () => null, validatePayload: () => null }),
     getProviderConditions: () => clone(c.provider_conditions ?? []),
     verifyProviderCondition: cond => {
       const ex = H.provider_verdicts ?? {};
