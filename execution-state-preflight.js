@@ -1506,6 +1506,240 @@ function verifyUserChecklistItem(item, ctx) {
   return { ...item, status: "unverified", source: null, note: "verification hook not implemented (default)" };
 }
 
+// 4-2. Confirmed forms, the conditions the user stated, and approvals bound to what they approved.
+
+// [CONFIRMED FORMS] 3.3: a condition is declared in words; the words are put into a comparable form
+//   and shown, with the original, to whoever declared them; at execution only the confirmed form is
+//   compared. 4.2.1 says the same of a labelled line. The gate keeps the confirmations and looks them
+//   up itself — a hook cannot report a form as confirmed.
+//   Kept in the same storage as the decision records, under their own key: one per declarer and
+//   wording. A reworded line has a different key, so its old confirmation does not apply to it.
+//   Reading needs storage.list(key) — every record under the key, oldest first. A storage without it
+//   cannot show a confirmation, so every form is pending: fail-closed.
+//   The record: { kind: "form_approval", key, declared_by, tool, user_id, label, wording, line_hash,
+//     form: { compare, constrains, description? }, status: "approved" | "revoked", approved_by, at }.
+//   Written by preflight.approveForm / revokeForm, never by the gate during a run.
+const FORM_APPROVAL_KIND = "form_approval";
+function formApprovalKey({ declared_by, tool, userId, label, wording }) {
+  const owner = declared_by === "user" ? `user:${userId ?? ""}` : `provider:${tool ?? ""}`;
+  return `__form_approval__:${owner}:${ruleHash(`[${label ?? ""}] ${wording ?? ""}`)}`;
+}
+
+async function listRecords(h, key) {
+  if (typeof h.storage?.list !== "function") return null;
+  const out = await safeHook(h.storage.list.bind(h.storage), [key], () => null);
+  return Array.isArray(out) ? out : null;
+}
+
+// The latest confirmation under this key, or null. A revocation after it means none.
+async function loadFormApproval(h, key) {
+  const recs = await listRecords(h, key);
+  if (!recs) return null;
+  for (let i = recs.length - 1; i >= 0; i--) {
+    const r = recs[i];
+    if (r?.kind === FORM_APPROVAL_KIND && r.key === key) return r.status === "approved" ? r : null;
+  }
+  return null;
+}
+
+// Which items need a confirmed form, and the form they are compared in. A provider line read from
+//   the description (declared_in "description") with no form of its own, and every condition the
+//   gate took from the user's words (extracted). A condition an adopter hands over structured arrives
+//   in its form already and is the adopter's to have confirmed (see [PROVIDER CONDITIONS]).
+//   Not found: the item is pending (form_pending) and a request goes into formRequests, carrying a
+//   proposed form if proposeComparableForm wrote one. A proposal confirms nothing.
+async function withConfirmedForm(h, item, { declared_by, tool, userId, mcpTool }, formRequests) {
+  const label = normalizeProviderLabel(item?.label);
+  const needs = declared_by === "user"
+    ? item?.extracted === true
+    : item?.declared_in === "description" && (item?.compare === null || item?.compare === undefined) &&
+      (label === "required" || label === "verify");
+  if (!needs) return item;
+  const wording = declared_by === "user" ? item.stated_as : item.description;
+  const keyLabel = declared_by === "user" ? "" : item.label;
+  const key = formApprovalKey({ declared_by, tool, userId, label: keyLabel, wording });
+  const approval = await loadFormApproval(h, key);
+  if (approval) {
+    return {
+      ...item,
+      compare: approval.form?.compare ?? null,
+      constrains: Array.isArray(approval.form?.constrains) ? approval.form.constrains : [],
+      ...(declared_by === "user" && typeof approval.form?.description === "string" ? { description: approval.form.description } : {}),
+      form_approval: { key, approved_by: approval.approved_by ?? null, at: approval.at ?? null },
+    };
+  }
+  const proposed = await safeHook(h.proposeComparableForm,
+    [{ declared_by, label: keyLabel, wording, mcpTool, constrains: item.constrains ?? [] }], () => undefined);
+  const proposal = proposed && typeof proposed === "object" && !Array.isArray(proposed) ? proposed : null;
+  formRequests.push({
+    item_id: item.id ?? null, declared_by, tool, user_id: declared_by === "user" ? (userId ?? null) : null,
+    label: keyLabel, wording, key, proposal,
+  });
+  return {
+    ...item,
+    // Until it is confirmed, the proposal's slots are what its words are about. Used only to keep a
+    //   value out of the condition's own words ([LIMIT WORDING]) — the direction that asks.
+    constrains: Array.isArray(proposal?.constrains) ? proposal.constrains : (item.constrains ?? []),
+    compare: null,
+    form_pending: { key },
+  };
+}
+
+// The confirmation itself. CONTRACT: request is an entry of gate.form_approvals (or the same fields);
+//   form is { compare, constrains: string[], description? }; approved_by names who confirmed it. The
+//   key is recomputed from the request's words — a request edited to point elsewhere confirms the
+//   words it carries, not the key it claims.
+//   compare must be an object: a form with nothing to compare is { kind: "user_approval" } — the user
+//   confirms it holds, each time, for the values shown ([APPROVAL BINDING]).
+// POLICY: who may confirm is the adopting system's to enforce (the provider for a provider line, the
+//   user for their own condition). This records who did; it cannot check identity.
+function validateForm(request, form) {
+  if (!form || typeof form !== "object" || Array.isArray(form)) return "form must be an object";
+  if (!form.compare || typeof form.compare !== "object" || Array.isArray(form.compare)) {
+    return "form.compare must be an object; with nothing to compare, use { kind: \"user_approval\" }";
+  }
+  if (form.constrains !== undefined && !(Array.isArray(form.constrains) && form.constrains.every(s => typeof s === "string" && s !== ""))) {
+    return "form.constrains must be an array of slot names";
+  }
+  if (request.declared_by === "provider") {
+    const r = valueSourceRule({ label: request.label, compare: form.compare });
+    if (r?.bad) return r.bad;
+    if (normalizeProviderLabel(request.label) === "required" && form.compare.kind === "user_approval") {
+      return "a [Required] line cannot be confirmed by the user's approval (3.3)";
+    }
+  }
+  return null;
+}
+
+async function recordFormDecision(h, request, { form, approved_by, revoked_by }, status) {
+  if (!request || (request.declared_by !== "provider" && request.declared_by !== "user")) {
+    throw new Error("form approval: request.declared_by must be \"provider\" or \"user\"");
+  }
+  if (typeof request.wording !== "string" || request.wording.trim() === "") throw new Error("form approval: request.wording is required");
+  const by = status === "approved" ? approved_by : revoked_by;
+  if (typeof by !== "string" || by.trim() === "") throw new Error(`form approval: ${status === "approved" ? "approved_by" : "revoked_by"} is required`);
+  if (status === "approved") {
+    const bad = validateForm(request, form);
+    if (bad) throw new Error(`form approval: ${bad}`);
+  }
+  const key = formApprovalKey({ declared_by: request.declared_by, tool: request.tool, userId: request.user_id,
+                                label: request.label, wording: request.wording });
+  const record = {
+    kind: FORM_APPROVAL_KIND, key, declared_by: request.declared_by, tool: request.tool ?? null,
+    user_id: request.user_id ?? null, label: request.label ?? "", wording: request.wording,
+    line_hash: ruleHash(`[${request.label ?? ""}] ${request.wording}`),
+    form: status === "approved" ? { compare: form.compare, constrains: form.constrains ?? [],
+                                     ...(typeof form.description === "string" ? { description: form.description } : {}) } : null,
+    status, ...(status === "approved" ? { approved_by } : { revoked_by }), at: h.now(),
+  };
+  await h.storage.persist(key, record);
+  return record;
+}
+
+// [USER CONDITIONS] 4.4: the user checklist is made at instruction time, from the trusted part of
+//   the instruction, and a condition the user states while answering joins it. The model finds the
+//   words (extractUserConditions); the gate checks they are there, in a segment the user typed, the
+//   same check as C2 (checkC2Claim). A condition whose words cannot be found is NOT dropped — a
+//   condition only adds reasons not to execute, so a stated one lost costs more than a mistaken one
+//   kept. It becomes an item like the others, and confirming its form is the user saying it is theirs.
+//   Ids are the words' hash, so the same words are the same item from one round to the next.
+//   An item the caller already passed (a standing setting, 4.4) with the same words is not repeated.
+//   The extraction is a check of its own (value_checks, kind "extraction"): a hook that threw is
+//   unverified, and the run goes to definition repair — the user's limits are not known to be absent.
+async function userConditionsFromInstruction(h, instruction, mcpTool, existing) {
+  const FAILED = Symbol("failed");
+  const out = await safeHook(h.extractUserConditions, [instruction, mcpTool], e => ({ [FAILED]: e?.message ?? String(e) }));
+  const check = (status, note) => [{ id: "user_conditions", kind: "extraction", slot: null, status, source: status === "checked" ? "instruction" : null, note }];
+  if (out === undefined) return { items: [], checks: [] };   // not wired: nothing extracted, and unsafeDefaults says so
+  if (out?.[FAILED]) return { items: [], checks: check("unverified", `extractUserConditions failed: ${out[FAILED]}`) };
+  if (out?.none === "absent") return { items: [], checks: check("checked", "no condition stated") };
+  if (!Array.isArray(out)) return { items: [], checks: check("unverified", "extractUserConditions returned neither a list nor { none: \"absent\" }") };
+  const seen = new Set((existing ?? []).map(i => foldActionText(i?.stated_as ?? i?.description ?? "")));
+  const items = [];
+  for (const claim of out) {
+    const quote = typeof claim?.quote === "string" ? claim.quote : null;
+    if (!quote || quote.trim() === "") continue;
+    const folded = foldActionText(quote);
+    if (seen.has(folded)) continue;
+    seen.add(folded);
+    const located = checkC2Claim({ value: quote, segment_index: claim.segment_index, span: claim.span }, instruction);
+    items.push({
+      id: `uc:${ruleHash(quote)}`, description: quote, stated_as: quote,
+      constrains: Array.isArray(claim.constrains) ? claim.constrains.filter(s => typeof s === "string") : [],
+      compare: null, extracted: true,
+      located_at: located.ok ? located.located_at : null,
+      ...(located.ok ? {} : { unlocated: located.why }),
+    });
+  }
+  return { items, checks: check("checked", `${items.length} condition(s) taken from the user's words`) };
+}
+
+// [APPROVAL BINDING] 6.3: an approval is bound to {slot_id, value}, is void when the value changes, and
+//   its record keeps the set of slots shown with it. Bound here to the item's version as well (6.1): an
+//   approval of a rule that has since changed is an approval of something else.
+//   An answer is { answer: true|false, shown: { <slot>: <value as shown> }, rule_hash } — what the gate
+//   put in the question (gate.unverified_checklist[].approve, gate.unverified_provider[].approve). A
+//   bare true/false names no values, so it counts only for an item that constrains no slot, and only
+//   when the rules have not changed since it was given.
+//   Returns null when there is no answer, { ok: true, answer, approval } when it holds, { ok: false, why }
+//   when it does not.
+function boundAnswer(raw, item, fieldsByName, checklistChanged) {
+  if (raw === undefined || raw === null) return null;
+  const targets = Array.isArray(item?.constrains) ? item.constrains : [];
+  if (typeof raw === "boolean") {
+    if (targets.length > 0) return { ok: false, why: "an approval that names no values cannot be bound to the slots it is about (6.3)" };
+    if (checklistChanged) return { ok: false, why: "the rules changed since it was given, and it names no version (6.1)" };
+    return { ok: true, answer: raw, approval: { answer: raw, shown: {}, rule_hash: null } };
+  }
+  if (typeof raw !== "object" || Array.isArray(raw) || typeof raw.answer !== "boolean") {
+    return { ok: false, why: "not an approval: { answer: true|false, shown, rule_hash }" };
+  }
+  if (raw.rule_hash !== item?.rule_hash) return { ok: false, why: "it was given for another version of this item (6.1)" };
+  const shown = raw.shown && typeof raw.shown === "object" ? raw.shown : {};
+  for (const n of targets) {
+    if (!(n in shown)) return { ok: false, why: `it does not say which ${n} it approved (6.3)` };
+    const f = fieldsByName.get(n);
+    if (!f || f.status !== "known" || stableJson(f.value) !== stableJson(shown[n])) {
+      return { ok: false, why: `${n} is not the value it approved (6.3)` };
+    }
+  }
+  return { ok: true, answer: raw.answer, approval: { answer: raw.answer, shown, rule_hash: raw.rule_hash } };
+}
+
+// Why an item is asked about before anything is compared.
+function pendingFormNote(it) {
+  return it.unlocated
+    ? `the gate could not find these words in what the user typed (${it.unlocated}); confirming the form is the user saying the condition is theirs`
+    : "no confirmed comparison form yet; whoever declared it confirms one (3.3)";
+}
+
+// What the gate shows with an approval question: the item's version and the values it is about.
+function approvalPrompt(item, fieldsByName) {
+  const shown = {};
+  for (const n of (Array.isArray(item?.constrains) ? item.constrains : [])) {
+    const f = fieldsByName.get(n);
+    if (f?.status === "known") shown[n] = f.value;
+  }
+  return { rule_hash: item?.rule_hash ?? null, shown };
+}
+
+// [OPTIONAL] A model's proposal for the comparable form of one condition. Shown to the declarer with
+//   the words; it confirms nothing. CONTRACT: { compare, constrains, description? } or undefined.
+//   Called with ({ declared_by, label, wording, mcpTool, constrains }).
+function proposeComparableForm() {
+  return undefined;
+}
+
+// [OPTIONAL — on UNSAFE_DEFAULT_HOOKS] The conditions the user stated in the instruction (4.4), as
+//   located claims. CONTRACT: [{ quote, segment_index, span, constrains? }] — quote copied from one
+//   trust:"user" segment, span its half-open range there — or { none: "absent" } (looked, none), or
+//   undefined (no report). Do not throw for "none".
+//   Unwired, a limit the user typed becomes an item only if the caller builds it: "nothing after 8pm"
+//   in the instruction and no item means the gate does not know it was said.
+function extractUserConditions() {
+  return undefined;
+}
+
 // 5. Running preflight
 
 // backstop — the last layer for failures that per-hook demotion cannot catch. Returns a recordable state even when something blows up.
@@ -1536,9 +1770,13 @@ async function runPreflight(h, input) {
 async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, fixedPreSet, user_action_name, measured_data, priorExecutionState, userChecklist, userAnswers, checklistAnswers: checklistAnswersIn, intent_attempt, tool_attempt, ask_attempt, lookup_attempt, checklist_digest_at_instruction }) {
   // Each item carries the version it is judged under (6.1), written by the gate, over anything the
   //   caller put there: its label, its wording, its comparison form.
-  const checklist = (userChecklist ?? []).map(i => (i && typeof i === "object" && !Array.isArray(i))
+  //   Reassigned once below, when the conditions the user stated in this instruction join it (4.4).
+  const withUserHash = items => items.map(i => (i && typeof i === "object" && !Array.isArray(i))
     ? { ...i, rule_hash: itemRuleHash(i, i.stated_as ?? i.description) } : i);
-  let checklistAnswers = checklistAnswersIn;
+  let checklist = withUserHash(userChecklist ?? []);
+  // The user's answers to approval questions, as given. Each is bound to what it approved before it
+  //   counts ([APPROVAL BINDING]); hooks only ever see the ones that hold.
+  const checklistAnswers = checklistAnswersIn;
   // Ceilings on the two resolution routes that can be retried (4.5: asking the user and the system
   //   lookup both have one; the adopting system sets it). Same contract as intent_attempt: the caller
   //   carries the count per action and sends back gate.next_ask_attempt / next_lookup_attempt.
@@ -1740,31 +1978,52 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   //   hook that returns a non-array would otherwise put null in provider_checklist, which already means
   //   "no decision made". Two meanings on one value is how a record stops being readable.
   //   Each carries its version (6.1), written by the gate.
-  const providerConditions = (Array.isArray(rawProviderConditions) ? rawProviderConditions : [])
-    .map(c => (c && typeof c === "object" && !Array.isArray(c))
-      ? { ...c, rule_hash: itemRuleHash(c, c.description) } : c);
+  // [CONFIRMED FORMS] A labelled line read from the description is compared only in the form its
+  //   declarer confirmed (4.2.1, 3.3). The gate looks the confirmation up itself; a line without one
+  //   is pending, and the request to confirm it — with a proposed form, if a model wrote one — goes
+  //   back in gate.form_approvals. [Notice] needs no form: there is nothing to compare.
+  const formRequests = [];
+  const providerConditions = [];
+  for (const c of (Array.isArray(rawProviderConditions) ? rawProviderConditions : [])) {
+    providerConditions.push(c && typeof c === "object" && !Array.isArray(c)
+      ? await withConfirmedForm(h, c, { declared_by: "provider", tool: mcpTool?.name ?? null, userId, mcpTool }, formRequests)
+      : c);
+  }
+
+  // [USER CONDITIONS] The conditions the user stated in this instruction join the user checklist
+  //   (4.4: made at instruction time, from the trusted part of the instruction). See extractUserConditions.
+  const extraction = await userConditionsFromInstruction(h, instruction, mcpTool, checklist);
+  const extractionChecks = extraction.checks;
+  const extractedItems = [];
+  for (const it of extraction.items) {
+    extractedItems.push(await withConfirmedForm(h, it, { declared_by: "user", tool: mcpTool?.name ?? null, userId, mcpTool }, formRequests));
+  }
+  checklist = withUserHash([...checklist, ...extractedItems]);
+  // Each provider condition carries its version (6.1), written by the gate after its form is attached.
+  for (let i = 0; i < providerConditions.length; i++) {
+    const c = providerConditions[i];
+    if (c && typeof c === "object" && !Array.isArray(c)) providerConditions[i] = { ...c, rule_hash: itemRuleHash(c, c.description) };
+  }
 
   // [VERSION] 6.1: the record says which checklist a verdict was made under, and a changed checklist
   //   voids earlier verdicts made under it — they are judged again, not re-checked. One digest over
   //   every item's version, provider and user alike.
-  //   At the trigger, a deferred run carries the digest it was scheduled under (deferred_input). When
-  //   it differs, what the user approved at instruction time was approved under rules that no longer
-  //   hold, so those approvals are not carried into this run. The values the user gave are: a value is
-  //   the user's statement, not a verdict, and every check on it runs again here regardless.
-  //   NOTE: this voids the run's approvals all at once. Which item changed is in the two lists of
-  //     rule_hash; voiding only the approvals of the changed items needs approvals tied to an item's
-  //     version, which is the approval binding of 6.3.
+  //   At the trigger, a deferred run carries the digest it was scheduled under (deferred_input). When it
+  //   differs, the record says so (checklist_changed), and an approval given under a rule that has since
+  //   changed does not count: each approval is bound to the version of its item ([APPROVAL BINDING]),
+  //   so the approvals of the changed items are voided and the others stand. The values the user gave
+  //   are kept: a value is the user's statement, not a verdict, and every check on it runs again here.
   const checklist_digest = ruleHash([
     ...providerConditions.map(c => `p:${c?.rule_hash ?? ""}`),
     ...checklist.map(i => `u:${i?.rule_hash ?? ""}`),
   ].sort().join("\n"));
   const checklistChanged = typeof checklist_digest_at_instruction === "string" &&
     checklist_digest_at_instruction !== checklist_digest;
-  const checklist_changed = checklistChanged
-    ? { at_instruction: checklist_digest_at_instruction, now: checklist_digest,
-        approvals_voided: Object.keys(checklistAnswers ?? {}) }
-    : null;
-  if (checklistChanged) checklistAnswers = {};
+  // Filled by the binding as the loops run; read when the record is assembled.
+  const voidedApprovals = [];
+  const checklistChangedNow = () => (checklistChanged
+    ? { at_instruction: checklist_digest_at_instruction, now: checklist_digest, approvals_voided: voidedApprovals.map(v => v.id) }
+    : null);
 
   // [VALUE SOURCE] Who may give each slot's value, from the conditions that say so.
   const sourceRules = valueSourceRules(providerConditions);
@@ -1876,7 +2135,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
 
   // The value checks (format, limit wording), from the field records. Common to both phases: a value
   //   whose format nobody could check is a declaration gap now, not at the trigger.
-  const value_checks = valueChecksFrom(fields, extra_fields, ctx.fieldSchemas);
+  const value_checks = [...valueChecksFrom(fields, extra_fields, ctx.fieldSchemas), ...extractionChecks];
   const valueCheckRepair = value_checks.filter(c => c.status === "unverified");
   const unverified_value_check_count = valueCheckRepair.length;
   const valueCheckRepairList = () => valueCheckRepair.map(c =>
@@ -1906,9 +2165,14 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     const systemNow = unknownNow.filter(f => f.route === "system_lookup");
     const pendingCount = unknownNow.length - blocking.length - repairNow.length;
     const askExhaustedNow = askAttempt >= h.limits.ask;
+    // Confirming a form is a declaration-time act (3.3), so it is settled now, while the user is here:
+    //   the user's conditions ask, the provider's unconfirmed lines are a gap waiting will not fill.
+    const userFormsNow = checklist.filter(i => i?.form_pending);
+    const providerFormsNow = providerConditions.filter(c => c?.form_pending);
 
-    if (blocking.length > 0 || repairNow.length > 0 || valueCheckRepair.length > 0) {
-      const decision = (repairNow.length || valueCheckRepair.length) ? "definition_repair"
+    if (blocking.length > 0 || repairNow.length > 0 || valueCheckRepair.length > 0 ||
+        userFormsNow.length > 0 || providerFormsNow.length > 0) {
+      const decision = (repairNow.length || valueCheckRepair.length || providerFormsNow.length) ? "definition_repair"
         : askExhaustedNow ? "exhausted" : "ask_user";
       // Block the scheduling itself (fail-closed). This is the last moment the user is present.
       // POLICY: can be changed to "schedule anyway, flagged unresolved" — a choice that accepts failure at trigger time.
@@ -1921,12 +2185,19 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
         provider_checklist: providerConditions,  // Raw declarations. Conditions are trigger-time (4.5)
         unverified_provider_count: null,         // Not performed at this phase
         value_checks, unverified_value_check_count,
-        checklist_digest, checklist_changed,
+        checklist_digest, checklist_changed: checklistChangedNow(),
         call_arguments: null,             // Assembled at trigger time only
         gate: {
           unknown_fields: blocking.map(f => ({ name: f.name, note: f.note ?? null,
             ...(f.prior_candidate ? { candidate: f.prior_candidate } : {}) })),
-          unverified_checklist: [],       // Not performed. Not "all verified" (see count: null above)
+          // Only the forms the user must confirm now; the items themselves are checked at the trigger.
+          unverified_checklist: userFormsNow.map(i => ({ id: i.id, description: i.description,
+            note: pendingFormNote(i), form_request: formRequests.find(r => r.item_id === i.id) ?? null })),
+          ...(formRequests.length ? { form_approvals: formRequests } : {}),
+          ...(providerFormsNow.length ? {
+            ...((failedNow.length || gapsNow.length) ? {} : { kind: "definition_repair" }),
+            definition_repair: providerFormsNow.map(c => ({ id: c.id, label: c.label, description: c.description, note: pendingFormNote(c) })),
+          } : {}),
           ...(failedNow.length ? {
             kind: "lookup_failed",
             lookup_failed_fields: failedNow.map(f => ({ name: f.name, note: f.note ?? null })),
@@ -1973,7 +2244,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       provider_checklist: providerConditions,  // Raw declarations. Conditions are trigger-time (4.5)
       unverified_provider_count: null,         // Not performed at this phase
       value_checks, unverified_value_check_count,
-      checklist_digest, checklist_changed,
+      checklist_digest, checklist_changed: checklistChangedNow(),
       call_arguments: null,               // Re-assembled at trigger time
       gate: null,                         // The gate stands only at trigger time
       execution_decision: "deferred",
@@ -1999,7 +2270,25 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   // the lookup actually settled on — which may have come from any of the five sources.
   // Without this the hook would have to redo the cascade itself, so such an item was not
   // implementable at all.
-  const checklistCtx = { ...ctx, fields, extra_fields };
+  // [APPROVAL BINDING] The answers that hold, as plain booleans: all a hook ever sees of an approval.
+  //   One that does not hold is recorded where its item is (approval_voided), and the item is judged
+  //   as if no answer had been given.
+  const fieldsByName = new Map([...fields, ...extra_fields].map(f => [f.name, f]));
+  const heldAnswers = {};
+  for (const it of [...checklist, ...providerConditions]) {
+    const b = it && typeof it === "object" ? boundAnswer(checklistAnswers?.[it.id], it, fieldsByName, checklistChanged) : null;
+    if (b?.ok) heldAnswers[it.id] = b.answer;
+  }
+  const checklistCtx = { ...ctx, fields, extra_fields, checklistAnswers: heldAnswers };
+  // Judges an approval for one item, records what happened, and says whether the gate decides it.
+  //   The gate decides when the item has nothing else to compare: no form (compare null) or a form of
+  //   kind user_approval. Otherwise the form decides, and a yes cannot override it.
+  const judgeApproval = it => {
+    const b = boundAnswer(checklistAnswers?.[it.id], it, fieldsByName, checklistChanged);
+    if (b && !b.ok) voidedApprovals.push({ id: it.id, why: b.why });
+    const decides = b?.ok === true && (it.compare === null || it.compare === undefined || it.compare?.kind === "user_approval");
+    return { b, decides };
+  };
 
   // A limit cannot be compared while the slot it limits is still UNKNOWN. That is not a
   // question for the user — they declared the rule; what is missing is the value, and the
@@ -2020,6 +2309,12 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   const missingTargets = targets => targets.filter(n => !lookedUpNames.has(n));
   const finalUserChecklist = [];
   for (const item of checklist) {
+    // A condition with no confirmed form is asked about first: confirming the form needs no value, and
+    //   until it is confirmed there is nothing to compare.
+    if (item.form_pending) {
+      finalUserChecklist.push({ ...item, id: item.id, status: "unverified", source: null, note: pendingFormNote(item) });
+      continue;
+    }
     const targets = Array.isArray(item.constrains) ? item.constrains : [];
     const unknownTargets = missingTargets(targets);
     if (unknownTargets.length > 0) {
@@ -2039,8 +2334,19 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       });
       continue;
     }
-    const out = await safeHook(h.verifyUserChecklistItem, [item, checklistCtx],
+    const { b: approval, decides } = judgeApproval(item);
+    const voided = approval && !approval.ok ? { approval_voided: approval.why } : {};
+    if (decides) {
+      // The user's own answer, bound to the values it was given for. A no is a finished check that
+      //   prohibits (unmet), with the user as its source.
+      finalUserChecklist.push({ ...item, id: item.id, status: approval.answer ? "verified" : "unmet",
+        source: "user_answer", approval: approval.approval,
+        note: approval.answer ? "the user approved it for the values shown" : "the user said it does not hold for the values shown" });
+      continue;
+    }
+    const out0 = await safeHook(h.verifyUserChecklistItem, [item, checklistCtx],
       e => ({ status: "unverified", source: null, note: `checklist verification hook failed: ${e?.message ?? String(e)}` }));
+    const out = { ...(out0 ?? {}), ...voided };
     // Three outcomes, not two. "unmet" is a condition that WAS checked and prohibits
     // execution — the specification's hold. Collapsing it into "unverified" makes the
     // record say "not checked" about something that was checked and violated, and sends
@@ -2077,6 +2383,15 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       //   POLICY: gating this on an acknowledgement passed back by the caller is the adopting system's
       //     call — 8.3 leaves accepting that risk to its policy.
       finalProviderChecklist.push({ ...base, status: "disclosure_required", source: null, route: null });
+      continue;
+    }
+
+    // A labelled line with no confirmed form: nothing to compare yet. The provider confirms one, so it
+    //   is the provider's gap whatever the label (4.5c) — the user is not asked to approve a rule whose
+    //   form nobody has confirmed. The request is in gate.form_approvals.
+    if (cond.form_pending) {
+      finalProviderChecklist.push({ ...base, status: "unverified", source: null, route: "definition_repair",
+        note: pendingFormNote(cond) });
       continue;
     }
 
@@ -2141,8 +2456,18 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
         continue;
       }
     } else {
-      out = await safeHook(h.verifyProviderCondition, [cond, checklistCtx],
-        e => ({ status: "unverified", source: null, note: `provider condition hook failed: ${e?.message ?? String(e)}` }));
+      // [Verify]: the user's approval is the means (3.3). Bound to the values shown and to this
+      //   condition's version, it is decided here when there is nothing else to compare.
+      const { b: approval, decides } = label === "verify" ? judgeApproval(cond) : { b: null, decides: false };
+      if (decides) {
+        out = approval.answer
+          ? { status: "checked", source: "user_answer", approval: approval.approval, note: "the user approved it for the values shown" }
+          : { status: "unmet", source: "user_answer", approval: approval.approval, note: "the user did not approve it for the values shown" };
+      } else {
+        out = await safeHook(h.verifyProviderCondition, [cond, checklistCtx],
+          e => ({ status: "unverified", source: null, note: `provider condition hook failed: ${e?.message ?? String(e)}` }));
+        if (approval && !approval.ok) out = { ...(out ?? {}), approval_voided: approval.why };
+      }
     }
 
     // Both outcomes need a source. 5.1 settles a state by whether it was looked up from a declared
@@ -2170,13 +2495,9 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
              `${JSON.stringify(out?.status)} from ${JSON.stringify(out?.source ?? null)}`;
     }
 
-    // [NOT IMPLEMENTED] Spec 6.3 binds each approval to a {slot_id, value} pair, voids it when the value
-    //   changes, and records the set of slots shown with it. This skeleton does none of that: a [Verify]
-    //   approval is whatever verifyProviderCondition reports, with its source. An approval given for one
-    //   amount therefore still reads as given after the amount changes, unless the hook checks.
-    //   POLICY: until the gate does it, the hook must compare the approved value against the settled
-    //     one in ctx.fields and return unverified on a mismatch. Implementing it here needs a caller
-    //     contract for approvals (what was shown, for which values), which this skeleton does not have.
+    // Spec 6.3 binds each approval to a {slot_id, value} pair, voids it when the value changes, and
+    //   records the set of slots shown with it: [APPROVAL BINDING], above. A hook that reads approvals
+    //   sees only the ones that hold.
     // The label decides the route, so nothing here is a judgment call. [Verify] creates a user
     //   approval slot; [Required] cannot be answered by the user and is a gap in the declaration
     //   or the lookup path (4.5c).
@@ -2239,7 +2560,11 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     //   confirmation 5.2 requires. The answer comes back as user_answer; the candidate itself never settles.
     unknown_fields: unknownFields.map(f => ({ name: f.name, note: f.note ?? null,
       ...(f.prior_candidate ? { candidate: f.prior_candidate } : {}) })),
-    unverified_checklist: unverifiedItems.map(i => ({ id: i.id, description: i.description, note: i.note ?? null })),
+    // Each question says what answering it means: confirm a form (form_request), or approve the item
+    //   for the values shown (approve — send back { answer, shown, rule_hash } as checklistAnswers[id]).
+    unverified_checklist: unverifiedItems.map(i => ({ id: i.id, description: i.description, note: i.note ?? null,
+      ...(i.form_pending ? { form_request: formRequests.find(r => r.item_id === i.id) ?? null }
+                         : { approve: approvalPrompt(i, fieldsByName) }) })),
     _diag: { lookup_failures: lookupFailures([...fields, ...extra_fields]), slot_branch: slotSet.branch ?? null },
   };
   // A broken lookup is definition repair addressed to whoever owns the hook, and it outranks the question
@@ -2288,8 +2613,12 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   // [Verify] conditions still waiting on the user's approval. A blank like any other.
   if (providerAsk.length > 0) {
     gate.unverified_provider = providerAsk.map(c =>
-      ({ id: c.id, label: c.label, description: c.description, note: c.note ?? null }));
+      ({ id: c.id, label: c.label, description: c.description, note: c.note ?? null,
+         approve: approvalPrompt(c, fieldsByName) }));
   }
+  // The forms waiting to be confirmed, provider's and user's: each with the words, who declared them,
+  //   and a proposal if a model wrote one. preflight.approveForm(request, { form, approved_by }).
+  if (formRequests.length > 0) gate.form_approvals = formRequests;
   // [Notice] items. Never counted, never a reason to hold — there is nothing to satisfy, and gating
   // one would make "the user was told" grounds for executing, which 3.3 rules out.
   //   This is a HAND-OFF, not a check. The gate cannot observe whether a sentence reached a human, so
@@ -2429,7 +2758,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     unknown_count, unverified_checklist_count, unverified_provider_count,
     value_checks,
     unverified_value_check_count: value_checks.filter(c => c.status === "unverified").length,
-    checklist_digest, checklist_changed,
+    checklist_digest, checklist_changed: checklistChangedNow(),
     call_arguments,                  // The exact object executeIfReady sends
     gate,
     execution_decision,
@@ -2513,7 +2842,15 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.16",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.17",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.17: a labelled description line and a condition taken from the user's words are compared
+    //        only in a confirmed form: until one is confirmed the item carries form_pending, and the
+    //        request is in gate.form_approvals (provider: definition_repair, user: ask_user). A
+    //        confirmed one carries form_approval. Approvals are bound (6.3): an item decided by the
+    //        user's answer carries approval { answer, shown, rule_hash }; one whose answer did not hold
+    //        carries approval_voided. gate.unverified_checklist / unverified_provider entries carry
+    //        approve (what to send back) or form_request. value_checks may hold kind "extraction".
+    //        checklist_changed.approvals_voided lists only the approvals that did not hold.
     //   1.16: value_checks (one entry per check: format per slot, limit_wording per value read from the
     //        user's words on a limited slot, payload) and unverified_value_check_count. A format the gate
     //        could not check is "unverified" and the decision is definition_repair; before 1.16 an
@@ -2689,15 +3026,18 @@ const REQUIRED_HOOKS = [
 //   A value_source condition does not reach it: the gate checks that kind itself.
 // getProviderConditions is not on this list: its default reads the labelled lines (4.2.1), and a line
 //   it cannot compare is unverified, never absent.
+// NOTE: extractUserConditions returns no report. Unwired, a condition the user states in the
+//   instruction becomes an item only if the caller builds one (4.4).
 const UNSAFE_DEFAULT_HOOKS = ["applyFieldPolicy", "validateFieldSchema", "verifyUserChecklistItem",
                               "validatePayload", "spanSupportsValue",
                               "verifyProviderCondition",
-                              "getAllowedSources"];
+                              "getAllowedSources", "extractUserConditions"];
 
 const defaultHooks = {
   classifyWhenCase, extractUserActionName, confirmToolNameMatchesIntent,
   getRequiredFields, getCandidateSlots, materializeSlots, getAdvisoryNotes,
   getProviderConditions, verifyProviderCondition, getAllowedSources, isSettledAtExecution,
+  proposeComparableForm, extractUserConditions,
   extractFromInstruction, spanSupportsValue, measureFromEnvironment,
   applyFieldPolicy, validateFieldSchema, validatePayload, verifyUserChecklistItem,
   formatReason, buildDeferredInput, buildActionKey,
@@ -2753,6 +3093,10 @@ function createPreflight({ hooks = {}, storage, clock, strict = false, limits = 
     executeIfReady: (state, mcpTool, callMcpTool) => executeIfReady(h, state, mcpTool, callMcpTool),
     recordExecutionState: state => recordExecutionState(h, state),
     getPriorExecutionState: actionKey => getPriorExecutionState(h, actionKey),
+    // [CONFIRMED FORMS] The declarer's confirmation of a form, and its withdrawal. request is an entry
+    //   of gate.form_approvals. Needs storage.list to be read back; without it nothing is confirmed.
+    approveForm: (request, { form, approved_by } = {}) => recordFormDecision(h, request, { form, approved_by }, "approved"),
+    revokeForm: (request, { revoked_by } = {}) => recordFormDecision(h, request, { revoked_by }, "revoked"),
     unsafeDefaults,
   };
 }
