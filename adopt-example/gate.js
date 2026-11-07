@@ -114,16 +114,6 @@ function providerConditionsFrom(mcpTool, confirmed) {
   });
 }
 
-// Text inside a declared limit's own wording is not a value for the slot that limit constrains.
-function insideDeclaredLimit(userChecklist, fieldName, textAtSpan) {
-  const fold = t => String(t).toLowerCase().replace(/\s+/g, " ").trim();
-  const at = fold(textAtSpan);
-  if (!at) return null;
-  const item = (userChecklist ?? []).find(i =>
-    Array.isArray(i?.constrains) && i.constrains.includes(fieldName) &&
-    typeof i.stated_as === "string" && fold(i.stated_as).includes(at));
-  return item ? item.id ?? "unnamed item" : null;
-}
 
 /**
  * @param ask  The model call: (model, system, user, hook) → parsed JSON. connect.js supplies it.
@@ -224,18 +214,27 @@ function createHooks({ model = "model", ask, runId = "run", meter, confirmed, to
       return { value, segment_index, span: locateQuote(seg?.text, value) };
     },
 
-    spanSupportsValue(value, textAtSpan, fieldName, ctx) {
-      if (insideDeclaredLimit(ctx?.userChecklist, fieldName, textAtSpan)) return false;
+    // Equality of the words at the span and the value. Words inside a limit the user declared never
+    //   reach this hook: the skeleton refuses them first ([LIMIT WORDING]).
+    spanSupportsValue(value, textAtSpan) {
       return squash(value) === squash(textAtSpan);
     },
 
     // The field's own schema, as the provider declared it, checked by the validator. A schema it
-    //   cannot compile refuses the value rather than waving it through.
+    //   cannot compile is a check not made: unverified, which the skeleton sends to definition repair.
     validateFieldSchema(value, schema, ctx, fieldName) {
       if (!schema) return null;
       const out = checkAgainst(schema, value);
-      if (out.error) return `"${fieldName}" has a schema the validator cannot run: ${out.error}`;
+      if (out.error) return { unverified: `"${fieldName}" has a schema the validator cannot run: ${out.error}` };
       return out.ok ? null : `"${fieldName}" does not match its declared schema: ${out.errors}; got ${JSON.stringify(value)}`;
+    },
+
+    // The whole argument object against the tool's input schema, by the same validator.
+    validatePayload(args, inputSchema) {
+      if (!inputSchema) return null;
+      const out = checkAgainst(inputSchema, args);
+      if (out.error) return { unverified: `the input schema cannot be run by the validator: ${out.error}` };
+      return out.ok ? null : `the arguments do not match the input schema: ${out.errors}`;
     },
 
     measureFromEnvironment(fieldName, ctx) {
