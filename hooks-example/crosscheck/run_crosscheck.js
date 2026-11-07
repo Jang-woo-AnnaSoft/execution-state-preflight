@@ -49,11 +49,14 @@ function compose(base, v) {
 
 function memStorage() {
   const m = new Map();
-  return { persist: async (k, r) => { if (!m.has(k)) m.set(k, []); m.get(k).push(r); }, load: async k => m.get(k) ?? null };
+  return { persist: async (k, r) => { if (!m.has(k)) m.set(k, []); m.get(k).push(r); }, load: async k => m.get(k) ?? null,
+           // Every record under the key, oldest first. Since skeleton 1.18 the gate reads what the unit
+           //   was asked, and how often, this way.
+           list: async k => [...(m.get(k) ?? [])] };
 }
 
 let seq = 0;
-function hooksFor(c) {
+function hooksFor(c, unitKey) {
   const H = c.hooks ?? {};
   for (const unsupported of ["span_support", "allowed_sources", "checklist_verdicts", "supplied_unsafe_hooks"]) {
     if (has(H, unsupported)) throw new Error(`case data "${unsupported}" is not wired in this runner yet`);
@@ -67,7 +70,8 @@ function hooksFor(c) {
     extractFromInstruction: f => (has(H.extract ?? {}, f) ? val(H.extract[f]) : undefined),
     // Same as the skeleton's reference body: measured_data[field] as given.
     measureFromEnvironment: (f, ctx) => (ctx.measured_data && f in ctx.measured_data) ? val(ctx.measured_data[f]) : undefined,
-    buildActionKey: () => `crosscheck:${++seq}`,
+    // One key per case run, the same in each of its rounds (the asking round, the run, the trigger re-run).
+    buildActionKey: () => unitKey,
     // Since skeleton 1.16 an unwired validator reads as unverified (definition_repair). The cases do not
     //   exercise validation (the port they were written against had none), so the runner reports values
     //   checked unless a case asks for the skeleton's own defaults with hooks.validators: "default".
@@ -101,18 +105,32 @@ function summarize(r) {
   return `${r.execution_decision} -- ${bits.join(", ")}`;
 }
 
-async function runOne(c) {
-  return createPreflight({ hooks: hooksFor(c), storage: memStorage() })
+async function runOne(c, unit) {
+  return createPreflight({ hooks: hooksFor(c, unit.key), storage: unit.storage })
     .runPreflightAndRecord({ ...c.input, measured_data: c.measured_data });
+}
+
+// Since skeleton 1.18 an answer counts only for a question the unit was asked. A case that carries
+//   answers (input.userAnswers / input.checklistAnswers) is the round AFTER the question, so the runner
+//   first runs the round that asked: the same case with no answers, in the same storage, under the
+//   same key. An answer the case gives to something that round did not ask is refused, as the gate
+//   would refuse it in use.
+async function askFirst(c, unit) {
+  const answers = Object.keys(c.input?.userAnswers ?? {}).length + Object.keys(c.input?.checklistAnswers ?? {}).length;
+  if (!answers) return;
+  const q = clone(c); q.input.userAnswers = {}; q.input.checklistAnswers = {};
+  await runOne(q, unit);
 }
 
 // A deferred instruction-time verdict is re-run as the trigger would run it (c1 immediate), as theirs does.
 async function decide(c) {
-  const r = await runOne(c);
+  const unit = { key: `crosscheck:${++seq}`, storage: memStorage() };
+  await askFirst(c, unit);
+  const r = await runOne(c, unit);
   const out = { decision: r.execution_decision, why: summarize(r), phase: r.phase };
   if (r.phase === "at_instruction" && r.execution_decision === "deferred") {
     const t = clone(c); t.hooks.c1 = "immediate";
-    const rt = await runOne(t);
+    const rt = await runOne(t, unit);
     out.at_trigger_rerun = { decision: rt.execution_decision, why: summarize(rt) };
   }
   return out;

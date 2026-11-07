@@ -38,8 +38,16 @@ const base = (narrow) => ({
   },
 });
 const variants = [{ name: "plain", provider_conditions: [] }];
+// A case that answers: amount is not in the extraction, so the asking round asks for it; account is,
+//   so an answer for it was never asked for and is refused (skeleton 1.18).
+const answering = () => {
+  const b = base(false);
+  delete b.hooks.extract.amount;
+  b.input.userAnswers = { amount: 500, account: "999-99" };
+  return b;
+};
 const cases = {
-  transaction_cases: [{ id: "T-default", esp_base: base(false), variants }],
+  transaction_cases: [{ id: "T-default", esp_base: base(false), variants }, { id: "A-answer", esp_base: answering(), variants }],
   candidate_set_cases: [{ id: "N-narrow", esp_base: base(true), variants }],
 };
 
@@ -58,12 +66,17 @@ try {
   const row = id => rows.find(r => r.id === id);
 
   console.log("--- crosscheck runner: candidate_slots wiring ---");
-  check("both lists are run", rows.length, 2);
+  check("both lists are run", rows.length, 3);
   check("default candidate set: executes", row("T-default")?.ours.decision, "execute");
   check("candidate_set_cases is read", row("N-narrow") != null, true);
   check("narrowed to [memo]: definition_repair", row("N-narrow")?.ours.decision, "definition_repair");
   check("  account routed to definition_repair", /account=unknown->definition_repair/.test(row("N-narrow")?.ours.why ?? ""), true);
   check("  amount routed to definition_repair", /amount=unknown->definition_repair/.test(row("N-narrow")?.ours.why ?? ""), true);
+
+  console.log("--- crosscheck runner: a case that answers runs the asking round first ---");
+  check("the asked slot's answer counts: executes", row("A-answer")?.ours.decision, "execute");
+  check("  amount from user_answer", /amount=known\(user_answer\)/.test(row("A-answer")?.ours.why ?? ""), true);
+  check("  account stays the instruction's: the unasked answer is refused", /account=known\(instruction\)/.test(row("A-answer")?.ours.why ?? ""), true);
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });
 }
