@@ -26,7 +26,7 @@
  *      the gate from the unit's own records (4.5, 4.6).
  */
 
-const { createPreflight, ruleHash } = require("../execution-state-preflight");
+const { createPreflight, ruleHash, describeForm, readConfirmedForms } = require("../execution-state-preflight");
 const { locatedActionName } = require("./c2-stub");
 
 let failures = 0;
@@ -421,6 +421,24 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     check("refused: a value_source form that does not fit its label",
       await refuse(req, { form: { compare: { kind: "value_source", slot: "time", measured_within_user_range: true } }, approved_by: "x" }) !== "accepted", true);
 
+    // What the person confirming sees: the form in words, written by code from the form.
+    check("the request shows the proposal in words, written from the form", req.proposal_text,
+      "buyer_contact is taken only from a system measurement (measured_data). The user's words and answers never fill it, and the user is not asked for it.");
+    check("  the same form always reads the same", describeForm(proposal, "Required"), req.proposal_text);
+    check("  a measured fact", describeForm({ compare: { source: "measured_data", measure: "order_status", schema: { const: "agreed" } } }, "Required"),
+      "holds only when the system measurement order_status is exactly \"agreed\". A measurement that cannot be read leaves it unconfirmed, and the run does not execute.");
+    check("  the user's own value, a measurement inside their range too",
+      /only from the user.*only inside a range the user set/.test(describeForm({ compare: { kind: "value_source", slot: "time", measured_within_user_range: true } }, "Verify")), true);
+    check("  the user's approval, for the values shown",
+      /each time, for the values of location shown/.test(describeForm({ compare: { kind: "user_approval" }, constrains: ["location"] }, "Verify")), true);
+    check("  a kind it does not read says so", /compared by the adopting system's own code/.test(describeForm({ compare: { kind: "not_after", hhmm: "20:00" } }, "")), true);
+    check("  a form that does not fit its label says so", /does not fit its label/.test(describeForm({ compare: { kind: "value_source", slot: "time", measured_within_user_range: true } }, "Required")), true);
+    check("  the confirmed line carries those words too", cond(second.r).form_approval?.text, req.proposal_text);
+    const read = await readConfirmedForms(storage, tool(LINE));
+    check("readConfirmedForms: each labelled line with its confirmed form, for the adopter", [read.length, read[0].label, JSON.stringify(read[0].form?.compare)],
+      [1, "Required", JSON.stringify(proposal.compare)]);
+    check("  a line with none reads null", (await readConfirmedForms(memStorage(), tool(LINE)))[0].form, null);
+
     // A [Verify] line confirmed as the user's approval of a slot.
     const VLINE = "Schedule a pickup.\n[Verify] The seller agrees to the pickup place.";
     const vs = memStorage();
@@ -503,6 +521,15 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
       ["at_instruction", "ask_user", "user"]);
     const schedP = await run({ measured: ALL_MEASURED, when: "scheduled", tool: tool("Schedule a pickup.\n[Required] The sale must be agreed.") });
     check("  and an unconfirmed provider line stops it as a gap", schedP.r.execution_decision, "definition_repair");
+
+    // A range the user stated but has not confirmed yet does not open the slot to a measurement (3.3).
+    const window = "Pick up LST-2291 at Hongdae station lockers. Any time this Saturday between 1pm and 6pm.";
+    const winClaim = { quote: "Any time this Saturday between 1pm and 6pm.", segment_index: 0, span: [window.indexOf("Any"), window.length], constrains: ["time"] };
+    const TIME_RULE = [{ id: "c_time", label: "Verify", description: "The seller's time, or a request inside their range.",
+                         compare: { kind: "value_source", slot: "time", measured_within_user_range: true } }];
+    const unconfirmedRange = await run({ text: window, extract: { item_id: at(window, "LST-2291"), location: at(window, "Hongdae station lockers") },
+      measured: { ...ALL_MEASURED, time: SAT_3PM }, conditions: TIME_RULE, over: { extractUserConditions: extract([winClaim]) } });
+    check("a range not yet confirmed: the buyer's requested time is not taken", [field(unconfirmedRange.r, "time").status, field(unconfirmedRange.r, "time").range_declared], ["unknown", false]);
 
     const unwired = createPreflight({ hooks: hooks({ measured: ALL_MEASURED }), storage: memStorage() });
     check("unwired, the gate says so: extractUserConditions is an unsafe default", unwired.unsafeDefaults.includes("extractUserConditions"), true);
