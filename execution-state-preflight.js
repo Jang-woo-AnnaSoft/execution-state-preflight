@@ -96,6 +96,12 @@
  *   //   candidate      prior_state held a value. Not a confirmation: the slot stays unknown and the
  *   //                  value waits on the user (prior_candidate, 5.2)
  *   //   Written by the gate, never by a hook: resolveField re-attaches it after applyFieldPolicy.
+ * @property {{status: "checked"|"rejected"|"unverified", source: string|null, note?: string}} [format_check]
+ *   // The value's format check, written by the gate (resolveField). Absent when no schema is declared
+ *   //   or the value never reached the check. Gathered into the record's value_checks.
+ * @property {{item: string|null, status: "checked"|"rejected", source: "instruction", note: string}[]} [limit_checks]
+ *   // Limit-wording checks on a value read from the user's words ([LIMIT WORDING]). Written by the gate.
+ * @property {(string|null)[]} [source_rule_ids] // The value_source conditions that narrowed allowed_sources
  * @property {boolean} [derived]       // The value was computed from the span plus other inputs, not stated
  * @property {Object[]} [derived_from]  // Every other input a derived value rests on, as the gate verified it:
  *   //   { source: "instruction", segment_index, span, text } | { source: "measured_data", name, value }
@@ -188,6 +194,13 @@
  * @property {number|null} unverified_checklist_count
  * @property {number|null} unverified_provider_count
  *   // Provider conditions not compared. pending_on_slot and disclosure_required are not counted.
+ * @property {Object[]|null} [value_checks]
+ *   // One entry per check on a value (3.3.1): { id, kind: "format"|"limit_wording"|"payload", slot,
+ *   //   status, source, note }. Statuses: checked | rejected | unverified | pending_on_slot | unmet
+ *   //   (payload only). Only unverified is counted; it routes to definition_repair.
+ * @property {number|null} [unverified_value_check_count]
+ * @property {string|null} [checklist_digest]   // 6.1: the version of the whole checklist this verdict used
+ * @property {Object|null} [checklist_changed]  // At the trigger: { at_instruction, now, approvals_voided }
  * @property {GateResult|null} gate     // The authoritative decision. Consumers read this, not reason.
  * @property {"execute"|"ask_user"|"system_lookup"|"definition_repair"|"exhausted"|"hold"|"deferred"|"executed"|"failed"} execution_decision
  *   // deferred: the normal wait for non-immediate work (distinct from hold). Only "executed" counts as baseline.
@@ -281,6 +294,50 @@ function intentFingerprint(instruction) {
   let hash = 5381;
   for (let i = 0; i < text.length; i++) hash = (((hash << 5) + hash) ^ text.charCodeAt(i)) >>> 0;
   return `${text.length}-${hash.toString(36)}`;
+}
+
+// 6.1: which wording a verdict was made under. One normalization for every rule: Unicode form and
+//   runs of whitespace are not a different rule; case, punctuation and every word are. Stricter than
+//   intentFingerprint on purpose — "$1,000" and "$1000" may say the same thing, but whether they do is
+//   the declarer's call, not this function's.
+// NOTE: identity, not integrity. Two 32-bit hashes, enough to tell versions apart; not a signature.
+//   Whether a stored record was altered is the storage adapter's concern (8.2).
+function ruleHash(text) {
+  const s = String(text ?? "").normalize("NFKC").replace(/\s+/g, " ").trim();
+  let a = 5381, b = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    a = (((a << 5) + a) ^ c) >>> 0;
+    b = Math.imul(b ^ c, 0x01000193) >>> 0;
+  }
+  return `${s.length}-${a.toString(36)}${b.toString(36)}`;
+}
+
+// JSON with object keys sorted, so the same form hashes the same whatever order it was written in.
+function stableJson(v) {
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
+  if (v && typeof v === "object") return `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${stableJson(v[k])}`).join(",")}}`;
+  return JSON.stringify(v ?? null);
+}
+
+// The version of one checklist item: its label, its wording and its comparison form. A changed form
+//   is a changed rule, even when the sentence is the same.
+function itemRuleHash(item, wording) {
+  return ruleHash(`${item?.label ?? ""}\u0000${wording ?? ""}\u0000${stableJson(item?.compare ?? null)}`);
+}
+
+// A labelled line (4.2.1) is a line of the description that starts with a bracketed word. Matching, not
+//   interpretation: the bracketed word is passed on as the label, and normalizeProviderLabel routes a
+//   word it does not know to definition_repair. So "[Requried]" is not dropped as prose — a typo in a
+//   declaration does not delete the condition.
+//   NOTE: a prose line that happens to start with brackets ("[Beta] …") is read as a label too, and held
+//     for definition repair. That is the fail-closed reading, and the provider can reword it.
+const LABEL_LINE = /^\s*\[([^\]\n]+)\]\s*(.+?)\s*$/;
+function labelledLines(description) {
+  return String(description ?? "").split("\n")
+    .map(l => l.match(LABEL_LINE))
+    .filter(Boolean)
+    .map(m => ({ label: m[1].trim(), text: m[2] }));
 }
 
 async function safeHook(fn, args, onFail) {
@@ -649,23 +706,27 @@ function materializeSlots(mcpTool, groundedFieldNames) {
   return { status: "resolved", required, branch: pick };
 }
 
-// [REQUIRED-SAFETY] Slot resolved is not the same fact as schema valid. The default checks nothing —
-//   wire AJV (2020-12) here.
-// CONTRACT: null if the complete argument object satisfies inputSchema, a reason string if not. Do not throw.
+// [REQUIRED-SAFETY] Slot resolved is not the same fact as schema valid. Wire a validator here (for
+//   example AJV, 2020-12): the skeleton has none, so the comparison engine is the adopter's choice.
+// CONTRACT: null if the complete argument object satisfies inputSchema, a reason string if not,
+//   { unverified: "<why>" } if it could not be checked. Do not throw (a throw is read as unverified).
+// The default could not check, and says so. 6.3: a check that cannot be made stays unknown and goes to
+//   definition repair — it is not a pass.
+//   BREAKS: return null here, as this once did, and an unwired gate sends a payload nobody validated
+//     while the record reads as though the whole object was checked.
 function validatePayload(args, inputSchema, ctx) {
-  return null;
+  if (inputSchema === undefined || inputSchema === null) return null;   // nothing declared to check against
+  return { unverified: "validatePayload not wired: the argument object was not checked against inputSchema" };
 }
 
 // Spec 6.3 lists "read labels, expand them into slots, reflect them in the verdict" among the gate's
-//   responsibilities. That is getProviderConditions + verifyProviderCondition, below. This hook is the
-//   OTHER half: whatever the description says that nobody turned into a declaration.
-//   What is still not done here is turning a sentence in prose into a declaration. 4.2.1 and 3.3 set
-//   the contract for that — a trusted declarer, the sentence put into a comparable form and confirmed
-//   by its declarer at declaration time, only that form compared at execution — and the specification
-//   leaves the step to the adopting system rather than to the gate. An adopter who parses labels out of a description
-//   hands the result to getProviderConditions, where it is compared like any other declaration.
-//   BREAKS: lower the bar and the description becomes an input the gate interprets, so a reworded
-//     sentence upstream silently changes what is enforced.
+//   responsibilities. That is getProviderConditions (which reads the labelled lines by default) +
+//   verifyProviderCondition, below. This hook is the OTHER half: the description's unlabelled prose,
+//   which no one declared as a condition.
+//   A labelled line is compared only in the form its declarer confirmed (4.2.1, 3.3). Until it has
+//   one it is unverified, and routed by its label — never interpreted here.
+//   BREAKS: compare the sentence itself and the description becomes an input the gate interprets, so a
+//     reworded sentence upstream silently changes what is enforced.
 //   NOTE: prose that stays here reaches the model as context and nothing more. A restricting condition
 //     left in this string is enforced only if the model reads it, which is the arrangement this
 //     specification exists to replace — so a condition that matters belongs in a declaration.
@@ -723,13 +784,79 @@ function normalizeProviderLabel(label) {
   return PROVIDER_LABELS.has(t) ? t : null;
 }
 
-// [UNSAFE DEFAULT] Returns no conditions for every tool. Unwired, the provider checklist is empty
-//   and the gate is back to arguments only.
+// Reads the labelled lines of the tool's description (4.2.1): one condition per line. 6.3 lists "read
+//   labels, expand them into slots" among the gate's own responsibilities, so this is the default,
+//   not an adopter's option.
+//   What this default does not do is put a line into a comparable form. A line arrives with compare:
+//   null, verifyProviderCondition has nothing to compare, and the line is unverified: [Required] to
+//   definition_repair, [Verify] to the user (3.3: a condition not put into a confirmed form stays
+//   unverified). Fail-closed — a declared condition is never silently absent.
+//   An adopter that holds confirmed forms replaces this body and returns the same items with compare.
 // NOTE: reached only after the tool determination gate, so the tool is settled here and an empty
 //   list legitimately means "this tool declares no conditions" — unlike getRequiredFields, where a
 //   missing schema and required: [] had to be told apart.
+// NOTE: the id is the line's hash, so it survives reordering and changes when the wording does.
 function getProviderConditions(mcpTool) {
-  return [];
+  const tool = mcpTool?.name ?? "tool";
+  return labelledLines(mcpTool?.description).map(l => ({
+    id: `${tool}:${ruleHash(`[${l.label}] ${l.text}`)}`,
+    label: l.label, description: l.text, constrains: [], compare: null, declared_in: "description",
+  }));
+}
+
+// [VALUE SOURCE] A condition on WHO may give a slot's value (3.3: "who may give a value is marked
+//   with a label"). The form is
+//     compare: { kind: "value_source", slot: "<field>", measured_within_user_range?: true }
+//   and the label decides the sources — the form names none, so it cannot widen them:
+//     [Required]  the value is confirmed only from a system source (SYSTEM_SOURCES). It is not filled
+//                 from the user's words or answers.
+//     [Verify]    the value is the user's own (USER_SOURCES). A value the user did not give directly
+//                 becomes the value only with the user's approval — which is the user giving it, as
+//                 user_answer. With measured_within_user_range, a measurement also counts, and only
+//                 inside a range the user set (3.3, the value settled at execution time).
+//   The gate enforces this itself, at lookup: the slot consults only those sources. So the value is
+//   never settled from anyone else, and the condition is checked from the gate's own record of where
+//   the value came from. No hook is asked whether it holds.
+//   BREAKS: check it after the lookup instead and an earlier source wins first — a contact the user
+//     typed is found before the platform's, and the condition can only fail, never send the lookup on.
+const USER_SOURCES = new Set(["user_answer", "instruction", "pre_set_data"]);
+
+function valueSourceRule(cond) {
+  const c = cond?.compare;
+  if (!c || c.kind !== "value_source") return null;
+  const label = normalizeProviderLabel(cond?.label);
+  if (typeof c.slot !== "string" || c.slot === "") return { bad: "value_source names no slot" };
+  if (label === "required") {
+    if (c.measured_within_user_range !== undefined) {
+      return { bad: "measured_within_user_range is a [Verify] form; a [Required] value is the system's alone" };
+    }
+    return { slot: c.slot, sources: new Set(SYSTEM_SOURCES), settled: false };
+  }
+  if (label === "verify") {
+    const withMeasured = c.measured_within_user_range === true;
+    if (c.measured_within_user_range !== undefined && !withMeasured) {
+      return { bad: "measured_within_user_range must be true or absent" };
+    }
+    return { slot: c.slot, sources: new Set([...USER_SOURCES, ...(withMeasured ? ["measured_data"] : [])]),
+             settled: withMeasured };
+  }
+  return { bad: `a value_source condition must be [Required] or [Verify], not ${JSON.stringify(cond?.label ?? null)}` };
+}
+
+// Every value_source condition, by slot. Two on one slot narrow each other (intersection): each is a
+//   rule about who may give the value, and both must hold.
+function valueSourceRules(conditions) {
+  const bySlot = new Map();
+  for (const cond of conditions ?? []) {
+    const r = valueSourceRule(cond);
+    if (!r || r.bad) continue;
+    const prev = bySlot.get(r.slot);
+    bySlot.set(r.slot, prev
+      ? { sources: new Set([...prev.sources].filter(s => r.sources.has(s))), settled: prev.settled || r.settled,
+          ids: [...prev.ids, cond.id ?? null] }
+      : { sources: r.sources, settled: r.settled, ids: [cond.id ?? null] });
+  }
+  return bySlot;
 }
 
 // [UNSAFE DEFAULT] Verifies nothing.
@@ -785,6 +912,28 @@ function holdUnroutedForRepair(fields) {
 //   its ceiling — that is not a report (4.5, 5.2).
 const isNullByTrace = trace => trace.length > 0 && trace.every(t => t.result === "absent");
 
+// [LIMIT WORDING] The user's limits on this slot, and whether the words at a span sit inside one.
+//   An item is a limit on a slot when its constrains names the slot. Where its words are: located_at
+//   ({ segment_index, span }) if it says, else its wording (stated_as) as text.
+//   Returns { item } for the first limit the span is inside, { checkedAgainst } when it is inside
+//   none, or null when no limit on this slot has words to compare.
+function limitWordingAt(userChecklist, fieldName, segmentIndex, span, textAtSpan) {
+  const limits = (userChecklist ?? []).filter(i =>
+    Array.isArray(i?.constrains) && i.constrains.includes(fieldName) &&
+    ((i.located_at && Number.isInteger(i.located_at.segment_index) && Array.isArray(i.located_at.span)) ||
+     (typeof i.stated_as === "string" && i.stated_as.trim() !== "")));
+  if (limits.length === 0) return null;
+  const at = foldActionText(textAtSpan);
+  for (const item of limits) {
+    const loc = item.located_at;
+    const inside = loc && Number.isInteger(loc.segment_index) && Array.isArray(loc.span)
+      ? loc.segment_index === segmentIndex && span[0] < loc.span[1] && loc.span[0] < span[1]
+      : at !== "" && foldActionText(item.stated_as).includes(at);
+    if (inside) return { item };
+  }
+  return { checkedAgainst: limits };
+}
+
 // 4. Per-field lookup chain
 //    The five sources decide only whether a value EXISTS. Format validation comes after (applyFieldPolicy → validateFieldSchema).
 //    BREAKS: reorder and a later intent loses to an earlier one; demoting user_answer ignores the answer just given.
@@ -795,24 +944,37 @@ async function resolveField(h, fieldName, ctx) {
   //   from one that came from a source nobody meant to permit.
   const declared = await safeHook(h.getAllowedSources, [fieldName, ctx.mcpTool], () => null);
   let allowed_sources = [...allowedSourceSet(declared)];
+  // [VALUE SOURCE] A condition on who may give this value narrows what may be consulted. Applied here,
+  //   before the lookup, so a source nobody may give the value from is never consulted at all. With a
+  //   getAllowedSources declaration as well, both hold (intersection).
+  const sourceRule = ctx.sourceRules?.get?.(fieldName) ?? null;
+  if (sourceRule) allowed_sources = allowed_sources.filter(s => sourceRule.sources.has(s));
+  const ruleFacts = sourceRule ? { source_rule_ids: sourceRule.ids } : {};
   // [SETTLED-AT-EXECUTION] A value settled at execution time needs a range the user set (3.3). Without
   //   one, a measurement does not confirm the slot, so measured_data is not consulted for it. The
-  //   declaration is the slot declarer's (isSettledAtExecution); whether a range exists is read here,
-  //   from the user checklist: any item that constrains this slot. Enforced in the gate, not in a hook
-  //   body — a rule kept by hook discipline is a rule the gate does not hold.
+  //   declaration is the slot declarer's (isSettledAtExecution, or a [Verify] value_source condition
+  //   with measured_within_user_range); whether a range exists is read here, from the user checklist:
+  //   any item that constrains this slot. Enforced in the gate, not in a hook body — a rule kept by
+  //   hook discipline is a rule the gate does not hold.
   //   A hook that throws or returns anything but false is read as settled at execution: the stricter
   //   reading, which only stops a measurement from settling the slot.
-  const settledAtExecution = (await safeHook(h.isSettledAtExecution, [fieldName, ctx.mcpTool], () => true)) !== false;
+  const settledAtExecution = (await safeHook(h.isSettledAtExecution, [fieldName, ctx.mcpTool], () => true)) !== false
+    || sourceRule?.settled === true;
   const rangeDeclared = (ctx.userChecklist ?? []).some(i => Array.isArray(i?.constrains) && i.constrains.includes(fieldName));
   if (settledAtExecution && !rangeDeclared) allowed_sources = allowed_sources.filter(s => s !== "measured_data");
-  const settledFacts = settledAtExecution ? { settled_at_execution: true, range_declared: rangeDeclared } : {};
+  const settledFacts = { ...ruleFacts, ...(settledAtExecution ? { settled_at_execution: true, range_declared: rangeDeclared } : {}) };
   if (allowed_sources.length === 0) {
-    // The declarer allowed only a measurement, and the measurement needs a range nobody set. Nothing
-    //   may settle the slot. Not "all five": an empty list here is the rule's result, not a missing
-    //   declaration (allowedSourceSet would read it as one). Back to whoever declared the slot (4.5c).
+    // Nothing may settle the slot. Not "all five": an empty list here is the rules' result, not a
+    //   missing declaration (allowedSourceSet would read it as one). Back to whoever declared the slot
+    //   (4.5c). Two causes: a measurement-only slot whose measurement needs a range nobody set, or two
+    //   declarations about the slot's sources that leave none in common.
+    const why = settledAtExecution && !rangeDeclared && allowedSourceSet(declared).has("measured_data") &&
+      (!sourceRule || sourceRule.sources.has("measured_data"))
+      ? "settled at execution with no range declared, and no source but measured_data is allowed (3.3)"
+      : "the declarations about who may give this value leave no source in common";
     return { name: fieldName, value: undefined, status: "unknown", source: null, origin_source: null,
              allowed_sources: [], resolved_at, lookup_trace: [], route: "definition_repair", ...settledFacts,
-             note: "settled at execution with no range declared, and no source but measured_data is allowed (3.3)" };
+             note: why };
   }
   const record = await lookupField(h, fieldName, { ...ctx, allowed_sources });
   // lookup_trace and route are the gate's own facts, so they are written last, over whatever a policy
@@ -821,7 +983,8 @@ async function resolveField(h, fieldName, ctx) {
   //     record then shows a slot that was never looked up.
   //   NULL is the gate's too: written here from the trace, never accepted from a hook.
   const trace = record.lookup_trace ?? [];
-  const stamp = rec => {
+  // formatCheck: the result of this value's format slot, or null when the value never reached it.
+  const stamp = (rec, formatCheck = null) => {
     const status = rec.status === "unknown" && rec.lookup_failed !== true && isNullByTrace(trace)
       ? "null" : rec.status;
     const out = { ...rec, status, allowed_sources, resolved_at, lookup_trace: trace, ...settledFacts };
@@ -829,6 +992,10 @@ async function resolveField(h, fieldName, ctx) {
     //   is dropped once the slot settles (the user confirmed it, as user_answer, or chose otherwise).
     if (status === "unknown" && record.prior_candidate) out.prior_candidate = record.prior_candidate;
     else delete out.prior_candidate;
+    // The two check results are the gate's facts too, written over anything a policy put there.
+    delete out.limit_checks; delete out.format_check;
+    if (record.limit_checks?.length) out.limit_checks = record.limit_checks;
+    if (formatCheck) out.format_check = formatCheck;
     out.route = routeFor(out, allowed_sources, trace);
     return out;
   };
@@ -853,16 +1020,57 @@ async function resolveField(h, fieldName, ctx) {
                 note: "field policy may demote a value, never promote one or change its source (5.2)" };
   }
 
-  // Only known is checked. unknown is already unmet.
+  // [FORMAT] The value's format is its own check (6.3: each declared requirement is compared, and one
+  //   that cannot be compared stays unknown). Only a known value reaches it; an unknown one waits.
+  //   Three results, kept apart:
+  //     checked     the value is of the declared kind
+  //     rejected    it is not. The value does not settle the slot, which is asked or looked up again
+  //     unverified  it was not checked (no validator, a throw, an unreadable reply). The value stays as
+  //                 found and the check goes to definition_repair — no user answer fixes a missing
+  //                 validator, and asking would send the user to re-type a value nobody can check
+  //   No declared schema for the slot, no check.
   if (settled.status !== "known") return stamp(settled);
-  const schemaOut = await safeHook(h.validateFieldSchema, [settled.value, ctx.fieldSchemas?.[fieldName], ctx, fieldName],
-    e => `validation hook failed: ${e?.message ?? String(e)}`);
-  const violation = typeof schemaOut === "string" ? schemaOut : null;
-  if (!violation) return stamp(settled);
-  // A format violation is a defect, not a not-yet-arrived value. Clear the pending mark so it also blocks at instruction time.
-  return stamp({ ...settled, value: undefined, status: "unknown", source: null,
-           pending_at_trigger: false,
-           note: `schema violation (source ${settled.source ?? "unknown"}): ${violation}` });
+  const schema = ctx.fieldSchemas?.[fieldName];
+  const schemaOut = await safeHook(h.validateFieldSchema, [settled.value, schema, ctx, fieldName],
+    e => ({ unverified: `validation hook failed: ${e?.message ?? String(e)}` }));
+  if (schemaOut === null || schemaOut === undefined) {
+    return stamp(settled, schema === undefined || schema === null ? null : { status: "checked", source: settled.source });
+  }
+  if (typeof schemaOut === "string") {
+    // A format violation is a defect, not a not-yet-arrived value. Clear the pending mark so it also blocks at instruction time.
+    return stamp({ ...settled, value: undefined, status: "unknown", source: null,
+             pending_at_trigger: false,
+             note: `schema violation (source ${settled.source ?? "unknown"}): ${schemaOut}` },
+           { status: "rejected", source: settled.source, note: schemaOut });
+  }
+  const why = typeof schemaOut?.unverified === "string" && schemaOut.unverified !== ""
+    ? schemaOut.unverified : `validateFieldSchema returned an unreadable reply: ${JSON.stringify(schemaOut).slice(0, 80)}`;
+  return stamp(settled, { status: "unverified", source: null, note: why });
+}
+
+// The value checks of a run, one entry per check (3.3.1: every check is a slot). Built from the field
+//   records, where the gate wrote each result, so the list and the fields cannot disagree.
+//   format          one per slot with a declared schema; pending_on_slot while the value is unknown
+//   limit_wording   one per value read from the user's words on a slot a user limit constrains
+// Counted: only unverified (definition_repair). rejected is not counted — the value it refused is a
+//   blank again, and that blank is counted. pending_on_slot waits on a blank already counted.
+function valueChecksFrom(fields, extraFields, fieldSchemas) {
+  const out = [];
+  const add = (f, extra) => {
+    const tag = extra ? { extra: true } : {};
+    if (f.format_check) {
+      out.push({ id: `${f.name}:format`, kind: "format", slot: f.name, ...tag, ...f.format_check });
+    } else if (!extra && f.status === "unknown" && fieldSchemas?.[f.name] !== undefined) {
+      out.push({ id: `${f.name}:format`, kind: "format", slot: f.name, status: "pending_on_slot",
+                 source: null, waiting_on: [f.name] });
+    }
+    for (const c of f.limit_checks ?? []) {
+      out.push({ id: `${f.name}:limit:${c.item}`, kind: "limit_wording", slot: f.name, ...tag, ...c });
+    }
+  };
+  for (const f of fields ?? []) add(f, false);
+  for (const f of extraFields ?? []) if (f.status === "known" || f.limit_checks?.length) add(f, true);
+  return out;
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -956,7 +1164,9 @@ async function lookupField(h, fieldName, ctx) {
   // What each consulted source returned, in order. Attached to every record this function returns.
   const trace = [];
   const saw = (source, result) => trace.push({ source, result });
-  const traced = rec => ({ ...rec, lookup_trace: trace });
+  // The limit-wording checks this lookup made (instruction source only). Carried on whatever comes back.
+  const limitChecks = [];
+  const traced = rec => ({ ...rec, lookup_trace: trace, ...(limitChecks.length ? { limit_checks: limitChecks } : {}) });
   // For the first four sources, this decision is itself the origin.
   const fresh = rec => traced({ ...rec, origin_source: rec.source });
   const failedAt = failure => { saw(failure.source, "failed"); return traced(lookupFailureRecord(fieldName, failure)); };
@@ -1012,7 +1222,27 @@ async function lookupField(h, fieldName, ctx) {
     const spanValid = Array.isArray(sp) && sp.length === 2 &&
       Number.isInteger(sp[0]) && Number.isInteger(sp[1]) &&
       sp[0] >= 0 && sp[0] < sp[1] && sp[1] <= (seg?.text?.length ?? -1);
-    if (seg?.trust === "user" && spanValid) {
+    // [LIMIT WORDING] Words inside a limit the user declared on this slot are not a value for it:
+    //   "nothing after 8pm" states no time, and "public places only" names no place. Checked here, by
+    //   the gate, for every value read from the user's words — its own check in the record
+    //   (limit_wording), not left to the extractor's prompt or to spanSupportsValue.
+    //   Position when the item says where its words are (located_at); otherwise the item's wording,
+    //   folded, containing the words at the span. The second can refuse a value the user also stated
+    //   outside the limit ("at 8pm. Nothing after 8pm"). That direction asks, it never settles.
+    //   rejected: this source does not settle the slot, and the search goes on.
+    const limitHit = seg?.trust === "user" && spanValid
+      ? limitWordingAt(ctx.userChecklist, fieldName, fromInstruction.segment_index, sp, seg.text.slice(sp[0], sp[1]))
+      : null;
+    if (limitHit?.item) {
+      limitChecks.push({ item: limitHit.item.id ?? null, status: "rejected", source: "instruction",
+        note: `the words at the span are inside the limit ${JSON.stringify(limitHit.item.id ?? null)}, which constrains this slot` });
+    } else if (limitHit?.checkedAgainst?.length) {
+      for (const it of limitHit.checkedAgainst) {
+        limitChecks.push({ item: it.id ?? null, status: "checked", source: "instruction",
+          note: "the words at the span are not inside this limit" });
+      }
+    }
+    if (seg?.trust === "user" && spanValid && !limitHit?.item) {
       // The span is the hook's claim about WHERE the value is. The gate checks whether
       // the value is actually there. Without this, a generated value acquires
       // source: "instruction" and the record asserts a provenance that does not exist.
@@ -1180,12 +1410,22 @@ function applyFieldPolicy(record, ctx) {
   return { ...record, value: undefined, status: "unknown", source: null };
 }
 
-// [REQUIRED-SAFETY] The default implementation checks nothing. Unwired, there is no format validation (including type).
-// CONTRACT: null if it passes, a reason string if it violates. This is where AJV or similar goes.
+// [REQUIRED-SAFETY] The format check of one value: its own slot in the record (value_checks, kind
+//   "format"), not a step hidden inside the value's lookup.
+// CONTRACT: null if it passes, a reason string if it violates, { unverified: "<why>" } if it could
+//   not be checked. This is where AJV or similar goes. A throw is read as unverified.
 //   Called with (value, schema, ctx, fieldName). fieldName was added so a format declared outside the
 //   schema object can be found without matching schema objects by reference.
+//   violates    the value is not of the declared kind. The value does not settle the slot, and the
+//               slot is asked again (or looked up again) like any blank.
+//   unverified  the declared kind was not checked. The value stays as found, and the check goes to
+//               definition_repair: no user answer fixes a missing validator (4.5c).
+// The default could not check, and says so (6.3: a check that cannot be made is not a pass).
+//   BREAKS: return null here, as this once did, and an unwired gate sends "2pm this Saturday" to a
+//     date-time slot with the record reading as though its format was checked.
 function validateFieldSchema(value, schema, ctx) {
-  return null;
+  if (schema === undefined || schema === null) return null;   // nothing declared to check against
+  return { unverified: "validateFieldSchema not wired: the declared form was not checked" };
 }
 
 // [REQUIRED-OP] CONTRACT: one of
@@ -1240,8 +1480,10 @@ function extractFromInstruction(fieldName, instruction) {
 // is wrong. A limit, a negation, an example and a prohibition all carry value-shaped tokens.
 //
 // A sentence that constrains belongs to the user checklist (a range of values or state), not to the value lookup.
-// The gate cannot tell them apart from the text alone; this hook must. The default cannot, so
-// a system that relies on it is running without this check — strict mode refuses it.
+// When the user declared it there (an item whose constrains names the slot), the gate refuses the
+// words inside it itself, before this hook is called ([LIMIT WORDING] in lookupField). What is left
+// for this hook is the limit nobody declared, the example and the negation: the gate cannot tell
+// them apart from the text alone. The default cannot either, so strict mode refuses it.
 // POLICY: an adopting system supplies a role-aware comparator. For a derived value
 //   ("tomorrow" → a date) it returns derived: true, so the record shows the span supported the
 //   value rather than stating it. A bare true for a derived value makes the record claim the
@@ -1291,8 +1533,12 @@ async function runPreflight(h, input) {
 //   specification exists to rule out, so it is absent rather than carried unread.
 //   A policy that must gate execution is declared as a checklist item: it becomes a slot and is
 //   compared like any other.
-async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, fixedPreSet, user_action_name, measured_data, priorExecutionState, userChecklist, userAnswers, checklistAnswers, intent_attempt, tool_attempt, ask_attempt, lookup_attempt }) {
-  const checklist = userChecklist ?? [];
+async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, fixedPreSet, user_action_name, measured_data, priorExecutionState, userChecklist, userAnswers, checklistAnswers: checklistAnswersIn, intent_attempt, tool_attempt, ask_attempt, lookup_attempt, checklist_digest_at_instruction }) {
+  // Each item carries the version it is judged under (6.1), written by the gate, over anything the
+  //   caller put there: its label, its wording, its comparison form.
+  const checklist = (userChecklist ?? []).map(i => (i && typeof i === "object" && !Array.isArray(i))
+    ? { ...i, rule_hash: itemRuleHash(i, i.stated_as ?? i.description) } : i);
+  let checklistAnswers = checklistAnswersIn;
   // Ceilings on the two resolution routes that can be retried (4.5: asking the user and the system
   //   lookup both have one; the adopting system sets it). Same contract as intent_attempt: the caller
   //   carries the count per action and sends back gate.next_ask_attempt / next_lookup_attempt.
@@ -1493,12 +1739,41 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   //   Normalized here rather than at the loop: the at_instruction records carry this array too, and a
   //   hook that returns a non-array would otherwise put null in provider_checklist, which already means
   //   "no decision made". Two meanings on one value is how a record stops being readable.
-  const providerConditions = Array.isArray(rawProviderConditions) ? rawProviderConditions : [];
+  //   Each carries its version (6.1), written by the gate.
+  const providerConditions = (Array.isArray(rawProviderConditions) ? rawProviderConditions : [])
+    .map(c => (c && typeof c === "object" && !Array.isArray(c))
+      ? { ...c, rule_hash: itemRuleHash(c, c.description) } : c);
+
+  // [VERSION] 6.1: the record says which checklist a verdict was made under, and a changed checklist
+  //   voids earlier verdicts made under it — they are judged again, not re-checked. One digest over
+  //   every item's version, provider and user alike.
+  //   At the trigger, a deferred run carries the digest it was scheduled under (deferred_input). When
+  //   it differs, what the user approved at instruction time was approved under rules that no longer
+  //   hold, so those approvals are not carried into this run. The values the user gave are: a value is
+  //   the user's statement, not a verdict, and every check on it runs again here regardless.
+  //   NOTE: this voids the run's approvals all at once. Which item changed is in the two lists of
+  //     rule_hash; voiding only the approvals of the changed items needs approvals tied to an item's
+  //     version, which is the approval binding of 6.3.
+  const checklist_digest = ruleHash([
+    ...providerConditions.map(c => `p:${c?.rule_hash ?? ""}`),
+    ...checklist.map(i => `u:${i?.rule_hash ?? ""}`),
+  ].sort().join("\n"));
+  const checklistChanged = typeof checklist_digest_at_instruction === "string" &&
+    checklist_digest_at_instruction !== checklist_digest;
+  const checklist_changed = checklistChanged
+    ? { at_instruction: checklist_digest_at_instruction, now: checklist_digest,
+        approvals_voided: Object.keys(checklistAnswers ?? {}) }
+    : null;
+  if (checklistChanged) checklistAnswers = {};
+
+  // [VALUE SOURCE] Who may give each slot's value, from the conditions that say so.
+  const sourceRules = valueSourceRules(providerConditions);
 
   const ctx = { userAnswers, checklistAnswers, instruction, preSetData, measured_data, priorExecutionState,
                 userChecklist: checklist,   // read by resolveField: does a range exist for a slot settled at execution (3.3)
                 phase,   // The basis for applyFieldPolicy's per-phase judgment
                 fieldSchemas: mcpTool?.inputSchema?.properties ?? {},
+                sourceRules,
                 mcpTool };
 
   // Step 2-a: candidate slots. The superset the lookup may try, not the slot list.
@@ -1599,6 +1874,14 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   });
   const extra_fields = resolvedAll.filter(f => !slotNames.has(f.name));
 
+  // The value checks (format, limit wording), from the field records. Common to both phases: a value
+  //   whose format nobody could check is a declaration gap now, not at the trigger.
+  const value_checks = valueChecksFrom(fields, extra_fields, ctx.fieldSchemas);
+  const valueCheckRepair = value_checks.filter(c => c.status === "unverified");
+  const unverified_value_check_count = valueCheckRepair.length;
+  const valueCheckRepairList = () => valueCheckRepair.map(c =>
+    ({ id: c.id, kind: c.kind, slot: c.slot, note: c.note ?? null }));
+
   // Step 3-a: non-immediate branch — values now, conditions at trigger time.
   // CONTRACT: the scheduler must re-run runPreflight with deferred_input at trigger time.
   //   Passing a deferred record straight to executeIfReady violates the contract. Non-immediate means deferred, not skipped.
@@ -1624,8 +1907,8 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     const pendingCount = unknownNow.length - blocking.length - repairNow.length;
     const askExhaustedNow = askAttempt >= h.limits.ask;
 
-    if (blocking.length > 0 || repairNow.length > 0) {
-      const decision = repairNow.length ? "definition_repair"
+    if (blocking.length > 0 || repairNow.length > 0 || valueCheckRepair.length > 0) {
+      const decision = (repairNow.length || valueCheckRepair.length) ? "definition_repair"
         : askExhaustedNow ? "exhausted" : "ask_user";
       // Block the scheduling itself (fail-closed). This is the last moment the user is present.
       // POLICY: can be changed to "schedule anyway, flagged unresolved" — a choice that accepts failure at trigger time.
@@ -1637,6 +1920,8 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
         unverified_checklist_count: null, // No decision made. Not 0
         provider_checklist: providerConditions,  // Raw declarations. Conditions are trigger-time (4.5)
         unverified_provider_count: null,         // Not performed at this phase
+        value_checks, unverified_value_check_count,
+        checklist_digest, checklist_changed,
         call_arguments: null,             // Assembled at trigger time only
         gate: {
           unknown_fields: blocking.map(f => ({ name: f.name, note: f.note ?? null,
@@ -1652,6 +1937,10 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
               open: (f.lookup_trace ?? []).filter(t => t.result !== "absent").map(t => `${t.source}:${t.result}`),
               note: f.note ?? null })),
           } : {}),
+          ...(valueCheckRepair.length ? {
+            ...((failedNow.length || gapsNow.length) ? {} : { kind: "definition_repair" }),
+            definition_repair_checks: valueCheckRepairList(),
+          } : {}),
           ...(decision === "exhausted" ? { kind: "exhausted",
             exhausted: [{ route: "ask_user", attempt: askAttempt, limit: h.limits.ask, names: blocking.map(f => f.name) }] } : {}),
           next_ask_attempt: decision === "ask_user" ? askAttempt + 1 : (askExhaustedNow ? null : askAttempt),
@@ -1665,6 +1954,9 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
             `(definition/implementation gap; no user answer settles these)`
           : gapsNow.length
           ? `definition_repair: no source can answer — ${gapsNow.map(f => f.name).join(", ")}`
+          : valueCheckRepair.length
+          ? `definition_repair: value check not made — ${valueCheckRepair.map(c => c.id).join(", ")} ` +
+            `(no validator could check it; no user answer settles these)`
           : decision === "exhausted"
           ? `exhausted: ask_user ${askAttempt}/${h.limits.ask} (${blocking.map(f => f.name).join(", ")})`
           : await h.formatReason(decision, { unknown_fields: blocking, unverified_checklist: [] }),
@@ -1680,11 +1972,18 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       unverified_checklist_count: null,
       provider_checklist: providerConditions,  // Raw declarations. Conditions are trigger-time (4.5)
       unverified_provider_count: null,         // Not performed at this phase
+      value_checks, unverified_value_check_count,
+      checklist_digest, checklist_changed,
       call_arguments: null,               // Re-assembled at trigger time
       gate: null,                         // The gate stands only at trigger time
       execution_decision: "deferred",
       reason: `deferred: c1_when_case is "${fixed.c1_when_case}" — awaiting trigger (pending_at_trigger=${pendingCount})`,
-      deferred_input: await h.buildDeferredInput({ instruction, mcpTool, preSetData, userChecklist: checklist, userAnswers, checklistAnswers }),
+      // The digest it was scheduled under goes with it, written by the gate after the hook, so the
+      //   trigger run can tell whether the rules changed in between (6.1). A hook cannot drop it.
+      deferred_input: {
+        ...(await h.buildDeferredInput({ instruction, mcpTool, preSetData, userChecklist: checklist, userAnswers, checklistAnswers }) ?? {}),
+        checklist_digest_at_instruction: checklist_digest,
+      },
       timestamp: h.now(),
     };
   }
@@ -1781,10 +2080,25 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       continue;
     }
 
+    // [VALUE SOURCE] A condition on who may give a value. Its slot is its target; a malformed form is
+    //   the declarer's to fix, whatever the label.
+    const sourceRule = valueSourceRule(cond);
+    if (sourceRule?.bad) {
+      finalProviderChecklist.push({ ...base, status: "unverified", source: null, route: "definition_repair",
+        note: sourceRule.bad });
+      continue;
+    }
+    if (sourceRule && Array.isArray(cond.constrains) && cond.constrains.length > 0 &&
+        !(cond.constrains.length === 1 && cond.constrains[0] === sourceRule.slot)) {
+      finalProviderChecklist.push({ ...base, status: "unverified", source: null, route: "definition_repair",
+        note: `a value_source condition constrains its own slot only (${sourceRule.slot}); constrains says ${JSON.stringify(cond.constrains)}` });
+      continue;
+    }
+
     // A condition cannot be compared while the slot it constrains is still UNKNOWN. Same reasoning as
     //   the user items above, and the same verification: the item must name the slot, and that slot
     //   must really be unknown here.
-    const targets = Array.isArray(cond.constrains) ? cond.constrains : [];
+    const targets = sourceRule ? [sourceRule.slot] : (Array.isArray(cond.constrains) ? cond.constrains : []);
     // A constrains entry that names nothing is a broken declaration, and the provider wrote it, so
     //   it goes back to the provider whatever the label says. The user cannot answer for a field
     //   name in someone else's declaration.
@@ -1803,8 +2117,33 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       continue;
     }
 
-    const out = await safeHook(h.verifyProviderCondition, [cond, checklistCtx],
-      e => ({ status: "unverified", source: null, note: `provider condition hook failed: ${e?.message ?? String(e)}` }));
+    // A value_source condition is checked by the gate from its own record of where the value came from.
+    //   The lookup consulted only the permitted sources, so a settled value normally passes; the check
+    //   is still made, against the field as recorded, so the condition's result is evidence rather than
+    //   a consequence assumed. A NULL slot has no value to check: the slot's own NULL decides (6.3).
+    let out;
+    if (sourceRule) {
+      const f = [...fields, ...extra_fields].find(x => x.name === sourceRule.slot);
+      // An optional argument left unsettled is not sent, so there is nothing to check (a required one
+      //   that is unknown was caught as pending above).
+      out = f?.status === "null"
+        ? { status: "pending_on_slot", source: null, note: `${sourceRule.slot} is NULL; the slot's own check decides (6.3)` }
+        : f?.status === "unknown"
+        ? { status: "pending_on_slot", source: null, note: `${sourceRule.slot} is not settled, so it is not sent` }
+        : (f?.status === "known" && sourceRule.sources.has(f.source))
+        ? { status: "checked", source: f.source,
+            note: `${sourceRule.slot} came from ${f.source}, one of the sources this label permits` }
+        : { status: "unverified", source: null,
+            note: `${sourceRule.slot} came from ${JSON.stringify(f?.source ?? null)}, which this label does not permit` };
+      if (out.status === "pending_on_slot") {
+        finalProviderChecklist.push({ ...base, status: "pending_on_slot", source: null, route: null,
+          waiting_on: [sourceRule.slot], note: out.note });
+        continue;
+      }
+    } else {
+      out = await safeHook(h.verifyProviderCondition, [cond, checklistCtx],
+        e => ({ status: "unverified", source: null, note: `provider condition hook failed: ${e?.message ?? String(e)}` }));
+    }
 
     // Both outcomes need a source. 5.1 settles a state by whether it was looked up from a declared
     //   source, so "checked" with no source is the hook asserting it rather than evidencing it — the
@@ -1940,6 +2279,12 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     gate.definition_repair = providerRepair.map(c =>
       ({ id: c.id, label: c.label, description: c.description, note: c.note ?? null }));
   }
+  // A value check nobody could make (format with no validator). The same route, a third addressee:
+  //   whoever wires the validator.
+  if (valueCheckRepair.length > 0) {
+    if (!gate.kind) gate.kind = "definition_repair";
+    gate.definition_repair_checks = valueCheckRepairList();
+  }
   // [Verify] conditions still waiting on the user's approval. A blank like any other.
   if (providerAsk.length > 0) {
     gate.unverified_provider = providerAsk.map(c =>
@@ -1976,21 +2321,38 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     gate.unmet = allUnmet;
   }
   const valueGateClean = repairFields.length === 0 && providerRepair.length === 0 &&
+    valueCheckRepair.length === 0 &&
     systemLookups.length === 0 &&
     gate.unknown_fields.length === 0 && gate.unverified_checklist.length === 0 &&
     providerAsk.length === 0;
 
-  // Step 6-b: whole-object validation. Run only on an otherwise clean gate — with unknowns outstanding
-  //   the object is knowingly incomplete and the violation says nothing.
+  // Step 6-b: whole-object validation, the payload's own check. Run only on an otherwise clean gate —
+  //   with unknowns outstanding the object is knowingly incomplete and the violation says nothing.
+  //   Three results, as for a value's format: checked, unmet (the object is illegal: hold), and
+  //   unverified (not checked: definition_repair — a missing validator is not a pass).
   const payloadOut = valueGateClean
     ? await safeHook(h.validatePayload, [call_arguments, mcpTool?.inputSchema, ctx],
-        e => `payload validation hook failed: ${e?.message ?? String(e)}`)
-    : null;
+        e => ({ unverified: `payload validation hook failed: ${e?.message ?? String(e)}` }))
+    : undefined;
   const payload_violation = typeof payloadOut === "string" ? payloadOut : null;
+  const payload_unverified = payloadOut !== undefined && payloadOut !== null && typeof payloadOut !== "string"
+    ? (typeof payloadOut?.unverified === "string" && payloadOut.unverified !== ""
+        ? payloadOut.unverified : `validatePayload returned an unreadable reply: ${JSON.stringify(payloadOut).slice(0, 80)}`)
+    : null;
+  if (valueGateClean) {
+    value_checks.push({ id: "payload", kind: "payload", slot: null,
+      status: payload_violation ? "unmet" : payload_unverified ? "unverified" : "checked",
+      source: null, note: payload_violation ?? payload_unverified ?? null });
+  }
   if (payload_violation) {
     // Not a question. Every slot is settled and the object is still illegal.
     if (!gate.kind) gate.kind = "payload_invalid";
     gate.payload_violation = payload_violation;
+  }
+  if (payload_unverified) {
+    if (!gate.kind) gate.kind = "definition_repair";
+    gate.definition_repair_checks = [...(gate.definition_repair_checks ?? []),
+      { id: "payload", kind: "payload", slot: null, note: payload_unverified }];
   }
 
   // An unmet condition is a hold whether or not blanks remain. It was compared against SETTLED
@@ -2035,9 +2397,10 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   const lookupExhausted = lookupAttempt >= h.limits.lookup;
   const execution_decision =
     allUnmet.length > 0 ? "hold"
-    : (repairFields.length > 0 || providerRepair.length > 0) ? "definition_repair"
+    : (repairFields.length > 0 || providerRepair.length > 0 || valueCheckRepair.length > 0) ? "definition_repair"
     : (systemLookups.length > 0 && !lookupExhausted) ? "system_lookup"
     : payload_violation ? "hold"
+    : payload_unverified ? "definition_repair"
     : (askOutstanding > 0 && !askExhausted) ? "ask_user"
     : (systemLookups.length > 0 || askOutstanding > 0) ? "exhausted"
     : "execute";
@@ -2064,6 +2427,9 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     user_checklist: finalUserChecklist,
     provider_checklist: finalProviderChecklist,
     unknown_count, unverified_checklist_count, unverified_provider_count,
+    value_checks,
+    unverified_value_check_count: value_checks.filter(c => c.status === "unverified").length,
+    checklist_digest, checklist_changed,
     call_arguments,                  // The exact object executeIfReady sends
     gate,
     execution_decision,
@@ -2079,6 +2445,9 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       : declarationGaps.length > 0
       ? `definition_repair: no source can answer — ${declarationGaps.map(f => f.name).join(", ")} ` +
         `(no place to check, or a source that gave no report; no user answer settles these)`
+      : (valueCheckRepair.length > 0 || payload_unverified)
+      ? `definition_repair: value check not made — ${[...valueCheckRepair.map(c => c.id), ...(payload_unverified ? ["payload"] : [])].join(", ")} ` +
+        `(no validator could check it; no user answer settles these)`
       : execution_decision === "exhausted"
       ? `exhausted: ${gate.exhausted.map(e => `${e.route} ${e.attempt}/${e.limit} (${e.names.join(", ")})`).join("; ")}`
       : payload_violation && execution_decision === "hold"
@@ -2144,7 +2513,16 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.15",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.16",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.16: value_checks (one entry per check: format per slot, limit_wording per value read from the
+    //        user's words on a limited slot, payload) and unverified_value_check_count. A format the gate
+    //        could not check is "unverified" and the decision is definition_repair; before 1.16 an
+    //        unwired validator passed silently. Every checklist item carries rule_hash, the record
+    //        carries checklist_digest (6.1), and checklist_changed when a trigger run found the rules
+    //        changed since instruction time. A provider condition of compare kind value_source is
+    //        checked by the gate (fields carry source_rule_ids). getProviderConditions reads labelled
+    //        description lines by default: a pre-1.16 record with provider_checklist [] may come from
+    //        a description that had them.
     //   1.15: a field settled at execution time carries settled_at_execution: true and range_declared.
     //        Without a range its allowed_sources has no measured_data — the gate removed it (3.3), not
     //        the declarer. On a 1.14 or older record that removal, if any, was a hook's.
@@ -2175,16 +2553,10 @@ async function recordExecutionState(h, executionState) {
     // NOTE: this object is a whitelist, not a spread of executionState. A field computed by the gate
     //   and left out here is computed and then dropped — it reaches no consumer and no later run.
     //   BREAKS: add a gate output without adding it here and the verdict silently loses it.
-    // [NOT IMPLEMENTED] Spec 6.1 asks the record to carry WHICH VERSION of the checklist the verdict
-    //   was made against, because a changed checklist voids earlier verdicts based on it. This
-    //   skeleton records no version and compares none.
-    //   POLICY: the adopting system manages this. The practical exposure is narrow — conditions are
-    //     never inherited (5.2) and are re-read at trigger time (4.5), so a stale checklist does not
-    //     produce a wrong verdict today. What is lost is reconstructing a PAST verdict: given a rule
-    //     that has since changed, the record cannot say which wording was in force.
-    //   An adopter that needs it puts a version on each item and carries it through: the gate passes
-    //     unrecognized item fields along untouched, so the version lands in user_checklist and
-    //     provider_checklist without the gate having to know about it.
+    // Spec 6.1: the record carries WHICH VERSION of the checklist the verdict was made against, because
+    //   a changed checklist voids earlier verdicts based on it. Each item's rule_hash and the run's
+    //   checklist_digest are written by the gate; a trigger run compares the digest it was scheduled
+    //   under (see [VERSION] in runPreflightInner).
     action_key,
     phase: executionState.phase ?? null,   // Instruction-time and trigger-time records accumulate under the same key
     fixed: executionState.fixed,
@@ -2195,6 +2567,10 @@ async function recordExecutionState(h, executionState) {
     unknown_count: executionState.unknown_count,
     unverified_checklist_count: executionState.unverified_checklist_count ?? null,
     unverified_provider_count: executionState.unverified_provider_count ?? null,
+    value_checks: executionState.value_checks ?? null,   // null = no decision made, not []
+    unverified_value_check_count: executionState.unverified_value_check_count ?? null,
+    checklist_digest: executionState.checklist_digest ?? null,
+    checklist_changed: executionState.checklist_changed ?? null,
     gate: executionState.gate ?? null,
     call_arguments: executionState.call_arguments ?? null,   // The exact payload executeIfReady sends
     execution_decision: executionState.execution_decision,
@@ -2297,21 +2673,25 @@ const REQUIRED_HOOKS = [
 
 // Hooks that have a default implementation whose default is "do not verify". Unwired, the gate is weak.
 // NOTE: applyFieldPolicy's default validates nothing (prior_state is refused by the gate, not by it). It stays on this list for that.
-// NOTE: unwired, validatePayload lets a value that fills its slot while violating the schema through.
-// NOTE: spanSupportsValue's default does equality, which its contract says is not sufficient.
-//   Unwired, a limit or a negation containing a value-shaped token settles a slot (see 8.x).
+// NOTE: validateFieldSchema and validatePayload check nothing, and say so: unwired, every value with a
+//   declared schema has an unverified format check and the decision is definition_repair. Fail-closed,
+//   so not weak — but a gate that can never execute. strict refuses them for that reason.
+// NOTE: spanSupportsValue's default does equality, which its contract says is not sufficient. A limit's
+//   own wording is refused by the gate itself ([LIMIT WORDING]); an example or a negation the user did
+//   not declare as a limit still passes equality.
 // NOTE: getAllowedSources returns null, meaning all five sources, for every slot. Unwired, every
 //   unknown is askable and 4.5(b) is not honored: a slot only the system can answer still produces a
 //   question for the user. Direction is safe (more sources consulted, none newly accepted — the
-//   policy hook still judges), but the route is wrong.
-// NOTE: getProviderConditions returns [] for every tool, so unwired the provider checklist is back to
-//   arguments only and a declared condition is silently absent.
+//   policy hook still judges), but the route is wrong. A value_source condition narrows it anyway.
 // NOTE: verifyProviderCondition verifies nothing. Unwired it is safe in DIRECTION — a provider condition
 //   can only block, so it never opens anything — but every declared condition then lands as unverified
 //   and routes to definition_repair, which holds. Weak, not fail-open, and loud rather than silent.
+//   A value_source condition does not reach it: the gate checks that kind itself.
+// getProviderConditions is not on this list: its default reads the labelled lines (4.2.1), and a line
+//   it cannot compare is unverified, never absent.
 const UNSAFE_DEFAULT_HOOKS = ["applyFieldPolicy", "validateFieldSchema", "verifyUserChecklistItem",
                               "validatePayload", "spanSupportsValue",
-                              "getProviderConditions", "verifyProviderCondition",
+                              "verifyProviderCondition",
                               "getAllowedSources"];
 
 const defaultHooks = {
@@ -2377,7 +2757,7 @@ function createPreflight({ hooks = {}, storage, clock, strict = false, limits = 
   };
 }
 
-module.exports = { createPreflight, defaultHooks, intentFingerprint };
+module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, labelledLines };
 
 
 /* ============================================================================
