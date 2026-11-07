@@ -122,7 +122,7 @@ function providerConditionsFrom(mcpTool, confirmed) {
  * @param tool  The skeleton calls extractFromInstruction with (fieldName, instruction) only, so the
  *             extractor gets the schema from here.
  */
-function createHooks({ model = "model", ask, runId = "run", meter, confirmed, tool }) {
+function createHooks({ model = "model", ask, runId = "run", unitKey = null, meter, confirmed, tool }) {
   if (typeof ask !== "function") throw new Error("createHooks: ask is required");
   async function call(system, user, hook) {
     const entry = { hook, ok: false };
@@ -291,9 +291,11 @@ function createHooks({ model = "model", ask, runId = "run", meter, confirmed, to
         : { ...item, status: "unmet", source: field?.source ?? null, note: `${slot}=${JSON.stringify(field?.value)}: ${out.errors}` };
     },
 
-    // Unique per run, so prior_state never carries across runs.
+    // The unit's key, the same in every round of one conversation (the graph's thread). The skeleton
+    //   reads this unit's records under it: what was asked, and how often (spec 4.5, 4.6). A key unique
+    //   per round would show it a unit that was never asked anything, and refuse every answer.
     buildActionKey(userId, fixed) {
-      return `${userId}:${fixed?.c3_provider_action_name ?? "unknown"}:${runId}`;
+      return `${userId}:${fixed?.c3_provider_action_name ?? "unknown"}:${unitKey ?? runId}`;
     },
   };
 }
@@ -415,9 +417,10 @@ function buildGraph({ ask, callTool, tool, confirmed, checkpointer = new MemoryS
   if (!tool) throw new Error("buildGraph: tool is required");
   let round = 0;
 
-  async function gate(state) {
+  async function gate(state, config) {
     round += 1;
-    const hooks = createHooks({ ask, runId: `${runId}-${round}`, tool, confirmed });
+    const unitKey = config?.configurable?.thread_id ?? runId;
+    const hooks = createHooks({ ask, runId: `${runId}-${round}`, unitKey, tool, confirmed });
     const preflight = createPreflight({ hooks, storage });
     const st = await preflight.runPreflight({
       userId, instruction: state.segments, mcpTool: tool, preSetData: {},

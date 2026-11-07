@@ -77,7 +77,7 @@ the gate as it is.
 | Your system's values | `measure(name)` | Calls to your own APIs: order status, contact details. Never from the conversation |
 | Who wrote what | `labelInput(message)` | Your input path marks what the user typed. Pasted or quoted text, other people's messages and tool output are untrusted |
 | The tool | `callTool(name, args)` | Your MCP client call. Set `MCP_SERVER_URL` |
-| Decision records | `store` | Append-only, somewhere the agent cannot rewrite |
+| Decision records | `store` | Append-only, somewhere the agent cannot rewrite. It also needs `list(key)`, every record under a key, oldest first: the gate reads confirmed forms, what a conversation was asked and how often with it. Without it no answer counts and nothing is confirmed |
 | Waiting runs | `checkpointer` | A persistent LangGraph checkpointer, for example Postgres |
 | The form the user sees | outside this folder | Your client renders `request`. It has the shape of an MCP elicitation request, but the gate asks it, before any call |
 
@@ -126,6 +126,11 @@ let r = await agent.start({ threadId, message: { typed, context } });
 // r.status === "waiting": show r.request as a form
 r = await agent.resume({ threadId, reply: { action: "accept", content } });
 ```
+
+Use one `threadId` per conversation about one action, and keep it for every round of it. The gate
+counts the questions and lookups of that conversation from its records, and an answer counts only for
+a question asked in it. A new `threadId` each round shows the gate a conversation that was never asked
+anything, so every answer is refused.
 
 ## What the code here does not show
 
