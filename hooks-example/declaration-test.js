@@ -49,8 +49,15 @@ function heading(t) { console.log(`\n${t}`); SEEN.add(t); }
 const AMOUNT = 4200;
 const ACCOUNT = "DE89-3704";
 
+// The type a property declares, checked on one value: what the adopting system's validator does here.
+const typeError = (v, s) =>
+  (s?.type === "number" && typeof v !== "number") ? `expected number, got ${typeof v}`
+  : (s?.type === "string" && typeof v !== "string") ? `expected string, got ${typeof v}` : null;
+
 // Hooks that settle whatever the schema asks for, so nothing but the declaration decides the outcome.
-function hooks({ measured, conditions, verify, format }) {
+//   The validators are wired (the comparison engine is the adopting system's, 6.3); row 5 takes them
+//   out to show what the skeleton does without one.
+function hooks({ measured, conditions, verify, validators = "wired" }) {
   const m = measured ?? { amount: AMOUNT, payee_account: ACCOUNT };
   return {
     classifyWhenCase: () => "immediate",
@@ -61,9 +68,15 @@ function hooks({ measured, conditions, verify, format }) {
     buildActionKey: () => "u:pay",
     ...(conditions !== undefined ? { getProviderConditions: () => conditions } : {}),
     ...(verify ? { verifyProviderCondition: verify } : {}),
-    // Format validation is the adopting system's to wire. Present only on the row that shows it.
-    ...(format ? { validateFieldSchema: (v, s) =>
-      (s?.type === "number" && typeof v !== "number") ? `expected number, got ${typeof v}` : null } : {}),
+    ...(validators === "wired" ? {
+      validateFieldSchema: (v, s) => typeError(v, s),
+      validatePayload: (args, schema) => {
+        const missing = (schema?.required ?? []).filter(k => !(k in (args ?? {})));
+        if (missing.length) return `required argument missing: ${missing.join(", ")}`;
+        for (const [k, v] of Object.entries(args ?? {})) { const e = typeError(v, schema?.properties?.[k]); if (e) return `${k}: ${e}`; }
+        return null;
+      },
+    } : {}),
   };
 }
 
@@ -153,17 +166,22 @@ const UNMET = { status: "unmet", source: "measured_data", note: "limit exceeded"
     row("  its decision", a.execution_decision, "definition_repair");
   }
 
-  heading("5. Is the FORMAT enforced? (the adopting system wires this)");
+  heading("5. Is the FORMAT enforced? (the adopting system wires the validator)");
   {
     const bad = { amount: "four thousand", payee_account: ACCOUNT };
-    const a = await run({ schema: FULL, measured: bad });
-    row("type: number declared, hook unwired", a.execution_decision, "execute",
-      "a string reached a number argument");
-    row("  what got sent", JSON.stringify(a.call_arguments?.amount), '"four thousand"',
-      "declaring a type does nothing on its own");
+    const a = await run({ schema: FULL, measured: bad, validators: "unwired" });
+    row("type: number declared, no validator", a.execution_decision, "definition_repair",
+      "a check that could not be made is not a pass (6.3)");
+    row("  its own check, unverified",
+      (a.value_checks ?? []).find(c => c.id === "amount:format")?.status, "unverified",
+      "each value's format is a slot of its own");
+    row("  nothing was sent", a.execution_decision === "execute", "false",
+      "before 1.16 the string reached a number argument");
 
-    const b = await run({ schema: FULL, measured: bad, format: true });
-    row("same, validateFieldSchema wired", b.execution_decision, "ask_user");
+    const b = await run({ schema: FULL, measured: bad });
+    row("same, validator wired", b.execution_decision, "ask_user");
+    row("  the check rejected it",
+      (b.value_checks ?? []).find(c => c.id === "amount:format")?.status, "rejected");
     row("  the slot goes back to unknown",
       (b.fields ?? []).find(f => f.name === "amount")?.status, "unknown",
       "a format violation is a defect, not a value yet to arrive");
@@ -180,6 +198,15 @@ const UNMET = { status: "unmet", source: "measured_data", note: "limit exceeded"
       "prose reaches the model as context and nothing compares it");
     row("  it IS recorded", /approver's limit/.test(a.advisory_notes ?? ""), "true",
       "recorded is not enforced — this is the gap the label closes");
+
+    const l = await run({
+      schema: FULL,
+      description: "Send a payment.\n[Required] An approval only counts if the approver's limit covers the amount.",
+    });
+    row("the same sentence as a labelled line", l.execution_decision, "definition_repair",
+      "now a condition (4.2.1): read by the default, not yet in a confirmed form");
+    row("  it is in the checklist", l.provider_checklist?.[0]?.status, "unverified",
+      "unverified, never absent — back to whoever declared it");
 
     const b = await run({
       schema: FULL,
@@ -259,7 +286,7 @@ const UNMET = { status: "unmet", source: "measured_data", note: "limit exceeded"
   {
     const a = await run({ schema: FULL, conditions: undefined });
     row("getProviderConditions unwired", a.execution_decision, "execute",
-      "the default declares nothing for every tool");
+      "the default reads the labelled lines, and this description has none");
 
     const preflight = createPreflight({
       hooks: { ...hooks({}), getProviderConditions: () => { throw new Error("registry down"); } },
@@ -293,10 +320,10 @@ THE WHOLE INVENTORY — what gets declared, by whom, and where it is covered
     follows from it — a slot that does not permit user_answer is not asked        value-source-test.js, 7
   USER — conditions (the same three labels)                            gate-test.js case 7
 
-  NOT WIRED HERE, on purpose
-    validateFieldSchema / validatePayload — format and whole-object validation belong to
-      the adopting system. Unwired they pass, and preflight.unsafeDefaults carries the
-      names into every record so a published run says so on its face.
+  THE ADOPTING SYSTEM'S, on purpose
+    validateFieldSchema / validatePayload — the comparison engine belongs to the adopting
+      system. Unwired, each check reads as unverified and the run goes to definition
+      repair (row 5): fail-closed since 1.16, where it used to pass silently.
     C3 refusal and tool reselection — spec 8.1 keeps tool choice as a residual risk.`);
 
   console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`);

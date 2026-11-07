@@ -61,6 +61,11 @@ function minimalHooks(over = {}) {
     extractFromInstruction: () => undefined,
     measureFromEnvironment: () => undefined,
     buildActionKey: (uid, fixed) => `${uid}:${fixed?.c3_provider_action_name}`,
+    // Not required to BUILD, but since 1.16 required to EXECUTE: an unwired validator reads as
+    //   unverified and the run goes to definition repair. This file is about the other hooks, so both
+    //   are stand-ins that report the values checked (declaration-test row 5 shows them unwired).
+    validateFieldSchema: () => null,
+    validatePayload: () => null,
     ...over,
   };
 }

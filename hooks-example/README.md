@@ -32,6 +32,7 @@ npm run check                     # everything below. No API calls
 | File | What it looks at |
 |---|---|
 | `declaration-test.js` | Puts in and takes out what the provider declares. At the end it prints what is declared by whom, which file covers it, and what was deliberately left unplugged |
+| `declared-checks-test.js` | The checks the skeleton makes itself, each its own slot in the record: labelled description lines, each value's format and the payload's, the checklist's version, who may give a value, and words inside a declared limit |
 | `policy-test.js` | A swap that satisfies the specification gives the same result; a removal gives a named failure. At the end it prints "what the specification requires · how this skeleton does it · what the adopter decides" |
 | `gate-test.js` | Runs `hooks.js` through the real skeleton (via `arm-gate.js`) |
 | `value-source-test.js` | Seats one value in each of the five sources in turn. Includes the storage round trip and allowed sources |
@@ -135,23 +136,27 @@ Optional hooks this folder plugs:
 | Hook | This folder's implementation |
 |---|---|
 | `verifyUserChecklistItem` | Checks the user's limits against the settled values with functions in `normalize.js`. An item with no rule is `unverified` |
-| `validateFieldSchema` | Looks only at `FIELD_FORMATS` in `tool.js`. A time must be ISO 8601 with a time zone |
+| `validateFieldSchema` | Each property's type, and `FIELD_FORMATS` in `tool.js`. A time must be ISO 8601 with a time zone |
+| `validatePayload` | The whole argument object against `tool.js`'s flat schema: required keys, no undeclared key, each value's type and format |
 | `spanSupportsValue` | Below |
 | `getAllowedSources` | Below, "Allowed sources" |
 
-Not plugged: the provider condition hooks (`getProviderConditions`, `verifyProviderCondition`), `applyFieldPolicy`, `validatePayload`. How provider conditions behave is shown in `provider-conditions-test.js` and `payment-limit-test.js`.
+Not plugged: the provider condition hooks (`getProviderConditions`, `verifyProviderCondition`), `applyFieldPolicy`.
+
+Since skeleton 1.16 the two validators cannot be left out: unplugged, each check reads as unverified and the run goes to `definition_repair` instead of passing (`declaration-test.js` row 5). Their results are in the record's `value_checks`, one entry per check. How provider conditions behave is shown in `provider-conditions-test.js` and `payment-limit-test.js`.
 
 ### `spanSupportsValue`
 
 The contract is "does the text at that place say this, as the value of this slot?". The skeleton's default implementation only checks that the strings are equal. With `strict: true`, the skeleton refuses that default.
 
-This folder's implementation checks, in order:
+Before the hook is called, the skeleton makes one check itself: **inside the wording of a declared limit, it is not a value.** If a user checklist item constrains the slot (`constrains`) and the span lies inside that item's wording (`located_at` if it says where, otherwise `stated_as`), the value is refused and recorded as a `limit_wording` check. Example: "Any time this Saturday between 1pm and 6pm works for me" is not a time. This folder used to do this in its own hook (decision f); it moved to the skeleton in 1.16.
 
-1. **Inside the wording of a declared limit, it is not a value.** If a user checklist item constrains the slot (`constrains`) and the span's text lies inside that item's original wording (`stated_as`), it is refused. Example: "Any time this Saturday between 1pm and 6pm works for me" is not a time.
-2. **For the time slot, it checks a derived value.** If `datetime.js` rebuilds the same value from the span, the date the seller said, and the measured year and time zone, it returns `{ supported: true, derived: true, derived_from }`. The skeleton checks each input in `derived_from` itself and keeps them in the record.
-3. Everything else is checked for equal strings.
+This folder's implementation then checks:
 
-Undeclared limits, examples and negations are not caught by 1. Nor is a span that only partly overlaps the wording, because the hook receives the text at that place, not its position.
+1. **For the time slot, it checks a derived value.** If `datetime.js` rebuilds the same value from the span, the date the seller said, and the measured year and time zone, it returns `{ supported: true, derived: true, derived_from }`. The skeleton checks each input in `derived_from` itself and keeps them in the record.
+2. Everything else is checked for equal strings.
+
+Undeclared limits, examples and negations are not caught by the skeleton's check. When an item carries no `located_at`, the skeleton compares text, so a value the seller also stated outside the limit may be refused; that direction asks, it never settles.
 
 ### What `verifyUserChecklistItem` returns
 
@@ -165,13 +170,15 @@ The skeleton turns an `unmet` without a source into `unverified`. If the slot th
 
 ### Provider conditions (`getProviderConditions` / `verifyProviderCondition`)
 
-Not plugged in this folder, but the skeleton's rules are:
+Not plugged in this folder (its description has no labelled lines, so the skeleton's default reads none), but the skeleton's rules are:
 
 - The states are `checked` · `unmet` · `unverified`. There is no `verified`. Meeting a condition settles no slot (spec 3.3).
 - The label decides the route: an unconfirmed `[Required]` goes to `definition_repair`, an unconfirmed `[Verify]` to `ask_user`, and `[Notice]` is kept in `gate.disclosures` and is not a gate. An unknown label goes to `definition_repair`.
 - `[Required]` is confirmed only by `measured_data`. The skeleton refuses `checked` and `unmet` from any other source.
 - If `constrains` points at a slot not present in this run, the condition is `unverified`.
 - The declarations are in `CONDITIONS` in `tool.js`.
+- Unplugged, `getProviderConditions` reads the description's labelled lines (spec 4.2.1). A line with no confirmed comparison form is `unverified` and routed by its label, so it is never silently absent.
+- A condition of the form `compare: { kind: "value_source", slot }` says who may give a value (spec 3.3). The skeleton checks it itself: `[Required]` takes the value from `measured_data` only, `[Verify]` from the user only (`user_answer`, `instruction`, `pre_set_data`), with `measured_within_user_range: true` also a measurement inside a range the user set. `declared-checks-test.js` part 4.
 
 ---
 

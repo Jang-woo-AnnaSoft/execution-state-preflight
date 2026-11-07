@@ -151,6 +151,11 @@ async function main() {
     check("time status", byName.time?.status, "known");
     check("location status", byName.location?.status, "known");
     check("buyer_contact source", byName.buyer_contact?.source, "measured_data");
+    // The projection is a whitelist: the value checks and the checklist's version reach the results file.
+    check("each slot's format check is in the results", (result.value_checks ?? []).filter(c => c.kind === "format").map(c => `${c.slot}:${c.status}`).sort().join(","),
+      "buyer_contact:checked,item_id:checked,location:checked,time:checked");
+    check("  and the payload's", (result.value_checks ?? []).find(c => c.id === "payload")?.status, "checked");
+    check("  and the checklist's version", typeof result.checklist_digest, "string");
     // An execute verdict must carry the arguments. An empty object here would make
     // arm C look like it fires blank calls and would read as a win for P3.
     check("args has 4 keys", Object.keys(result.args ?? {}).sort().join(","),
@@ -923,6 +928,12 @@ async function main() {
       extractFromInstruction: name => (name === "account" ? at("123-45") : name === "amount" ? at("500") : { none: "absent" }),
       measureFromEnvironment: () => undefined,
       buildActionKey: (u, f) => `${u}:${f?.c3_provider_action_name}`,
+      // This case is about the candidate set, not about validation. Since 1.16 an unwired validator
+      //   reads as unverified (definition_repair), so the controls below would stop there: they are
+      //   wired with stand-ins that report the values checked. The unwired default is
+      //   declared-checks-test's.
+      validateFieldSchema: () => null,
+      validatePayload: () => null,
       ...over,
     });
     const run = over => createPreflight({ hooks: hooks(over), storage: createStorage() })

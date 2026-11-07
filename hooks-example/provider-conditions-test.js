@@ -80,6 +80,11 @@ function createHooks({ runId, conditions, conditionsThrow, measured }) {
       return fieldName in m ? { valid: true, value: m[fieldName] } : undefined;
     },
     buildActionKey: (userId, fixed) => `${userId}:${fixed?.c3_provider_action_name}:${runId}`,
+    // Since skeleton 1.16 an unwired validator reads as unverified (definition_repair). This file is not
+    //   about validation, so both are wired with stand-ins that report the values checked; the unwired
+    //   default is declared-checks-test's.
+    validateFieldSchema: () => null,
+    validatePayload: () => null,
 
     getProviderConditions() {
       if (conditionsThrow) throw new Error("condition source unreachable");

@@ -22,8 +22,11 @@
  *      written into a comment goes stale the next time the skeleton gains a hook.
  *      It is written into every arm C record, so the published runs carry on their
  *      face whichever ones were unwired. The experiment measures the value gate, so
- *      field policy, payload validation and the provider conditions are absent.
- *      validateFieldSchema IS wired, for the one format tool.js declares (time is
+ *      field policy and the provider conditions are absent. Payload validation IS
+ *      wired since skeleton 1.16, where an unwired validator reads as unverified and
+ *      sends the run to definition_repair instead of passing silently: the whole
+ *      argument object is checked against tool.js's flat schema (validatePayload).
+ *      validateFieldSchema IS wired, for each property's type and for the one format tool.js declares (time is
  *      an ISO 8601 datetime with an offset). It was left out at first on the
  *      reasoning that the experiment measures the value gate, and the first smoke
  *      run showed why that was wrong: with no format check the value gate sent
@@ -39,12 +42,13 @@
  *      measured one.
  *   4. spanSupportsValue is wired. Its contract asks the hook to judge whether
  *      the span states the value FOR THE SLOT, and equality cannot: "Nothing after
- *      8pm" contains a time and states none. The role check here covers ONE case,
- *      deterministically: text inside the wording of a limit the seller declared
- *      (a user checklist item's stated_as) for that slot is not a value (decision
- *      f, after the first said smoke). Everything else is still equality, with the
- *      role pushed into the extraction prompt ("A LIMIT IS NOT A VALUE"): a limit
- *      the seller stated but nobody declared as an item, an example, a negation.
+ *      8pm" contains a time and states none. ONE case is decided deterministically,
+ *      and since skeleton 1.16 by the skeleton, not here: text inside the wording of
+ *      a limit the seller declared (a user checklist item's stated_as) for that slot
+ *      is not a value (decision f, after the first said smoke; [LIMIT WORDING]).
+ *      Everything else is still equality, with the role pushed into the extraction
+ *      prompt ("A LIMIT IS NOT A VALUE"): a limit the seller stated but nobody
+ *      declared as an item, an example, a negation.
  *      What the wiring also adds is the derived datetime: the date resolver
  *      (datetime.js) turns the span plus the date the seller stated plus the
  *      measured year and zone into a datetime, and names all of them.
@@ -100,20 +104,22 @@ function measuredClock(measured) {
   return { year: y?.valid === true ? y.value : null, tz: z?.valid === true ? z.value : null };
 }
 
-// The user's declared limits, read by spanSupportsValue (decision f). Text inside a limit's own wording
-//   (stated_as) is not a value for the slot that limit constrains: "Any time this Saturday between 1pm
-//   and 6pm works for me" rules times in; it states none. Matched as a substring after folding case and
-//   spaces — the wording is the seller's verbatim, so a span inside it is inside the limit.
-//   NOT covered: a span that only partly overlaps the wording. spanSupportsValue sees the text at the
-//   span, not its position.
-function insideDeclaredLimit(userChecklist, fieldName, textAtSpan) {
-  const fold = t => String(t).toLowerCase().replace(/\s+/g, " ").trim();
-  const at = fold(textAtSpan);
-  if (!at) return null;
-  const item = (userChecklist ?? []).find(i =>
-    Array.isArray(i?.constrains) && i.constrains.includes(fieldName) &&
-    typeof i.stated_as === "string" && fold(i.stated_as).includes(at));
-  return item ? item.id ?? "unnamed item" : null;
+// Decision f ("text inside a declared limit's wording is not a value") used to live here, in
+//   spanSupportsValue. The skeleton makes that check itself now, for every adopter ([LIMIT WORDING]),
+//   before spanSupportsValue is called, and records it as its own check (value_checks, limit_wording).
+
+// The type a property declares, checked on one value. The four primitive types JSON Schema names for
+//   a flat argument; anything else is not checked here, and says so.
+function typeViolation(value, schema) {
+  const t = schema?.type;
+  if (t === undefined) return null;
+  const ok = t === "string" ? typeof value === "string"
+    : t === "number" ? typeof value === "number" && Number.isFinite(value)
+    : t === "integer" ? Number.isInteger(value)
+    : t === "boolean" ? typeof value === "boolean"
+    : undefined;
+  if (ok === undefined) return { unverified: `type ${JSON.stringify(t)} is not checked by this example` };
+  return ok ? null : `must be of type ${t}; got ${JSON.stringify(value)}`;
 }
 
 function createHooks({ adapter, model, runId, measuredData, ask, meter, userChecklist }) {
@@ -310,16 +316,13 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter, userChec
       return { value, segment_index, span };
     },
 
-    // [OPTIONAL, wired] Equality for every slot, as the skeleton's default does — the role check
-    //   ("a limit is not a value") is still NOT implemented; see disclosure 4. What it adds is the
+    // [OPTIONAL, wired] Equality for every slot, as the skeleton's default does. What it adds is the
     //   derived datetime: it re-derives the value from the span and the conversation and, if it
     //   matches, says so with every input named. The gate then checks each input itself.
+    //   A span inside a limit the seller declared never reaches this hook: the skeleton refuses it first
+    //   ([LIMIT WORDING]), so a range cannot be derived into a datetime here (the first said smoke:
+    //   sonnet turned "this Saturday between 1pm and 6pm" into 13:00, twice, recorded as stated).
     spanSupportsValue(value, textAtSpan, fieldName, ctx) {
-      // The role check, for the limits the seller declared: a span inside a limit's wording does not
-      //   state the value, whatever it contains. Checked before anything else, so a range cannot be
-      //   derived into a datetime (the first said smoke: sonnet turned "this Saturday between 1pm and
-      //   6pm" into 13:00, twice, recorded as stated by the seller).
-      if (insideDeclaredLimit(userChecklist, fieldName, textAtSpan)) return false;
       if (FIELD_FORMATS[fieldName] === "iso_datetime" && ISO_DATETIME.test(String(value))) {
         const r = resolveDatetime(textAtSpan, ctx?.instruction,
                                   measuredClock(ctx?.measured_data ?? measuredData));
@@ -328,10 +331,34 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter, userChec
       return squash(value) === squash(textAtSpan);
     },
 
-    // [OPTIONAL, wired] The formats declared in tool.js. Nothing else is checked here.
+    // [wired] The property's type, and the formats declared in tool.js. A reply of null says the value
+    //   was checked; since 1.16 the skeleton records that as the slot's format check, so it must be so.
     validateFieldSchema(value, schema, ctx, fieldName) {
+      const typeOut = typeViolation(value, schema);
+      if (typeOut !== null) return typeof typeOut === "string" ? `"${fieldName}" ${typeOut}` : typeOut;
       if (FIELD_FORMATS[fieldName] === "iso_datetime" && !ISO_DATETIME.test(String(value))) {
         return `"${fieldName}" must be an ISO 8601 date-time with an offset; got "${value}"`;
+      }
+      return null;
+    },
+
+    // [wired] The whole argument object against the flat schema tool.js declares: a plain object, every
+    //   required key present, no key the schema does not name, each value passing the check above.
+    //   Unwired before 1.16, when an unwired validator passed silently; now it would read as unverified
+    //   and send every run to definition_repair.
+    validatePayload(args, inputSchema) {
+      if (!args || typeof args !== "object" || Array.isArray(args)) return "the arguments are not an object";
+      const props = inputSchema?.properties ?? {};
+      const missing = (inputSchema?.required ?? []).filter(k => !(k in args));
+      if (missing.length) return `required argument missing: ${missing.join(", ")}`;
+      const extra = Object.keys(args).filter(k => !(k in props));
+      if (extra.length) return `argument the schema does not declare: ${extra.join(", ")}`;
+      for (const [k, v] of Object.entries(args)) {
+        const typeOut = typeViolation(v, props[k]);
+        if (typeOut !== null) return typeof typeOut === "string" ? `"${k}" ${typeOut}` : typeOut;
+        if (FIELD_FORMATS[k] === "iso_datetime" && !ISO_DATETIME.test(String(v))) {
+          return `"${k}" must be an ISO 8601 date-time with an offset; got "${v}"`;
+        }
       }
       return null;
     },

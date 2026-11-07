@@ -143,7 +143,16 @@ function project(state, preflight, tool) {
     })),
     user_checklist: (state.user_checklist ?? []).map(i => ({
       id: i.id, status: i.status, source: i.source ?? null, note: i.note ?? null,
+      rule_hash: i.rule_hash ?? null,
     })),
+    // Every check on a value, each its own slot (skeleton 1.16): format per slot, limit_wording per
+    //   value read from the seller's words on a limited slot, the payload. Without it a published run
+    //   cannot tell a value that was format-checked from one nobody could check.
+    value_checks: (state.value_checks ?? []).map(c => ({
+      id: c.id, kind: c.kind, slot: c.slot ?? null, status: c.status, source: c.source ?? null, note: c.note ?? null,
+    })),
+    // Which version of the checklist the verdict was made under (6.1).
+    checklist_digest: state.checklist_digest ?? null,
     unsafe_defaults: preflight.unsafeDefaults,
     // The fixed checklist (4.1, 4.1.1, 6.4): the name the user used, where in their words the gate found
     //   it, and the tool it was matched against and how. Named field by field — a whitelist, like the rest.

@@ -125,6 +125,11 @@ function createHooks({ runId, conditions, override }) {
       return undefined;
     },
     buildActionKey: (userId, fixed) => `${userId}:${fixed?.c3_provider_action_name}:${runId}`,
+    // Since skeleton 1.16 an unwired validator reads as unverified (definition_repair). This file is not
+    //   about validation, so both are wired with stand-ins that report the values checked; the unwired
+    //   default is declared-checks-test's.
+    validateFieldSchema: () => null,
+    validatePayload: () => null,
 
     // The conditions this tool declares. Returned from the tool side, not passed in as input.
     getProviderConditions: () => conditions,

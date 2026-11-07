@@ -128,6 +128,11 @@ function createHooks({ locate, measured, acceptPriorState, whenCase, allowed, me
     verifyProviderCondition: (c) => ({ status: "checked", source: "measured_data", note: "ok" }),
 
     buildActionKey: () => "u_1042:send_payment",   // the SAME key across runs, for part 4
+    // Since skeleton 1.16 an unwired validator reads as unverified (definition_repair). This file is not
+    //   about validation, so both are wired with stand-ins that report the values checked; the unwired
+    //   default is declared-checks-test's.
+    validateFieldSchema: () => null,
+    validatePayload: () => null,
 
     // Part 7. Which seats are permitted at all.
     ...(allowed ? { getAllowedSources: allowed } : {}),
