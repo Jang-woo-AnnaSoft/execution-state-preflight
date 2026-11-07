@@ -42,7 +42,9 @@ const { buildUserTurn } = require("./prompts");
  * @param measured  Optional, tests only: replaces the measurement, so a failed
  *             one can be exercised through this function.
  */
-async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, userId = "seller_1", ask, measured, userChecklist = [], userAnswers = {}, date = null }) {
+// storage: tests only. A round that answers must share the unit's storage (and runId, which is its key)
+//   with the round that asked: since skeleton 1.18 an answer to a question never asked is refused.
+async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, userId = "seller_1", ask, measured, userChecklist = [], userAnswers = {}, date = null, storage: sharedStorage = null }) {
   // buyer_contact is always measured, and measurement is the only source it permits
   // (tool.js ALLOWED_SOURCES). With a date mode, the platform's clock year and the
   // account's time zone are measured too — the parts of a date nobody says. In group 5's
@@ -73,7 +75,7 @@ async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, u
   return { ...turn1, turns: 1, ...harness(meter) };
 
   async function runOnce(segments, suffix = "") {
-    const storage = createStorage();
+    const storage = sharedStorage ?? createStorage();
     // userChecklist goes to the hooks too: spanSupportsValue reads the limits' wording (decision f).
     const hooks = createHooks({ adapter, model, runId: runId + suffix, measuredData, meter, userChecklist,
                                 ...(ask ? { ask } : {}) });

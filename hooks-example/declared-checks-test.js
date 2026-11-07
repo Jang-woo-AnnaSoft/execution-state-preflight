@@ -22,6 +22,8 @@
  *   8. The conditions the user stated in the instruction become items (4.4), checked against the
  *      user's words, and asked about until the user confirms their form.
  *   9. An approval is bound to the values it was shown with and to the item's version (6.3, 6.1).
+ *  10. An answer counts only for a question this unit was asked, and each route's tries are counted by
+ *      the gate from the unit's own records (4.5, 4.6).
  */
 
 const { createPreflight, ruleHash } = require("../execution-state-preflight");
@@ -99,13 +101,19 @@ function memStorage({ withList = true } = {}) {
   return st;
 }
 
+// Since 1.18 an answer counts only for a question this unit was asked, so a run with answers first runs
+//   the round that asked them, under the same key and storage — the order it happens in (part 10 tests
+//   the rule itself, with noPriorAsk).
 async function run(opts = {}, input = {}) {
   const storage = opts.storage ?? memStorage();
   const preflight = createPreflight({ hooks: hooks(opts), storage });
-  const r = await preflight.runPreflightAndRecord({
+  const base = {
     userId: "u", instruction: opts.instruction ?? (opts.text ? [{ trust: "user", text: opts.text }] : SAID),
     mcpTool: opts.tool ?? tool(), measured_data: {}, userChecklist: [], userAnswers: {}, ...input,
-  });
+  };
+  const answering = Object.keys(input.userAnswers ?? {}).length + Object.keys(input.checklistAnswers ?? {}).length > 0;
+  if (answering && !opts.noPriorAsk) await preflight.runPreflightAndRecord({ ...base, userAnswers: {}, checklistAnswers: {} });
+  const r = await preflight.runPreflightAndRecord(base);
   return { r, persisted: storage.all.filter(e => !e.key.startsWith("__form_approval__")).at(-1)?.record ?? null, preflight, storage };
 }
 const vc = (r, id) => (r.value_checks ?? []).find(c => c.id === id) ?? null;
@@ -354,7 +362,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.17");
+    check("schema_version", persisted?.schema_version, "1.18");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -554,6 +562,85 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const RCOND = { id: "c_req", label: "Required", description: "The sale must be agreed.", constrains: [] };
     const pReq = await run({ measured: ALL_MEASURED, conditions: [RCOND] }, { checklistAnswers: { c_req: true } });
     check("  a [Required] condition is not the user's to approve", [cond(pReq.r).status, pReq.r.execution_decision], ["unverified", "definition_repair"]);
+  }
+
+  // ══ 10 ═════════════════════════════════════════════════════════════════════════════════
+  heading("10. answers count only for questions asked; tries are counted from the record (4.5, 4.6)");
+  {
+    const said = "Set up the pickup for LST-2291, 2pm this Saturday, Hongdae station lockers.";
+    const ex = { item_id: at(said, "LST-2291"), time: at(said, "2pm this Saturday"), location: at(said, "Hongdae station lockers") };
+    const o = (extra = {}) => ({ text: said, extract: ex, measured: ALL_MEASURED, ...extra });
+
+    const cold = await run(o({ noPriorAsk: true }), { userAnswers: { time: SAT_2PM } });
+    check("an answer to a question never asked: refused", [field(cold.r, "time").status, cold.r.execution_decision], ["unknown", "ask_user"]);
+    check("  traced as rejected, not as no report", field(cold.r, "time").lookup_trace?.find(t => t.source === "user_answer")?.result, "rejected");
+    check("  and recorded as a check of its own", vc(cold.r, "time:answer")?.status, "rejected");
+
+    const storage = memStorage();
+    const asked = await run(o({ storage }));
+    check("the gate asks for the time", asked.r.gate?.unknown_fields?.map(f => f.name), ["time"]);
+    const answered = await run(o({ storage, noPriorAsk: true }), { userAnswers: { time: SAT_2PM, item_id: "LST-9999" } });
+    check("  the answer to it counts", [field(answered.r, "time").source, field(answered.r, "time").value], ["user_answer", SAT_2PM]);
+    check("  an answer slipped in for a slot not asked does not", [field(answered.r, "item_id").value, vc(answered.r, "item_id:answer")?.status], ["LST-2291", "rejected"]);
+    check("  executes, with the item the seller named", [answered.r.execution_decision, answered.r.call_arguments?.item_id], ["execute", "LST-2291"]);
+
+    let n = 0;
+    const perRound = { buildActionKey: () => `u:schedule_pickup:${++n}` };
+    const s2 = memStorage();
+    await run(o({ storage: s2, over: perRound }));
+    const lost = await run(o({ storage: s2, over: perRound, noPriorAsk: true }), { userAnswers: { time: SAT_2PM } });
+    check("a key unique per round: the unit was never asked, the answer is refused", field(lost.r, "time").status, "unknown");
+
+    const s3 = memStorage({ withList: false });
+    await run(o({ storage: s3 }));
+    const blind = await run(o({ storage: s3, noPriorAsk: true }), { userAnswers: { time: SAT_2PM } });
+    check("a storage that cannot list: every answer refused (fail-closed)", [field(blind.r, "time").status, /cannot list/.test(vc(blind.r, "time:answer")?.note ?? "")], ["unknown", true]);
+
+    const PUBLIC = { id: "chk_public", stated_as: "Public places only.", constrains: ["location"], compare: null };
+    const approval = { answer: true, shown: { location: "Hongdae station lockers" }, rule_hash: "x" };
+    const notAsked = await run({ measured: ALL_MEASURED, noPriorAsk: true }, { userChecklist: [PUBLIC], checklistAnswers: { chk_public: approval } });
+    check("an approval for an item never asked about: refused", [vc(notAsked.r, "chk_public:answer")?.status, notAsked.r.user_checklist[0].status], ["rejected", "unverified"]);
+
+    // Ceilings, counted from the record. The caller passes 0 every time.
+    const s4 = memStorage();
+    const decisions = [];
+    for (let i = 0; i < 3; i++) decisions.push((await run(o({ storage: s4 }), { ask_attempt: 0 })).r.execution_decision);
+    check("asks counted from the record: the third round is exhausted, whatever the caller says", decisions, ["ask_user", "ask_user", "exhausted"]);
+    const early = await run(o({}), { ask_attempt: 5 });
+    check("  a caller can bring exhausted forward", early.r.execution_decision, "exhausted");
+
+    const s5 = memStorage();
+    const look = [];
+    const SYSTEM_ONLY = [{ id: "c_contact", label: "Required", description: "From the platform.", compare: { kind: "value_source", slot: "buyer_contact" } }];
+    for (let i = 0; i < 3; i++) look.push((await run({ storage: s5, conditions: SYSTEM_ONLY, over: { measureFromEnvironment: () => undefined } })).r.execution_decision);
+    check("system lookups counted the same way", look, ["system_lookup", "system_lookup", "exhausted"]);
+
+    const s6 = memStorage();
+    const tools = [];
+    for (let i = 0; i < 3; i++) tools.push((await run({ storage: s6, measured: ALL_MEASURED,
+      over: { confirmToolNameMatchesIntent: () => ({ approved: false, reason: "not this tool" }) } })).r.execution_decision);
+    check("and tool asks", tools, ["ask_user", "ask_user", "exhausted"]);
+
+    const s7 = memStorage();
+    await run(o({ storage: s7 }));
+    const done = await run(o({ storage: s7, noPriorAsk: true }), { userAnswers: { time: SAT_2PM } });
+    const exec = await done.preflight.executeIfReady(done.r, tool(), async () => ({ ok: true }));
+    check("once the unit has executed", exec.status, "executed");
+    const again = await run(o({ storage: s7, noPriorAsk: true }), { userAnswers: { time: SAT_2PM } });
+    check("  the next request under its key starts with nothing asked", field(again.r, "time").status, "unknown");
+    // The ask before the execution is not counted: 'again' is this request's first ask, so one more is
+    //   allowed before the ceiling of two. Counted, the next round would already be exhausted.
+    const fresh = [];
+    for (let i = 0; i < 2; i++) fresh.push((await run(o({ storage: s7 }))).r.execution_decision);
+    check("  and with every count at zero", fresh, ["ask_user", "exhausted"]);
+
+    const s8 = memStorage();
+    const later = { ...o({ storage: s8, when: "scheduled" }) };
+    await run(later);
+    const sched = await run({ ...later, noPriorAsk: true }, { userAnswers: { time: SAT_2PM } });
+    check("an answer given at instruction time is kept for the trigger", [sched.r.execution_decision, sched.r.deferred_input?.userAnswers?.time], ["deferred", SAT_2PM]);
+    const trig = await run({ ...o({ storage: s8 }), noPriorAsk: true }, { ...sched.r.deferred_input });
+    check("  and counts there: it was asked, in this unit", [field(trig.r, "time").source, trig.r.execution_decision], ["user_answer", "execute"]);
   }
 
   console.log(failures ? `\n${failures} FAILED` : "\nall ok");

@@ -493,6 +493,11 @@ function createStorage() {
       }
       return null;
     },
+    // Every record under the key, oldest first. Since skeleton 1.17/1.18 the gate reads confirmed forms,
+    //   and what this unit was asked and how often, this way; without it no answer counts.
+    async list(key) {
+      return [...(m.get(key) ?? [])];
+    },
     dump() {
       return Object.fromEntries(m);
     }

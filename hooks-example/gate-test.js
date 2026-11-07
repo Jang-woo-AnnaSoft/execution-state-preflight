@@ -34,6 +34,7 @@
 const fs = require("fs");
 const path = require("path");
 const { runGateArm } = require("./arm-gate");
+const { createStorage: createRunStorage } = require("./hooks");
 const { buildTool } = require("./tool");
 const { buildUserTurn } = require("./prompts");
 
@@ -116,7 +117,7 @@ function makeStub(plan) {
  */
 async function runCase(name, instructionText, plan) {
   const turn = buildUserTurn(ctx, instructionText, plan.date ?? null, plan.date?.seller_answer ? true : false);
-  const result = await runGateArm({
+  const args = {
     model: "stub",
     tool: buildTool("plain"),
     ctx,
@@ -125,8 +126,13 @@ async function runCase(name, instructionText, plan) {
     date: plan.date ?? null,
     userChecklist: plan.userChecklist ?? [],
     userAnswers: plan.userAnswers ?? {},
-    ask: makeStub({ ...plan, extraction: plan.buildExtraction(turn.segments) })
-  });
+    ask: makeStub({ ...plan, extraction: plan.buildExtraction(turn.segments) }),
+    storage: createRunStorage(),
+  };
+  // Since skeleton 1.18 an answer counts only for a question this unit was asked: a case that answers
+  //   first runs the round that asked, in the same storage under the same key.
+  if (Object.keys(args.userAnswers).length) await runGateArm({ ...args, userAnswers: {} });
+  const result = await runGateArm(args);
   const byName = Object.fromEntries((result.fields ?? []).map(f => [f.name, f]));
   return { result, byName };
 }

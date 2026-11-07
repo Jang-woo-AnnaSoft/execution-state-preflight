@@ -91,6 +91,7 @@ function createStorage() {
   return {
     persist: (key, record) => inner.persist(key, record),
     load: (key) => { loads += 1; return inner.load(key); },
+    list: (key) => inner.list(key),
     _loads: () => loads,
     _dump: () => inner.dump(),
   };
@@ -150,6 +151,19 @@ async function run({ locate, instruction, preSetData, measured, userAnswers, pri
     storage: store,
     ...(limits ? { limits } : {}),
   });
+  // Since skeleton 1.18 an answer counts only for a question this unit was asked. A run that answers
+  //   first runs the round that asked: the same unit, in the same storage, with the slot still blank
+  //   (no other source has it yet), so the gate puts the question.
+  if (userAnswers && Object.keys(userAnswers).length) {
+    const asker = createPreflight({
+      hooks: createHooks({ locate: undefined, measured: undefined, acceptPriorState, whenCase, allowed, measure: () => undefined, policy, extract: undefined, support, settled }),
+      storage: store,
+    });
+    await asker.runPreflightAndRecord({
+      userId: "u_1042", instruction: PLAIN_INSTRUCTION, mcpTool: tool ?? TOOL, preSetData: {}, measured_data: {},
+      priorExecutionState: null, userChecklist: userChecklist ?? [], userAnswers: {},
+    });
+  }
   const state = await preflight.runPreflightAndRecord({
     userId: "u_1042",
     instruction: instruction ?? PLAIN_INSTRUCTION,
