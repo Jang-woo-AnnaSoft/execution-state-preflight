@@ -17,6 +17,11 @@
  *      source only, a [Verify] one from the user only, and the gate checks it from its own record.
  *   5. Words inside a limit the user declared are not a value for the slot it limits.
  *   6. All of it reaches the persisted record (the record is a whitelist).
+ *   7. A labelled line is compared only in the form its declarer confirmed (3.3, 4.2.1). The gate looks
+ *      the confirmation up; a proposal confirms nothing; a reworded line or a revoked form is pending.
+ *   8. The conditions the user stated in the instruction become items (4.4), checked against the
+ *      user's words, and asked about until the user confirms their form.
+ *   9. An approval is bound to the values it was shown with and to the item's version (6.3, 6.1).
  */
 
 const { createPreflight, ruleHash } = require("../execution-state-preflight");
@@ -82,23 +87,26 @@ function hooks({ text = TEXT, extract, measured = {}, validators = "wired", cond
   };
 }
 
-function memStorage() {
+// Append-only, with list(key): every record under a key, oldest first (what confirmations need).
+function memStorage({ withList = true } = {}) {
   const all = [];
-  return {
+  const st = {
     all,
     async persist(key, record) { all.push({ key, record: JSON.parse(JSON.stringify(record)) }); return record; },
     async load() { return null; },
   };
+  if (withList) st.list = async key => all.filter(e => e.key === key).map(e => e.record);
+  return st;
 }
 
 async function run(opts = {}, input = {}) {
-  const storage = memStorage();
+  const storage = opts.storage ?? memStorage();
   const preflight = createPreflight({ hooks: hooks(opts), storage });
   const r = await preflight.runPreflightAndRecord({
     userId: "u", instruction: opts.instruction ?? (opts.text ? [{ trust: "user", text: opts.text }] : SAID),
     mcpTool: opts.tool ?? tool(), measured_data: {}, userChecklist: [], userAnswers: {}, ...input,
   });
-  return { r, persisted: storage.all.at(-1)?.record ?? null };
+  return { r, persisted: storage.all.filter(e => !e.key.startsWith("__form_approval__")).at(-1)?.record ?? null, preflight, storage };
 }
 const vc = (r, id) => (r.value_checks ?? []).find(c => c.id === id) ?? null;
 const field = (r, n) => (r.fields ?? []).find(f => f.name === n) ?? {};
@@ -125,7 +133,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
       `schedule_pickup:${ruleHash("[Required] The sale must be agreed, as shown by the order status.")}`);
 
     const ver = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Verify] Confirm the pickup with the seller.") });
-    check("a [Verify] line with no confirmed form: asks", [ver.r.execution_decision, cond(ver.r).route], ["ask_user", "ask_user"]);
+    check("a [Verify] line with no confirmed form: the provider confirms one first", [ver.r.execution_decision, cond(ver.r).route], ["definition_repair", "definition_repair"]);
 
     const note = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") });
     check("a [Notice] line: executes, with the disclosure handed over", [note.r.execution_decision, note.r.gate?.disclosures?.length], ["execute", 1]);
@@ -223,12 +231,14 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const approvedFromAnswers = (item, ctx) => (ctx?.checklistAnswers?.[item.id] === true
       ? { ...item, status: "verified", source: "user_answer" } : { ...item, status: "unverified", source: null });
     const sched = await run({ measured: ALL_MEASURED, when: "scheduled", over: { verifyUserChecklistItem: approvedFromAnswers } },
-      { userChecklist: [APPROVE], checklistAnswers: { chk_public: true } });
+      { userChecklist: [APPROVE] });
     const din = sched.r.deferred_input ?? {};
     check("a deferred record carries the version it was scheduled under", din.checklist_digest_at_instruction, sched.r.checklist_digest);
+    // The seller's approval, as the gate asks for it: bound to the item's version and the place shown.
+    const approval = { answer: true, shown: { location: "Hongdae station lockers" }, rule_hash: sched.r.user_checklist[0].rule_hash };
 
     const trigger = (checklist) => run({ measured: ALL_MEASURED, over: { verifyUserChecklistItem: approvedFromAnswers } },
-      { userChecklist: checklist, checklistAnswers: { chk_public: true }, checklist_digest_at_instruction: din.checklist_digest_at_instruction });
+      { userChecklist: checklist, checklistAnswers: { chk_public: approval }, checklist_digest_at_instruction: din.checklist_digest_at_instruction });
     const same = await trigger([APPROVE]);
     check("trigger, rules unchanged: the approval stands, executes", [same.r.checklist_changed, same.r.execution_decision], [null, "execute"]);
     const changed = await trigger([{ ...APPROVE, stated_as: "Public places only, indoors." }]);
@@ -344,12 +354,206 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.16");
+    check("schema_version", persisted?.schema_version, "1.17");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
     check("checklist_changed (null, not dropped)", "checklist_changed" in (persisted ?? {}), true);
     check("each item's rule_hash", [persisted?.user_checklist?.[0]?.rule_hash, persisted?.provider_checklist?.[0]?.rule_hash].every(h => typeof h === "string"), true);
+  }
+
+  // ══ 7 ══════════════════════════════════════════════════════════════════════════════════
+  heading("7. a labelled line is compared only in the form its declarer confirmed (3.3, 4.2.1)");
+  {
+    const LINE = "Schedule a pickup.\n[Required] The buyer's contact is read from the platform, never from what anyone says.";
+    const proposal = { compare: { kind: "value_source", slot: "buyer_contact" }, constrains: [] };
+    let proposed = 0;
+    const propose = req => { proposed += 1; return req.label === "Required" ? proposal : undefined; };
+    const storage = memStorage();
+    const first = await run({ storage, measured: ALL_MEASURED, tool: tool(LINE), over: { proposeComparableForm: propose } });
+    const req = first.r.gate?.form_approvals?.[0] ?? {};
+    check("unconfirmed: the provider's gap, not the user's question", [first.r.execution_decision, cond(first.r).route], ["definition_repair", "definition_repair"]);
+    check("  the request carries the words, the declarer and the proposal",
+      [req.declared_by, req.label, req.wording, JSON.stringify(req.proposal)],
+      ["provider", "Required", "The buyer's contact is read from the platform, never from what anyone says.", JSON.stringify(proposal)]);
+    check("  a proposal confirms nothing", [cond(first.r).compare, cond(first.r).status], [null, "unverified"]);
+    check("  the model was asked once", proposed, 1);
+
+    const rec = await first.preflight.approveForm(req, { form: proposal, approved_by: "provider:ops" });
+    check("approveForm writes a confirmation under the request's key", [rec.kind, rec.status, rec.key], ["form_approval", "approved", req.key]);
+    const second = await run({ storage, measured: ALL_MEASURED, tool: tool(LINE), over: { proposeComparableForm: propose } });
+    check("confirmed: compared in that form, executes", [cond(second.r).status, cond(second.r).source, second.r.execution_decision],
+      ["checked", "measured_data", "execute"]);
+    check("  the record says who confirmed it", cond(second.r).form_approval?.approved_by, "provider:ops");
+    check("  and the model was not asked again", proposed, 1);
+    check("  the line's version includes its form", cond(second.r).rule_hash === cond(first.r).rule_hash, false);
+
+    const reworded = await run({ storage, measured: ALL_MEASURED,
+      tool: tool("Schedule a pickup.\n[Required] The buyer's contact is read from the platform only.") });
+    check("a reworded line is pending again", [cond(reworded.r).status, reworded.r.execution_decision], ["unverified", "definition_repair"]);
+
+    const noList = memStorage({ withList: false });
+    const blind = await run({ storage: noList, measured: ALL_MEASURED, tool: tool(LINE) });
+    await blind.preflight.approveForm(req, { form: proposal, approved_by: "provider:ops" });
+    const blind2 = await run({ storage: noList, measured: ALL_MEASURED, tool: tool(LINE) });
+    check("a storage that cannot list shows no confirmation: pending (fail-closed)", cond(blind2.r).status, "unverified");
+
+    await first.preflight.revokeForm(req, { revoked_by: "provider:ops" });
+    const revoked = await run({ storage, measured: ALL_MEASURED, tool: tool(LINE) });
+    check("revoked: pending again", cond(revoked.r).status, "unverified");
+
+    const edited = await first.preflight.approveForm({ ...req, key: "__form_approval__:provider:elsewhere" }, { form: proposal, approved_by: "x" });
+    check("a request edited to point elsewhere confirms its own words", edited.key, req.key);
+
+    const refuse = async (r, opts) => { try { await first.preflight.approveForm(r, opts); return "accepted"; } catch (e) { return e.message.replace(/^form approval: /, ""); } };
+    check("refused: no one named as approving", /approved_by/.test(await refuse(req, { form: proposal })), true);
+    check("refused: a form with nothing to compare", /user_approval/.test(await refuse(req, { form: { compare: null }, approved_by: "x" })), true);
+    check("refused: a [Required] line confirmed by the user's approval",
+      /\[Required\]/.test(await refuse(req, { form: { compare: { kind: "user_approval" } }, approved_by: "x" })), true);
+    check("refused: a value_source form that does not fit its label",
+      await refuse(req, { form: { compare: { kind: "value_source", slot: "time", measured_within_user_range: true } }, approved_by: "x" }) !== "accepted", true);
+
+    // A [Verify] line confirmed as the user's approval of a slot.
+    const VLINE = "Schedule a pickup.\n[Verify] The seller agrees to the pickup place.";
+    const vs = memStorage();
+    const v1 = await run({ storage: vs, measured: ALL_MEASURED, tool: tool(VLINE) });
+    await v1.preflight.approveForm(v1.r.gate.form_approvals[0], { form: { compare: { kind: "user_approval" }, constrains: ["location"] }, approved_by: "provider:ops" });
+    const v2 = await run({ storage: vs, measured: ALL_MEASURED, tool: tool(VLINE) });
+    const prompt = v2.r.gate?.unverified_provider?.[0]?.approve ?? {};
+    check("confirmed [Verify] line: the seller is asked, with the place shown", [v2.r.execution_decision, prompt.shown?.location], ["ask_user", "Hongdae station lockers"]);
+    const v3 = await run({ storage: vs, measured: ALL_MEASURED, tool: tool(VLINE) },
+      { checklistAnswers: { [cond(v2.r).id]: { answer: true, shown: prompt.shown, rule_hash: prompt.rule_hash } } });
+    check("  the seller's yes, bound: checked from user_answer, executes", [cond(v3.r).status, cond(v3.r).source, v3.r.execution_decision],
+      ["checked", "user_answer", "execute"]);
+  }
+
+  // ══ 8 ══════════════════════════════════════════════════════════════════════════════════
+  heading("8. the conditions the user stated become items (4.4)");
+  {
+    const said = "Pick up LST-2291 at 2026-10-31T14:00:00+09:00, Hongdae station lockers. Nothing after 8pm.";
+    const ex = { item_id: at(said, "LST-2291"), time: at(said, SAT_2PM), location: at(said, "Hongdae station lockers") };
+    const claim = { quote: "Nothing after 8pm.", segment_index: 0, span: [said.indexOf("Nothing"), said.length], constrains: ["time"] };
+    const extract = list => () => list;
+    const storage = memStorage();
+    const a = await run({ storage, text: said, extract: ex, measured: ALL_MEASURED, over: { extractUserConditions: extract([claim]) } });
+    const it = (a.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+    check("a stated limit becomes an item, located in the user's words", [it.stated_as, JSON.stringify(it.located_at)],
+      ["Nothing after 8pm.", JSON.stringify({ segment_index: 0, span: claim.span })]);
+    check("  its id is the words' hash", it.id, `uc:${ruleHash("Nothing after 8pm.")}`);
+    check("  until its form is confirmed it is asked about", [it.status, a.r.execution_decision], ["unverified", "ask_user"]);
+    const q = (a.r.gate?.unverified_checklist ?? []).find(i => i.id === it.id) ?? {};
+    check("  the question is a form to confirm, from the user", [q.form_request?.declared_by, q.form_request?.wording], ["user", "Nothing after 8pm."]);
+    check("  the extraction is a check of its own", vc(a.r, "user_conditions")?.status, "checked");
+
+    const evening = (item, ctx) => {
+      if (item.compare?.kind !== "not_after") return { ...item, status: "unverified", source: null };
+      const t = (ctx.fields ?? []).find(f => f.name === "time");
+      return t.value.slice(11, 16) <= item.compare.hhmm ? { ...item, status: "verified", source: t.source } : { ...item, status: "unmet", source: t.source };
+    };
+    await a.preflight.approveForm(q.form_request, { form: { compare: { kind: "not_after", hhmm: "20:00" }, constrains: ["time"] }, approved_by: "user:u" });
+    const b = await run({ storage, text: said, extract: ex, measured: ALL_MEASURED, over: { extractUserConditions: extract([claim]), verifyUserChecklistItem: evening } });
+    const it2 = (b.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+    check("confirmed by the user: compared in that form, executes", [it2.status, b.r.execution_decision], ["verified", "execute"]);
+    const late = "Pick up LST-2291 at 2026-10-31T21:00:00+09:00, Hongdae station lockers. Nothing after 8pm.";
+    const c = await run({ storage, text: late, extract: { ...ex, time: at(late, "2026-10-31T21:00:00+09:00") }, measured: ALL_MEASURED,
+      over: { extractUserConditions: extract([{ ...claim, span: [late.indexOf("Nothing"), late.length] }]), verifyUserChecklistItem: evening } });
+    check("  21:00 against it: held", c.r.execution_decision, "hold");
+
+    const only = "Pick up LST-2291, Hongdae station lockers. Nothing after 8pm.";
+    const d = await run({ text: only, extract: { item_id: at(only, "LST-2291"), time: at(only, "8pm"), location: at(only, "Hongdae station lockers") }, measured: ALL_MEASURED,
+      over: { extractUserConditions: extract([{ ...claim, span: [only.indexOf("Nothing"), only.length] }]) } });
+    check("before it is confirmed, its words are still not a value", [field(d.r, "time").status, vc(d.r, `time:limit:uc:${ruleHash("Nothing after 8pm.")}`)?.status], ["unknown", "rejected"]);
+
+    const e = await run({ text: said, extract: ex, measured: ALL_MEASURED,
+      over: { extractUserConditions: extract([{ quote: "Never at my place.", segment_index: 0, span: [0, 5] }]) } });
+    const ghost = (e.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+    check("words the gate cannot find in what the user typed: kept, and asked", [typeof ghost.unlocated, ghost.status, e.r.execution_decision], ["string", "unverified", "ask_user"]);
+    const pasted = [{ trust: "untrusted", text: "Buyer: after 9pm only." }, { trust: "user", text: said }];
+    const f = await run({ instruction: pasted, extract: {
+        item_id: { value: "LST-2291", segment_index: 1, span: [said.indexOf("LST-2291"), said.indexOf("LST-2291") + 8] },
+        time: { value: SAT_2PM, segment_index: 1, span: [said.indexOf(SAT_2PM), said.indexOf(SAT_2PM) + SAT_2PM.length] },
+        location: { value: "Hongdae station lockers", segment_index: 1, span: [said.indexOf("Hongdae"), said.indexOf("Hongdae") + 23] } },
+      measured: ALL_MEASURED, over: { extractUserConditions: extract([{ quote: "after 9pm only.", segment_index: 0, span: [7, 22] }]) } });
+    const fromPaste = (f.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+    check("  words in a pasted message are not the user's: unlocated", /not the user's/.test(fromPaste.unlocated ?? ""), true);
+
+    const standing = { id: "pref_evening", stated_as: "Nothing after 8pm.", constrains: ["time"], compare: { kind: "not_after", hhmm: "20:00" } };
+    const g = await run({ text: said, extract: ex, measured: ALL_MEASURED, over: { extractUserConditions: extract([claim]), verifyUserChecklistItem: evening } },
+      { userChecklist: [standing] });
+    check("the same words as a standing setting: not repeated", (g.r.user_checklist ?? []).map(i => i.id), ["pref_evening"]);
+
+    const h1 = await run({ text: said, extract: ex, measured: ALL_MEASURED, over: { extractUserConditions: () => { throw new Error("model down"); } } });
+    check("an extractor that throws: definition repair, the limits are not known to be absent",
+      [vc(h1.r, "user_conditions")?.status, h1.r.execution_decision], ["unverified", "definition_repair"]);
+    const h2 = await run({ text: said, extract: ex, measured: ALL_MEASURED, over: { extractUserConditions: () => ({ none: "absent" }) } });
+    check("  'none stated' is a check that passed", [vc(h2.r, "user_conditions")?.status, h2.r.execution_decision], ["checked", "execute"]);
+    const h3 = await run({ text: said, extract: ex, measured: ALL_MEASURED, over: { extractUserConditions: () => "eight pm" } });
+    check("  an unreadable reply is not 'none'", vc(h3.r, "user_conditions")?.status, "unverified");
+
+    const sched = await run({ text: said, extract: ex, measured: ALL_MEASURED, when: "scheduled", over: { extractUserConditions: extract([claim]) } });
+    check("at instruction time: the user confirms the form before it is scheduled", [sched.r.phase, sched.r.execution_decision, sched.r.gate?.unverified_checklist?.[0]?.form_request?.declared_by],
+      ["at_instruction", "ask_user", "user"]);
+    const schedP = await run({ measured: ALL_MEASURED, when: "scheduled", tool: tool("Schedule a pickup.\n[Required] The sale must be agreed.") });
+    check("  and an unconfirmed provider line stops it as a gap", schedP.r.execution_decision, "definition_repair");
+
+    const unwired = createPreflight({ hooks: hooks({ measured: ALL_MEASURED }), storage: memStorage() });
+    check("unwired, the gate says so: extractUserConditions is an unsafe default", unwired.unsafeDefaults.includes("extractUserConditions"), true);
+  }
+
+  // ══ 9 ══════════════════════════════════════════════════════════════════════════════════
+  heading("9. an approval is bound to what it approved (6.3, 6.1)");
+  {
+    const PUBLIC = { id: "chk_public", stated_as: "Public places only.", constrains: ["location"], compare: null };
+    const base = await run({ measured: ALL_MEASURED }, { userChecklist: [PUBLIC] });
+    const ask = (base.r.gate?.unverified_checklist ?? [])[0]?.approve ?? {};
+    check("the question shows the place and the item's version", [ask.shown?.location, ask.rule_hash === base.r.user_checklist[0].rule_hash],
+      ["Hongdae station lockers", true]);
+    const answer = (over = {}) => ({ answer: true, shown: ask.shown, rule_hash: ask.rule_hash, ...over });
+    const go = async a => (await run({ measured: ALL_MEASURED }, { userChecklist: [PUBLIC], checklistAnswers: { chk_public: a } })).r;
+
+    const yes = await go(answer());
+    check("a yes for the place shown: verified from user_answer, executes", [yes.user_checklist[0].status, yes.user_checklist[0].source, yes.execution_decision],
+      ["verified", "user_answer", "execute"]);
+    check("  the record keeps what was shown with it", yes.user_checklist[0].approval?.shown, { location: "Hongdae station lockers" });
+    const no = await go(answer({ answer: false }));
+    check("a no: unmet, held", [no.user_checklist[0].status, no.execution_decision], ["unmet", "hold"]);
+    const bare = await go(true);
+    check("a bare true names no place: voided, asked again", [typeof bare.user_checklist[0].approval_voided, bare.execution_decision], ["string", "ask_user"]);
+    const elsewhere = await go(answer({ shown: { location: "Gangnam station exit 3" } }));
+    check("a yes for another place: voided", [/not the value it approved/.test(elsewhere.user_checklist[0].approval_voided ?? ""), elsewhere.execution_decision], [true, "ask_user"]);
+    const silent = await go(answer({ shown: {} }));
+    check("a yes that does not say which place: voided", /does not say which location/.test(silent.user_checklist[0].approval_voided ?? ""), true);
+    const old = await go(answer({ rule_hash: "something-else" }));
+    check("a yes for another version of the item: voided", /another version/.test(old.user_checklist[0].approval_voided ?? ""), true);
+
+    const RULE = { id: "chk_ok", stated_as: "Fine to go ahead.", compare: null };
+    const plain = await run({ measured: ALL_MEASURED }, { userChecklist: [RULE], checklistAnswers: { chk_ok: true } });
+    check("an item about no slot: a bare true holds", plain.r.user_checklist[0].status, "verified");
+    const plainChanged = await run({ measured: ALL_MEASURED }, { userChecklist: [RULE], checklistAnswers: { chk_ok: true }, checklist_digest_at_instruction: "an-older-version" });
+    check("  but not once the rules have changed", [plainChanged.r.user_checklist[0].status, plainChanged.r.checklist_changed?.approvals_voided], ["unverified", ["chk_ok"]]);
+
+    let seen = null;
+    const spy = (item, ctx) => { seen = ctx.checklistAnswers; return { ...item, status: "unverified", source: null }; };
+    const WITH_FORM = { id: "chk_evening", stated_as: "Nothing after 8pm.", constrains: ["time"], compare: { kind: "not_after", hhmm: "20:00" } };
+    await run({ measured: ALL_MEASURED, over: { verifyUserChecklistItem: spy } },
+      { userChecklist: [PUBLIC, WITH_FORM], checklistAnswers: { chk_public: true, chk_evening: { answer: true, shown: { time: SAT_2PM }, rule_hash: "x" } } });
+    check("a hook sees only the approvals that hold, as booleans", seen, {});
+    const held = (item) => ({ ...item, status: "unmet", source: "instruction" });
+    const formHash = (await run({ measured: ALL_MEASURED }, { userChecklist: [WITH_FORM] })).r.user_checklist[0].rule_hash;
+    const over = await run({ measured: ALL_MEASURED, over: { verifyUserChecklistItem: held } }, { userChecklist: [WITH_FORM],
+      checklistAnswers: { chk_evening: { answer: true, shown: { time: SAT_2PM }, rule_hash: formHash } } });
+    check("a yes does not override a comparison form", over.r.user_checklist[0].status, "unmet");
+
+    const VCOND = { id: "c_place", label: "Verify", description: "The seller agrees to the place.", constrains: ["location"] };
+    const pv = await run({ measured: ALL_MEASURED, conditions: [VCOND] });
+    const pAsk = pv.r.gate?.unverified_provider?.[0]?.approve ?? {};
+    const pYes = await run({ measured: ALL_MEASURED, conditions: [VCOND] }, { checklistAnswers: { c_place: { answer: true, shown: pAsk.shown, rule_hash: pAsk.rule_hash } } });
+    check("a provider [Verify] condition: a bound yes checks it from user_answer", [cond(pYes.r).status, cond(pYes.r).source, pYes.r.execution_decision], ["checked", "user_answer", "execute"]);
+    const pBare = await run({ measured: ALL_MEASURED, conditions: [VCOND] }, { checklistAnswers: { c_place: true } });
+    check("  a bare true: voided, asked again", [typeof cond(pBare.r).approval_voided, pBare.r.execution_decision], ["string", "ask_user"]);
+    const RCOND = { id: "c_req", label: "Required", description: "The sale must be agreed.", constrains: [] };
+    const pReq = await run({ measured: ALL_MEASURED, conditions: [RCOND] }, { checklistAnswers: { c_req: true } });
+    check("  a [Required] condition is not the user's to approve", [cond(pReq.r).status, pReq.r.execution_decision], ["unverified", "definition_repair"]);
   }
 
   console.log(failures ? `\n${failures} FAILED` : "\nall ok");

@@ -32,7 +32,7 @@ npm run check                     # everything below. No API calls
 | File | What it looks at |
 |---|---|
 | `declaration-test.js` | Puts in and takes out what the provider declares. At the end it prints what is declared by whom, which file covers it, and what was deliberately left unplugged |
-| `declared-checks-test.js` | The checks the skeleton makes itself, each its own slot in the record: labelled description lines, each value's format and the payload's, the checklist's version, who may give a value, and words inside a declared limit |
+| `declared-checks-test.js` | The checks the skeleton makes itself, each its own slot in the record: labelled description lines and their confirmed forms, each value's format and the payload's, the checklist's version, who may give a value, words inside a declared limit, the conditions the user stated in the instruction, and approvals bound to the values they were given for |
 | `policy-test.js` | A swap that satisfies the specification gives the same result; a removal gives a named failure. At the end it prints "what the specification requires · how this skeleton does it · what the adopter decides" |
 | `gate-test.js` | Runs `hooks.js` through the real skeleton (via `arm-gate.js`) |
 | `value-source-test.js` | Seats one value in each of the five sources in turn. Includes the storage round trip and allowed sources |
