@@ -4,7 +4,8 @@
  * v1 against v2, on the same inputs, with the same stand-in model. No API calls.
  *
  *   v1  hooks-example/: rules in JS (tool.js constants, the rules table in hooks.js)
- *   v2  this folder:    rules in declarations (tool.json, confirmed.json, instructions.json)
+ *   v2  this folder:    rules in declarations: tool.json in words, each line in the form its provider
+ *                       confirmed, and the seller's conditions in instructions.json
  *
  * Every instruction runs in every condition its group runs in (instruction_conditions), in the "said"
  * date mode, once with each extractor in stub.js. Both arms get the same user turn, the same
@@ -31,9 +32,13 @@ const DATE = "said";
 function slots(r) {
   return (r.fields ?? []).map(f => `${f.name}=${f.status === "known" ? `known(${f.source})` : `${f.status}${f.route ? `->${f.route}` : ""}`}`).join(" ");
 }
+function providerName(c) {
+  return c.label && c.description ? `${c.label}:${c.description.split(/\s+/).slice(0, 4).join("_")}` : c.id;
+}
 function checks(r) {
   const u = (r.user_checklist ?? []).map(i => `${i.id}:${i.status}`);
-  const p = (r.provider_checklist ?? []).filter(c => c.status !== "disclosure_required").map(c => `${c.id}:${c.status}`);
+  // A provider line's id is its hash; it is shown by its label and opening words instead.
+  const p = (r.provider_checklist ?? []).filter(c => c.status !== "disclosure_required").map(c => `${providerName(c)}:${c.status}`);
   return [...u, ...p].join(" ") || "-";
 }
 
@@ -81,4 +86,4 @@ if (require.main === module) {
   })().catch(e => { console.error("THREW:", e.stack); process.exit(1); });
 }
 
-module.exports = { rows };
+module.exports = { rows, providerName };

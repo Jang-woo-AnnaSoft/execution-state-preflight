@@ -25,79 +25,69 @@ either: there is no date parser.
     code. v2 asks the seller to confirm the moment, which a model can propose.
   - In two, v1 took the location the buyer proposed through the app. v2 asks the seller, because
     the location is the seller's to name.
-- The provider's `[Required]` line is checked in every v2 run. v1 declared it but never wired it.
+- The provider's `[Required]` lines are checked in every v2 run. v1 declared its condition but never
+  wired it.
 - Nothing executes in v2 that did not execute in v1.
 
 ## What is declared where
 
 | | v1 (`hooks-example/`) | v2 (this folder) |
 |---|---|---|
-| The provider's conditions | `tool.js` `CONDITIONS`, not wired in arm C | Labelled lines in the tool's `description` ([`tool.json`](./tool.json)) |
-| How a condition is checked | (not checked) | [`confirmed.json`](./confirmed.json): each line, word for word, with a measurement and a JSON Schema, as the provider confirmed them |
-| The time's format | `tool.js` `FIELD_FORMATS` + a regex in a hook | `"format": "date-time"` in the input schema, checked by the validator |
+| The provider's conditions | `tool.js` `CONDITIONS`, not wired in arm C | Labelled lines in the tool's `description`, in words ([`tool.json`](./tool.json)) |
+| How a condition is checked | (not checked) | The form its provider confirmed: proposed by a model from the line's words, shown with what it checks, confirmed once, kept in storage. No file holds it |
+| Who may give a value | `tool.js` `ALLOWED_SOURCES`, through a hook | A labelled line: `[Required]` for a value only the platform gives, `[Verify]` for one only the seller gives |
+| Values settled at execution | `tool.js` `SETTLED_AT_EXECUTION`, through a hook | The `[Verify]` line on the time: the buyer's app request counts, inside the seller's range |
+| A value's form | `tool.js` `FIELD_FORMATS` + a regex in a hook | The input schema: `type`, `format: date-time`, `pattern` for the listing number. Every value's form is a check of its own |
 | Time words ("2pm this Saturday") | Converted to a date in code (`datetime.js`) | Not converted. They fail the format, and the seller confirms the moment |
-| Where a value may come from | `tool.js` `ALLOWED_SOURCES` | `"x-allowed-sources"` in the input schema |
-| Values settled at execution | `tool.js` `SETTLED_AT_EXECUTION`, through a hook | `"x-settled-at-execution"` in the input schema, read by the skeleton's own default |
-| What a user item means | `hooks.js` rules table: `violatesEvening`, `violatesPublicPlace`, `violatesStation` | `compare` on the item, a JSON Schema ([`instructions.json`](./instructions.json)) |
-| Who runs a comparison | The example's own code | Ajv with ajv-formats, a standard JSON Schema validator. Strict: a keyword it does not know makes the check unverified, not passed |
-| What the hooks do | Locate words, decide what the rules mean, convert time words | Locate words, read the declarations, hand the declared schemas to the validator |
+| What a user item means | `hooks.js` rules table: `violatesEvening`, `violatesPublicPlace`, `violatesStation` | `compare` on the item, a JSON Schema ([`instructions.json`](./instructions.json)), or the seller's approval where nothing can be compared |
+| Who runs a comparison | The example's own code | The skeleton for who gave a value and for approvals; Ajv with ajv-formats for a measured fact or a value's schema. Strict: a keyword it does not know makes the check unverified, not passed |
+| What the hooks do | Locate words, decide what the rules mean, convert time words | Locate words, propose forms, find the seller's conditions, hand the confirmed schemas to the validator |
 
-`tool.json` is a standard MCP tool definition. MCP has no field for conditions, so they are lines of
-the description, as spec 4.2.1 proposes. The schema keywords follow the `x-` extension pattern that
-MCP itself uses inside input schemas.
+`tool.json` is a standard MCP tool definition, and nothing in it is an extension: MCP has no field
+for conditions, so they are lines of the description, as spec 4.2.1 proposes, and the input schema
+holds only what JSON Schema itself checks.
 
 ## The provider's checklist
 
-```
-Schedule an in-person pickup for a marketplace item. Creates a commitment that is immediately
-visible to the buyer. Times are in the time zone of the seller's account region.
-[Required] The sale must be agreed before a pickup is scheduled, as shown by the order status.
-[Notice] The buyer sees the time and location immediately.
-```
+Seven lines, in words. Each says what counts and what does not, how it is checked, and how to ask
+when the seller's words are unclear: the model reads them to ask the right question.
+
+| Line | Confirmed form (the stand-in model's proposal, `stub.js`) |
+|---|---|
+| `[Required]` The sale must be agreed … as shown by the order status | the measurement `order_status` is exactly `"agreed"` |
+| `[Required]` The listing must be the seller's own … | the measurement `listing_owned_by_seller` is exactly `true` |
+| `[Verify]` The item is the listing the seller names … | `item_id` only from the seller |
+| `[Verify]` The time is the one the seller states, or … a pickup request … inside a range the seller set … | `time` only from the seller, or from a measurement inside the seller's range |
+| `[Verify]` The location is the place the seller names … | `location` only from the seller |
+| `[Required]` The buyer's contact is read from the platform … | `buyer_contact` only from a measurement |
+| `[Notice]` The buyer sees the time and location immediately … | none: a disclosure |
 
 **Reading the lines.** A line that starts with a bracketed word is a condition, and the word is its
 label. This is matching, not interpretation. A word the skeleton does not know, such as a typo like
 `[Requried]`, is held for definition repair, not dropped as prose.
 
 **How a line is checked.** Spec 4.2 has the provider declare a condition together with how it is
-checked. The `[Required]` line already says how in words: "as shown by the order status". Spec 3.3
-and 4.2.1 put that sentence into a comparable form at declaration time and have its declarer
-confirm it. `confirmed.json` holds the result: the measurement to read and a JSON Schema its value
-must satisfy.
-
-```json
-{ "label": "Required",
-  "stated_as": "The sale must be agreed before a pickup is scheduled, as shown by the order status.",
-  "compare": { "source": "measured_data", "measure": "order_status", "schema": { "const": "agreed" } } }
-```
-
-The form is the provider's, and the adopting system keeps it. MCP has no place to carry it. Three
-steps, three parties:
+checked, and spec 3.3 and 4.2.1 put the sentence into a comparable form at declaration time and have
+its declarer confirm it. Three steps, three parties:
 
 | Step | Who | How often |
 |---|---|---|
 | Put the sentence into a comparable form | a model, which does this well | once, when declared |
-| Check the form against the sentence | the declarer | once, when declared |
-| Check the value against the form | a validator | every execution |
+| Check the form against the sentence | the declarer, shown the form and what it checks in words written by code from the form | once, when declared |
+| Check the value against the form | the skeleton, or a validator | every execution |
 
 The model is used for the translation. The verdict is not left to it: a model's "I checked it"
-cannot be told apart from a check that was not made (spec 8.7). This file stands in for the first
-two steps; they are written by hand here.
+cannot be told apart from a check that was not made (spec 8.7). In the tests, `arm.js` confirms the
+stand-in model's proposals as a provider would, once, into the run's storage.
 
-**Confirmation.** A line is checked only in the form its provider confirmed, and only when the
-line matches word for word. A line that is not in the file is unverified. If the provider rewords
-a line, the old confirmation does not carry over: until the new line is confirmed, a `[Required]`
-line goes back to the provider and the run does not execute.
+**Confirmation.** A line is checked only in the form its provider confirmed for those exact words. If
+the provider rewords a line, the old confirmation does not carry over: until the new line is confirmed,
+it goes back to the provider and the run does not execute. Every decision record carries each line's
+version and who confirmed its form.
 
-**The two lines here.**
-
-- `[Required]` is checked against the order status, which the platform measures. Spec 3.3 confirms
-  a `[Required]` line only from a system source, and the skeleton enforces that.
-- `[Notice]` has nothing to check. It is surfaced as a disclosure.
-
-**What is not declared.** The provider declares no condition on the location. The tool arranges a
-meeting, and where to meet is the seller's to name: the schema requires the value and allows only
-the seller's sources for it.
+**What is not declared.** The provider declares no condition on what the location must be like. The
+tool arranges a meeting, and where to meet is the seller's to name: the `[Verify]` line says only that
+the seller gives it.
 
 ## The user's checklist
 
@@ -148,12 +138,12 @@ over-eager one also quotes the seller's limits.
   is shown as the default, and the seller sends it.
 - **Outcome: g5.** `g5-01` and `g5-02` under `offer_in_range` change from call to ask. The buyer
   proposed a time and a place through the app. v2 takes the time, because it is inside the window
-  the seller set and the schema lets a measurement settle it there. It does not take the place,
-  because the schema allows only the seller's sources for the location.
+  the seller set and the time's `[Verify]` line lets a measurement settle it there. It does not take
+  the place, because the location's `[Verify]` line counts only what the seller names.
 - **Slots.** Under `offer_out_of_range` both versions hold, but v2 leaves the location unknown,
   for the same reason.
-- **Provider checklist.** `cond_sale_agreed` is `checked` from `order_status` in all 70 runs. In v1
-  it was not compared at all.
+- **Provider checklist.** The sale line is `checked` from `order_status`, and the listing line from
+  `listing_owned_by_seller`, in all 70 runs. In v1 the sale condition was not compared at all.
 - **Over-eager extractor.** No limit wording settles a slot in either version.
 
 `test.js` checks:
@@ -228,16 +218,16 @@ What stays in the gate:
 `graph-test.js` checks each of these. It also checks that the graph's first verdict equals the
 arm's in all 35 runs. The validator and LangGraph are installed in `adopt-example/` (pinned: ajv
 8.20.0, ajv-formats 3.0.1, @langchain/langgraph 1.5.2, @langchain/core 1.2.20, zod 4.6.7, langchain
-1.5.19, @modelcontextprotocol/sdk 1.32.1). The skeleton still has none.
+1.5.19, @modelcontextprotocol/client 2.4.0). The skeleton still has none.
 
 ## What this folder does not do yet
 
 - **No API runs.** The model is the stub, so this shows what the declarations change, not how real
   models behave against them. The runner, arms A and B and the analyser are still only in v1. They
   move here once the declarations are settled.
-- **No real confirmation step.** `confirmed.json` and the `compare` forms are written by hand. They
-  stand in for the steps where a model translates a declared sentence and its declarer confirms
-  the result (spec 3.3).
+- **No real model for the proposals.** The forms a model would propose for each line, and for each of
+  the seller's conditions, come from the stand-in (`stub.js`). The confirmation step itself is real:
+  the skeleton asks for it, `approveForm` stores it, and a run reads it back.
 - **Model judgments the gate does not check.** Two remain, as the specification states. Whether to
   run now or later (C1) is the model's classification, taken as returned. Whether this act is this
   tool is approved without comparison, because the example has one tool (spec 8.1, 8.2).

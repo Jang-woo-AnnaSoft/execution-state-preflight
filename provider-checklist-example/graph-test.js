@@ -8,7 +8,8 @@
 
 const { Command } = require("./graph");   // the same LangGraph the gate uses (adopt-example)
 const { buildGraph, CHECK_PREFIX } = require("./graph");
-const { runArm, measuredFor } = require("./arm");
+const { runArm, measuredFor, confirmProviderForms, MEASUREMENTS, TOOL } = require("./arm");
+const { createStorage } = require("./graph");
 const { buildUserTurn } = require("./prompts");
 const { makeAsk } = require("./stub");
 const S = require("./instructions.json");
@@ -26,7 +27,10 @@ async function drive(id, condition, replies = [], { proposals = {}, userChecklis
   const ins = S.instructions.find(i => i.id === id);
   const ctx = S.conditions[condition].context, date = S.date_modes.said;
   const calls = [];
-  const g = buildGraph({ ask: makeAsk(id), callTool: async (name, args) => { calls.push({ name, args }); } });
+  // The provider confirmed its lines once, before any of this (spec 3.3); the confirmations are in storage.
+  const storage = createStorage();
+  await confirmProviderForms(storage, TOOL);
+  const g = buildGraph({ ask: makeAsk(id), storage, measurements: MEASUREMENTS, callTool: async (name, args) => { calls.push({ name, args }); } });
   const cfg = { configurable: { thread_id: `t${++thread}` } };
   const requests = [], schemas = [];
   let state = await g.invoke({ segments: buildUserTurn(ctx, ins.text, date).segments, measuredData: measuredFor(ctx, date),
@@ -53,9 +57,7 @@ const LOCKERS = "Hongdae station lockers";
   check("g4-01: pauses at ask", g4.requests.length, 1);
   check("  the request is an elicitation form", req.mode, "form");
   check("  it asks for the gate's blanks, no more", Object.keys(req.requestedSchema.properties), ["time", "location"]);
-  check("  field schemas are the tool's, without x- keywords", req.requestedSchema.properties.time, {
-    type: "string", format: "date-time",
-    description: "One moment, not a range, with a time zone offset. The seller states it, or sets a range that a pickup request from the buyer must fall inside" });
+  check("  field schemas are the tool's own forms", req.requestedSchema.properties.time, { type: "string", format: "date-time" });
   check("  nothing executed while paused", g4.calls.length, 0);
   const rs = g4.schemas[0];
   check("  the reply's shape is at Interrupt.response_schema", rs?.properties?.action?.enum, ["accept", "decline", "cancel"]);
@@ -79,6 +81,34 @@ const LOCKERS = "Hongdae station lockers";
   const loaded = await drive("g1-01", "clean", [accept({ time: SAT_2PM })], loadedState);
   check("a value in state the gate refused never reaches the tool", [loaded.state.ended, loaded.calls[0]?.args.buyer_contact], ["executed", "in-app chat (@kim_2291)"]);
   check("  the tool gets exactly the gate's call_arguments", JSON.stringify(loaded.calls[0]?.args) === JSON.stringify(loaded.state.executedWith), true);
+
+  console.log("\n--- 2-b. the seller confirms the form of a condition they stated, in the same flow ---");
+  // No items handed in: the gate takes the seller's conditions from their words (spec 4.4), and asks the
+  //   seller to confirm the form each will be checked in, shown with their words (3.3).
+  const { FORM_PREFIX } = require("./graph");
+  const said = await drive("g2-01", "clean", [], { userChecklist: [] });
+  const first = said.requests[0]?.requestedSchema?.properties ?? {};
+  const formKeys = Object.keys(first).filter(k => k.startsWith(FORM_PREFIX));
+  check("g2-01 said 'Nothing after 8pm, and public places only': both asked as forms to confirm", formKeys.length, 2);
+  check("  each shows the seller's words and what will be checked", formKeys.every(k => /You said: ".+"\. It will be checked like this: .+/.test(first[k].description)), true);
+  check("  the values are asked in the same question", ["time", "location"].every(k => k in first), true);
+  const yesForms = Object.fromEntries(formKeys.map(k => [k, true]));
+  // Round two: the evening limit is compared in its confirmed form; "public places only" has nothing a
+  //   program can compare, so its form is the seller's approval, asked for the place shown.
+  const flow = await drive("g2-01", "clean", [accept({ time: "2026-10-31T20:00:00+09:00", location: LOCKERS, ...yesForms })],
+    { userChecklist: [] });
+  const second = flow.requests[1]?.requestedSchema?.properties ?? {};
+  const approvals = Object.keys(second).filter(k => k.startsWith(CHECK_PREFIX));
+  check("  confirmed: the next question approves 'public places only' for the place shown", [approvals.length, /Hongdae station lockers/.test(second[approvals[0]]?.description ?? "")], [1, true]);
+  check("  and asks for no form again", Object.keys(second).filter(k => k.startsWith(FORM_PREFIX)).length, 0);
+  const done = await drive("g2-01", "clean", [
+    accept({ time: "2026-10-31T20:00:00+09:00", location: LOCKERS, ...yesForms }),
+    accept(Object.fromEntries(approvals.map(k => [k, true]))),
+  ], { userChecklist: [] });
+  check("  approved: executed", [done.state.ended, done.calls.length], ["executed", 1]);
+  const refused = await drive("g2-01", "clean", [accept({ time: "2026-10-31T20:00:00+09:00", location: LOCKERS,
+    ...Object.fromEntries(formKeys.map(k => [k, false])) })], { userChecklist: [] });
+  check("a form the seller says is wrong confirms nothing: asked again", Object.keys(refused.requests[1]?.requestedSchema?.properties ?? {}).filter(k => k.startsWith(FORM_PREFIX)).length, 2);
 
   console.log("\n--- 3. decline or cancel: nothing runs ---");
   const dec = await drive("g4-01", "clean", [{ action: "decline" }]);
