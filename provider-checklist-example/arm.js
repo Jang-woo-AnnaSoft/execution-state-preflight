@@ -76,9 +76,15 @@ function project(state, preflight) {
       derived_from: f.derived_from ?? null, note: f.note ?? null,
       value: f.status === "known" ? f.value : undefined,
     })),
-    user_checklist: (state.user_checklist ?? []).map(i => ({ id: i.id, status: i.status, source: i.source ?? null, note: i.note ?? null })),
+    // rule_hash: the version an approval must name (6.1); approval / approval_voided: what the seller's
+    //   answer did (6.3). Left out, a reader cannot tell an approval that held from one that was voided.
+    user_checklist: (state.user_checklist ?? []).map(i => ({ id: i.id, status: i.status, source: i.source ?? null, note: i.note ?? null,
+      rule_hash: i.rule_hash ?? null, approval: i.approval ?? null, approval_voided: i.approval_voided ?? null })),
     provider_checklist: (state.provider_checklist ?? []).map(c => ({
-      id: c.id, label: c.label, status: c.status ?? null, source: c.source ?? null, route: c.route ?? null, note: c.note ?? null })),
+      id: c.id, label: c.label, status: c.status ?? null, source: c.source ?? null, route: c.route ?? null, note: c.note ?? null,
+      rule_hash: c.rule_hash ?? null, approval: c.approval ?? null, approval_voided: c.approval_voided ?? null })),
+    value_checks: (state.value_checks ?? []).map(c => ({ id: c.id, kind: c.kind, status: c.status })),
+    checklist_digest: state.checklist_digest ?? null,
     disclosures: state.gate?.disclosures ?? [],
     unmet: (state.gate?.unmet ?? []).map(u => u.id),
     unsafe_defaults: preflight.unsafeDefaults,

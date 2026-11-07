@@ -101,9 +101,16 @@ async function run(id, condition, over = {}) {
   check("  a location limit with no comparison form is unverified, not passed", item(eight, "chk_public").status, "unverified");
   check("  so the seller is asked about it", eight.outcome, "ask");
   const said = { time: "2026-10-31T21:00:00+09:00", location: "Hongdae station lockers" };
-  const overrule = await run("g2-01", "clean", { userAnswers: said, checklistAnswers: { chk_evening: true, chk_public: true } });
+  // An approval is bound to the item's version and the values shown (6.3), as the gate asks for it.
+  const yes = id => ({ answer: true, shown: { location: "Hongdae station lockers" }, rule_hash: item(eight, id).rule_hash });
+  const overrule = await run("g2-01", "clean", { userAnswers: said,
+    checklistAnswers: { chk_evening: { answer: true, shown: { time: said.time }, rule_hash: item(eight, "chk_evening").rule_hash }, chk_public: yes("chk_public") } });
   check("a seller's yes does not overrule a comparison form", item(overrule, "chk_evening").status, "unmet");
   check("  it does settle an item that has none", [item(overrule, "chk_public").status, item(overrule, "chk_public").source], ["verified", "user_answer"]);
+  const bare = await run("g2-01", "clean", { userAnswers: said, checklistAnswers: { chk_public: true } });
+  check("  a bare yes, naming no place, settles nothing", [item(bare, "chk_public").status, typeof item(bare, "chk_public").approval_voided], ["unverified", "string"]);
+  const moved = await run("g2-01", "clean", { userAnswers: { ...said, location: "Gangnam station exit 3" }, checklistAnswers: { chk_public: yes("chk_public") } });
+  check("  a yes given for another place settles nothing", item(moved, "chk_public").status, "unverified");
   const out = await run("g5-01", "offer_out_of_range");
   check("g5 offer outside the window: unmet, held", [item(out, "chk_window").status, out.outcome], ["unmet", "hold"]);
   const utc = await run("g5-01", "offer_in_range", { ctx: { pickup_request: { ...S.conditions.offer_in_range.context.pickup_request, time: "2026-10-31T05:00:00Z" } } });

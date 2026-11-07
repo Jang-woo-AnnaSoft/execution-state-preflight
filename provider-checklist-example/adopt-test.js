@@ -88,6 +88,27 @@ const run = async (id, condition, over = {}, reply) => {
   const segs = realConnect.labelInput({ typed: "Set up the pickup for LST-2291.", context: [{ text: "Buyer: 9pm tonight at your door?" }] });
   check("context is untrusted, the typed message is the user's", segs.map(s => s.trust), ["untrusted", "user"]);
 
+  console.log("\n--- 3-b. the stores keep every record and can list them (confirmed forms are read this way) ---");
+  {
+    const os = require("os"), { execFileSync } = require("child_process");
+    const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "adopt-")), "records.jsonl");
+    const script = `const { store } = require(${JSON.stringify(path.join(ADOPT, "connect"))});
+      (async () => {
+        await store.persist("k", { n: 1, execution_decision: "hold" });
+        await store.persist("other", { n: 9 });
+        await store.persist("k", { n: 2, execution_decision: "executed" });
+        await store.persist("k", { n: 3, execution_decision: "ask_user" });
+        console.log(JSON.stringify({ list: (await store.list("k")).map(r => r.n), load: (await store.load("k"))?.n, none: await store.list("absent") }));
+      })();`;
+    const out = JSON.parse(execFileSync(process.execPath, ["-e", script], { env: { ...process.env, RECORD_PATH: tmp } }).toString());
+    check("connect.js store: list is every record under the key, oldest first", out.list, [1, 2, 3]);
+    check("  load is the latest that executed", out.load, 2);
+    check("  an unknown key lists nothing", out.none, []);
+    const mem = gate.createStorage();
+    await mem.persist("k", { n: 1 }); await mem.persist("k", { n: 2 });
+    check("gate.js createStorage: list too", (await mem.list("k")).map(r => r.n), [1, 2]);
+  }
+
   console.log("\n--- 4. start, wait, resume, execute ---");
   const g1 = await run("g1-01", "clean", { propose: true, proposals: { time: SAT_2PM, location: "Hongdae station lockers" } },
     { action: "accept", content: { time: SAT_2PM } });
