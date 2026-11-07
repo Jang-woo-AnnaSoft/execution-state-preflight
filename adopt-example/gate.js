@@ -312,6 +312,10 @@ function createStorage() {
       for (let i = arr.length - 1; i >= 0; i--) if (arr[i]?.execution_decision === "executed") return arr[i];
       return null;
     },
+    // Every record under the key, oldest first. The gate reads confirmed forms this way.
+    async list(key) {
+      return [...(m.get(key) ?? [])];
+    },
   };
 }
 
@@ -381,13 +385,18 @@ function replySchemaFor(request) {
 // Keeps only what was asked for, of the type asked for. A key the request did not name is dropped, so
 //   a reply cannot add an argument the gate did not ask the seller for. The format is not checked here:
 //   the gate checks it, and asks again if it fails.
-function acceptContent(request, content) {
+function acceptContent(request, content, askItems = []) {
   const answers = {}, checklist = {};
   for (const [key, schema] of Object.entries(request.requestedSchema.properties)) {
     if (!content || !(key in content)) continue;
     const v = content[key];
     if (schema.type === "boolean") {
-      if (typeof v === "boolean") checklist[key.slice(CHECK_PREFIX.length)] = v;
+      if (typeof v === "boolean") {
+        // The answer is bound to what the question showed: the item's version and its values (6.3).
+        const id = key.slice(CHECK_PREFIX.length);
+        const shown = askItems.find(i => i.id === id)?.approve;
+        if (shown) checklist[id] = { answer: v, shown: shown.shown ?? {}, rule_hash: shown.rule_hash ?? null };
+      }
     } else if (typeof v === "string" && v.trim() !== "") {
       answers[key] = v;
     }
@@ -423,7 +432,12 @@ function buildGraph({ ask, callTool, tool, confirmed, checkpointer = new MemoryS
       call_arguments: st.execution_decision === "execute" ? st.call_arguments : null,
       // The blanks on the ask route, from the gate's own field records — not re-derived here.
       askFields: (st.fields ?? []).filter(f => f.status === "unknown" && f.route === "ask_user").map(f => f.name),
-      askItems: (st.gate?.unverified_checklist ?? []).map(i => ({ id: i.id, description: i.description })),
+      // Every approval the gate asks for — the seller's own conditions and the provider's [Verify] lines —
+      //   with what it shows (approve: the item's version and the values it is about). The answer goes
+      //   back bound to exactly that (6.3); an item whose form is not confirmed yet is not asked here.
+      askItems: [...(st.gate?.unverified_checklist ?? []), ...(st.gate?.unverified_provider ?? [])]
+        .filter(i => i.approve)
+        .map(i => ({ id: i.id, description: i.description, approve: i.approve })),
       fields: (st.fields ?? []).map(f => ({ name: f.name, status: f.status, source: f.source ?? null, route: f.route ?? null })),
       user_checklist: (st.user_checklist ?? []).map(i => ({ id: i.id, status: i.status, source: i.source ?? null })),
     } };
@@ -439,7 +453,7 @@ function buildGraph({ ask, callTool, tool, confirmed, checkpointer = new MemoryS
     //   ceiling instead of ending the run as a validation error.
     const reply = interrupt(request, { responseSchema: replySchemaFor(request) });
     if (reply?.action !== "accept") return { ended: reply?.action === "decline" ? "declined" : "cancelled" };
-    const { answers, checklist } = acceptContent(request, reply.content);
+    const { answers, checklist } = acceptContent(request, reply.content, state.verdict.askItems);
     return { userAnswers: answers, checklistAnswers: checklist, asks: state.asks + 1 };
   }
 

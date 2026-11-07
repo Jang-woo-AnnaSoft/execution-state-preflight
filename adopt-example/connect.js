@@ -115,7 +115,9 @@ async function callTool(name, args) {
 }
 
 // ── store: decision records ────────────────────────────────────────────────────────────────────
-// Append-only. load returns the latest record that executed, for the key (spec 5.2).
+// Append-only. load returns the latest record that executed, for the key (spec 5.2). list returns every
+//   record under the key, oldest first: the gate reads confirmed forms (spec 3.3) with it, so a store
+//   without list confirms nothing.
 // This file is a starting point. In a real system, keep records where the agent process cannot
 //   rewrite them (spec 8.2): a write-once table, a log service, a separate account.
 const RECORD_PATH = process.env.RECORD_PATH ?? "./records.jsonl";
@@ -125,13 +127,14 @@ const store = {
     return record;
   },
   async load(key) {
-    if (!fs.existsSync(RECORD_PATH)) return null;
-    const lines = fs.readFileSync(RECORD_PATH, "utf8").trim().split("\n").filter(Boolean);
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const { key: k, record } = JSON.parse(lines[i]);
-      if (k === key && record?.execution_decision === "executed") return record;
-    }
+    const all = await this.list(key);
+    for (let i = all.length - 1; i >= 0; i--) if (all[i]?.execution_decision === "executed") return all[i];
     return null;
+  },
+  async list(key) {
+    if (!fs.existsSync(RECORD_PATH)) return [];
+    return fs.readFileSync(RECORD_PATH, "utf8").trim().split("\n").filter(Boolean)
+      .map(l => JSON.parse(l)).filter(e => e.key === key).map(e => e.record);
   },
 };
 
