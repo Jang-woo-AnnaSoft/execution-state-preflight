@@ -1200,6 +1200,9 @@ async function lookupField(h, fieldName, ctx) {
         saw("user_answer", "found");
         return fresh({ name: fieldName, value: userAnswers[fieldName], status: "known", source: "user_answer" });
       }
+    } else if (ctx.refusedAnswers?.has?.(fieldName)) {
+      // Something came back and the gate refused it: an answer to a question it never asked.
+      saw("user_answer", "rejected");
     } else {
       saw("user_answer", "no_report");
     }
@@ -1531,6 +1534,38 @@ async function listRecords(h, key) {
   return Array.isArray(out) ? out : null;
 }
 
+// [UNIT HISTORY] What this unit's records say: the questions it was asked and the routes it tried.
+//   Only the records since its last execution: an executed unit is finished, and the next request under
+//   the same key starts with nothing asked and every count at zero.
+//   Asked: the blanks a verdict put in front of the user (gate.unknown_fields, and the slots of a branch
+//   question) and the items it asked to approve (gate.unverified_checklist, gate.unverified_provider),
+//   in any phase — an answer given at instruction time is still the answer at the trigger.
+//   Counted, in this phase: value-gate asks (ask_user other than the intent, tool and branch questions,
+//   which have their own ceilings or none) and system lookups; tool asks in any phase.
+const NOT_VALUE_ASKS = new Set(["intent_undetermined", "intent_undetermined_exhausted", "tool_undetermined",
+                                "tool_undetermined_exhausted", "branch_unresolved", "branch_conflict"]);
+async function unitHistory(h, actionKey, phase) {
+  const none = { available: false, asked_slots: new Set(), asked_items: new Set(), ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0 };
+  if (typeof actionKey !== "string" || actionKey === "") return none;
+  const all = await listRecords(h, actionKey);
+  if (!all) return none;
+  let start = 0;
+  for (let i = all.length - 1; i >= 0; i--) if (all[i]?.execution_decision === "executed") { start = i + 1; break; }
+  const recs = all.slice(start).filter(r => r && typeof r === "object" && r.kind !== FORM_APPROVAL_KIND);
+  const out = { available: true, asked_slots: new Set(), asked_items: new Set(), ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0 };
+  for (const r of recs) {
+    const g = r.gate ?? {};
+    for (const f of g.unknown_fields ?? []) if (typeof f?.name === "string") out.asked_slots.add(f.name);
+    for (const opt of g.branch_options ?? []) for (const n of opt ?? []) if (typeof n === "string") out.asked_slots.add(n);
+    for (const i of [...(g.unverified_checklist ?? []), ...(g.unverified_provider ?? [])]) if (i?.id) out.asked_items.add(i.id);
+    if (g.kind === "tool_undetermined") out.tool_attempts += 1;
+    if (r.phase !== phase) continue;
+    if (r.execution_decision === "ask_user" && !NOT_VALUE_ASKS.has(g.kind)) out.ask_attempts += 1;
+    if (r.execution_decision === "system_lookup") out.lookup_attempts += 1;
+  }
+  return out;
+}
+
 // The latest confirmation under this key, or null. A revocation after it means none.
 async function loadFormApproval(h, key) {
   const recs = await listRecords(h, key);
@@ -1776,14 +1811,16 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   let checklist = withUserHash(userChecklist ?? []);
   // The user's answers to approval questions, as given. Each is bound to what it approved before it
   //   counts ([APPROVAL BINDING]); hooks only ever see the ones that hold.
-  const checklistAnswers = checklistAnswersIn;
+  //   Only the answers to questions this unit was actually asked count ([UNIT HISTORY]); the rest are
+  //   dropped before anything reads them.
+  let checklistAnswers = checklistAnswersIn;
   // Ceilings on the two resolution routes that can be retried (4.5: asking the user and the system
-  //   lookup both have one; the adopting system sets it). Same contract as intent_attempt: the caller
-  //   carries the count per action and sends back gate.next_ask_attempt / next_lookup_attempt.
-  //   Absent or malformed = 0. A larger value only brings "exhausted" forward, never "execute".
+  //   lookup both have one; the adopting system sets it). Counted by the gate from this unit's own
+  //   records ([UNIT HISTORY]); the caller's count is read too, and the larger one counts — a caller
+  //   can bring "exhausted" forward, never push it back. Absent or malformed = 0.
   //   D4: one count per route per action, not per slot — the same shape as intent_attempt.
-  const askAttempt = Number.isInteger(ask_attempt) && ask_attempt >= 0 ? ask_attempt : 0;
-  const lookupAttempt = Number.isInteger(lookup_attempt) && lookup_attempt >= 0 ? lookup_attempt : 0;
+  let askAttempt = Number.isInteger(ask_attempt) && ask_attempt >= 0 ? ask_attempt : 0;
+  let lookupAttempt = Number.isInteger(lookup_attempt) && lookup_attempt >= 0 ? lookup_attempt : 0;
 
   // Asks already spent on the Fixed checklist. Absent or malformed = 0.
   // NOTE: caller-supplied and the skeleton DOES read it, unlike input.tool_reselected_by_user.
@@ -1791,8 +1828,9 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   //   POLICY: the caller must carry it. These records have no action_key and pile under
   //     UNKEYED_RECORD_KEY, so storage cannot supply the count either.
   const attempt = Number.isInteger(intent_attempt) && intent_attempt >= 0 ? intent_attempt : 0;
-  // Same rules for the Tool gate. Counted separately — see TOOL_ATTEMPT_LIMIT.
-  const toolAttempt = Number.isInteger(tool_attempt) && tool_attempt >= 0 ? tool_attempt : 0;
+  // Same rules for the Tool gate. Counted separately — see TOOL_ATTEMPT_LIMIT. Unlike the intent gate's,
+  //   these records have a key, so the gate counts them too ([UNIT HISTORY]).
+  let toolAttempt = Number.isInteger(tool_attempt) && tool_attempt >= 0 ? tool_attempt : 0;
 
   // Step 0: checklist id check. ABOVE every gate that talks to the user — a pure configuration defect,
   //   independent of instruction and mcpTool. Asking first makes the user restate twice for a fault
@@ -1898,6 +1936,43 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       reason: "definition_repair: action_key could not be built",
       timestamp: h.now(),
     };
+  }
+
+  // [UNIT HISTORY] This unit's own records, read from storage under its key: what it was asked, and how
+  //   many times each route was tried. 4.5: a route that reached its ceiling has finished and is not
+  //   tried again — so the count is the gate's, from the record, not a number the caller hands back.
+  //   And 4.6: the model asks, code judges, and an answer is looked up again as user_answer — an
+  //   answer to a question the gate never asked is not an answer, whatever it says.
+  //   Read with storage.list. A storage without it cannot show what was asked: every answer is refused
+  //   (fail-closed) and the counts are the caller's.
+  //   CONTRACT: the key is the unit's across rounds. A key unique per round shows the gate a unit that
+  //   was never asked anything.
+  const history = await unitHistory(h, action_key, phase);
+  if (history.available) {
+    askAttempt = Math.max(askAttempt, history.ask_attempts);
+    lookupAttempt = Math.max(lookupAttempt, history.lookup_attempts);
+    toolAttempt = Math.max(toolAttempt, history.tool_attempts);
+  }
+  const answerChecks = [];
+  const unasked = why => ({ status: "rejected", source: "user_answer", note: why });
+  const noHistory = "storage cannot list this unit's records, so no answer can be matched to a question";
+  const heldUserAnswers = {};
+  const refusedUserAnswers = new Set();
+  for (const [slot, v] of Object.entries(userAnswers ?? {})) {
+    if (history.available && history.asked_slots.has(slot)) { heldUserAnswers[slot] = v; continue; }
+    refusedUserAnswers.add(slot);
+    answerChecks.push({ id: `${slot}:answer`, kind: "answer", slot,
+      ...unasked(history.available ? `${slot} was not asked for in this unit` : noHistory) });
+  }
+  userAnswers = heldUserAnswers;
+  if (checklistAnswers && typeof checklistAnswers === "object") {
+    const held = {};
+    for (const [id, v] of Object.entries(checklistAnswers)) {
+      if (history.available && history.asked_items.has(id)) { held[id] = v; continue; }
+      answerChecks.push({ id: `${id}:answer`, kind: "answer", slot: null, item: id,
+        ...unasked(history.available ? `${id} was not asked about in this unit` : noHistory) });
+    }
+    checklistAnswers = held;
   }
 
   // [CORE] Step 1-0: Tool determination gate. Must sit above getRequiredFields/getAdvisoryNotes.
@@ -2033,6 +2108,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
                 phase,   // The basis for applyFieldPolicy's per-phase judgment
                 fieldSchemas: mcpTool?.inputSchema?.properties ?? {},
                 sourceRules,
+                refusedAnswers: refusedUserAnswers,   // answers to questions this unit was not asked
                 mcpTool };
 
   // Step 2-a: candidate slots. The superset the lookup may try, not the slot list.
@@ -2135,7 +2211,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
 
   // The value checks (format, limit wording), from the field records. Common to both phases: a value
   //   whose format nobody could check is a declaration gap now, not at the trigger.
-  const value_checks = [...valueChecksFrom(fields, extra_fields, ctx.fieldSchemas), ...extractionChecks];
+  const value_checks = [...valueChecksFrom(fields, extra_fields, ctx.fieldSchemas), ...extractionChecks, ...answerChecks];
   const valueCheckRepair = value_checks.filter(c => c.status === "unverified");
   const unverified_value_check_count = valueCheckRepair.length;
   const valueCheckRepairList = () => valueCheckRepair.map(c =>
@@ -2733,8 +2809,8 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     : (askOutstanding > 0 && !askExhausted) ? "ask_user"
     : (systemLookups.length > 0 || askOutstanding > 0) ? "exhausted"
     : "execute";
-  // The counts go back to the caller, which carries them (the gate is stateless), the same contract
-  //   as intent_attempt: send next_* back as input on the re-run, null means do not re-enter that route.
+  // The counts as this run used them. The gate counts them from the unit's records ([UNIT HISTORY]);
+  //   a caller that also carries them sends next_* back, and null means do not re-enter that route.
   gate.next_ask_attempt = execution_decision === "ask_user" ? askAttempt + 1 : (askExhausted ? null : askAttempt);
   gate.next_lookup_attempt = execution_decision === "system_lookup" ? lookupAttempt + 1
     : (lookupExhausted ? null : lookupAttempt);
@@ -2842,7 +2918,10 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.17",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.18",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.18: answers count only for questions this unit was asked, and the route counts come from the
+    //        unit's records (storage.list); a refused answer is a value_checks entry of kind "answer"
+    //        and a user_answer trace entry "rejected". The key must be the unit's across rounds.
     //   1.17: a labelled description line and a condition taken from the user's words are compared
     //        only in a confirmed form: until one is confirmed the item carries form_pending, and the
     //        request is in gate.form_approvals (provider: definition_repair, user: ask_user). A
