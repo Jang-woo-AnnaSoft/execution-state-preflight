@@ -71,7 +71,12 @@ const LOCKERS = "Hongdae station lockers";
 
   // State can carry values the gate did not accept (here, answers loaded by the adopter). The tool still
   //   gets the gate's arguments and nothing else.
-  const loaded = await drive("g1-01", "clean", [], { userAnswers: { time: SAT_2PM, buyer_contact: "call me at 010-0000" } });
+  //   Since skeleton 1.18 such answers do not count at all: nobody asked for them.
+  const loadedState = { userAnswers: { time: SAT_2PM, buyer_contact: "call me at 010-0000" } };
+  const unasked = await drive("g1-01", "clean", [], loadedState);
+  check("answers put in state before any question: refused, the gate asks", [unasked.requests.length, unasked.calls.length,
+    Object.keys(unasked.requests[0]?.requestedSchema?.properties ?? {})], [1, 0, ["time"]]);
+  const loaded = await drive("g1-01", "clean", [accept({ time: SAT_2PM })], loadedState);
   check("a value in state the gate refused never reaches the tool", [loaded.state.ended, loaded.calls[0]?.args.buyer_contact], ["executed", "in-app chat (@kim_2291)"]);
   check("  the tool gets exactly the gate's call_arguments", JSON.stringify(loaded.calls[0]?.args) === JSON.stringify(loaded.state.executedWith), true);
 

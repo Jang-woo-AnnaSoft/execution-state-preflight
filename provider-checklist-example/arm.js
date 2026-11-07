@@ -41,6 +41,17 @@ function measuredFor(ctx, date) {
 async function runArm({ ctx, instructionText, userChecklist = [], userAnswers = {}, checklistAnswers = {}, date = null, ask,
                         runId = "run", tool = TOOL, confirmed, measured }) {
   const measuredData = measured ?? measuredFor(ctx, date);
+  // One unit: its turns share a storage and a key. Since skeleton 1.18 an answer counts only for a
+  //   question this unit was asked, so a run handed answers first runs the round that asked them.
+  const storage = createStorage();
+  const answering = Object.keys(userAnswers).length + Object.keys(checklistAnswers).length > 0;
+  //   An approval is asked for only once the values it is about are settled, so with approvals the
+  //   round that asks them comes after the values are answered: asked, answered, asked to approve.
+  if (answering) {
+    const segs = buildUserTurn(ctx, instructionText, date).segments;
+    await runOnce(segs, "-asked", { userAnswers: {}, checklistAnswers: {} });
+    if (Object.keys(checklistAnswers).length) await runOnce(segs, "-approve", { userAnswers, checklistAnswers: {} });
+  }
 
   const turn1 = await runOnce(buildUserTurn(ctx, instructionText, date).segments, "");
   if (date?.seller_answer && turn1.outcome === "ask") {
@@ -49,12 +60,13 @@ async function runArm({ ctx, instructionText, userChecklist = [], userAnswers = 
   }
   return { ...turn1, turns: 1 };
 
-  async function runOnce(segments, suffix) {
-    const hooks = createHooks({ ask, runId: runId + suffix, tool, ...(confirmed ? { confirmed } : {}) });
-    const preflight = createPreflight({ hooks, storage: createStorage() });
+  async function runOnce(segments, suffix, answers = { userAnswers, checklistAnswers }) {
+    const hooks = createHooks({ ask, runId: runId + suffix, unitKey: runId, tool, ...(confirmed ? { confirmed } : {}) });
+    const preflight = createPreflight({ hooks, storage });
     const state = await preflight.runPreflight({
       userId: "seller_1", instruction: segments, mcpTool: tool, preSetData: {},
-      measured_data: measuredData, userChecklist, userAnswers, checklistAnswers, intent_attempt: 0, tool_attempt: 0,
+      measured_data: measuredData, userChecklist, userAnswers: answers.userAnswers, checklistAnswers: answers.checklistAnswers,
+      intent_attempt: 0, tool_attempt: 0,
     });
     await preflight.recordExecutionState(state);
     return project(state, preflight);
