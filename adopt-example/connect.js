@@ -51,11 +51,13 @@ async function ask(_model, system, user) {
 }
 
 // ── measure: your system's values ──────────────────────────────────────────────────────────────
-// One entry per measurement your declarations name (agent.js asks for exactly those). Return the
-//   value as your system holds it. Do not take it from the conversation: a value the user or the
-//   buyer typed is not a measurement.
+// One entry per measurement this system can read. The names are what a proposed form may name, and
+//   agent.js reads exactly those the confirmed forms name. Return the value as your system holds it. Do
+//   not take it from the conversation: a value the user or the buyer typed is not a measurement.
+//   For tool.json's lines:
 const MEASUREMENTS = {
   // order_status: async ({ itemId }) => (await orders.get(itemId)).status,
+  // listing_owned_by_seller: async ({ itemId, sellerId }) => (await listings.get(itemId)).ownerId === sellerId,
   // buyer_contact: async ({ itemId }) => (await orders.get(itemId)).buyer.contact,
   // time: async ({ itemId }) => (await pickupRequests.latest(itemId))?.time,   // a pickup request the buyer sent in the app
 };
