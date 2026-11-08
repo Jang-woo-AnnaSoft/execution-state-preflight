@@ -3,8 +3,8 @@
 /**
  * A stand-in for the model, for compare.js and the tests. No API calls.
  *
- * It answers the three things arm C asks a model, the same way for v1 and v2, so a difference in the
- * verdict comes from the declarations and not from the model:
+ * It answers the things arm C asks a model, the same way for v1 and v2, so a difference in the verdict
+ * comes from the declarations and not from the model:
  *   when_case     always "immediate": the classifier is held fixed
  *   action_name   the phrase the seller used for the act, located in the seller's segment
  *   extraction    one of two extractors, per instruction:
@@ -12,18 +12,22 @@
  *                   over_eager  also quotes the seller's limits as if they were values ("8pm",
  *                               "public places") — the mistake a span check alone cannot catch
  *
- * The prompts of v1 and v2 differ, so the stub recognises the call by what the reply must contain,
- * which both prompts name: "when_case", "action_name", "item_id". v2 asks two more things:
- *   form          the comparable form a condition could take (a proposal for its declarer to confirm):
- *                 for the provider's lines, the forms in PROVIDER_FORMS; for a seller's condition, the
- *                 form instructions.json gives it
- *   conditions    the conditions the seller stated: the instruction's user_checklist, by their words
+ * v2's hooks name themselves; v1's are recognised by what the reply must contain ("when_case",
+ * "action_name", "item_id"). v2 asks more:
+ *   comparable_form  the form of a condition: for the provider's lines, the forms in PROVIDER_FORMS; for a
+ *                    seller's condition, the form instructions.json gives it
+ *   user_conditions  the conditions the seller stated: the instruction's user_checklist, by their words
+ *   propose_value    the seller's time words read as a date-time (READINGS), shown for the seller to approve
+ *   replies          where the seller's reply says yes, no or none to each question
+ *   question         the words of a question (code adds the values)
+ *   tool_match       always yes: one tool
+ * After the instruction, the extraction also finds a time or a place the seller typed in a reply.
  */
 
 const S = require("./instructions.json");
 
-// What a model proposes for each of the provider's labelled lines, by how the line starts. These are
-//   the forms a provider would confirm (arm.js confirms them, as a provider would once).
+// What a model writes for each of the provider's labelled lines, by how the line starts. The gate keeps
+//   the form it gets the first time and compares in it; nobody approves it.
 const PROVIDER_FORMS = [
   ["The sale must be agreed", { compare: { source: "measured_data", measure: "order_status", schema: { const: "agreed" } }, constrains: [] }],
   ["The listing must be the seller's own", { compare: { source: "measured_data", measure: "listing_owned_by_seller", schema: { const: true } }, constrains: [] }],
@@ -101,22 +105,51 @@ function segmentsIn(user) {
   return JSON.parse(user.slice(from, end + 1));
 }
 
-// The model call. Recognises the call by the reply shape both prompts ask for.
+// Words a user may answer with, after a question: a place, or a time in words or in the declared form.
+const REPLY_PLACES = ["Hongdae station lockers", "Gangnam station exit 3", "61 Yeonhui-ro", "my place"];
+const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})/;
+// What the model reads a time phrase as, in the declared form (the seller's account is in KST, and "this
+//   Saturday" is October 31, 2026 in these runs). A phrase not listed is not read at all.
+const READINGS = {
+  "2pm this Saturday": "2026-10-31T14:00:00+09:00", "Saturday 14:00": "2026-10-31T14:00:00+09:00",
+  "Saturday afternoon at 2": "2026-10-31T14:00:00+09:00", "Saturday 2pm": "2026-10-31T14:00:00+09:00",
+  "Saturday 8pm": "2026-10-31T20:00:00+09:00", "Saturday 9pm": "2026-10-31T21:00:00+09:00",
+  "Saturday 7pm": "2026-10-31T19:00:00+09:00", "Saturday 3pm": "2026-10-31T15:00:00+09:00",
+};
+
+// The latest user segment that holds one of the words, among the replies: what the user typed after the
+//   assistant first asked something. None before a question.
+function latestReply(segs, words) {
+  const from = segs.findIndex(s => s.trust === "assistant") + 1;
+  if (from === 0) return null;
+  for (let i = segs.length - 1; i >= from; i--) {
+    const s = segs[i];
+    if (s.trust !== "user") continue;
+    for (const w of words) if (s.text.includes(w)) return { index: s.index, quote: w };
+    if (words === ISO_WORDS) { const m = ISO.exec(s.text); if (m) return { index: s.index, quote: m[0] }; }
+  }
+  return null;
+}
+const ISO_WORDS = Object.keys(READINGS);
+
+// The model call. Each of the gate's hooks names itself (the fourth argument); v1's hooks do not, and
+//   are recognised by the reply shape their prompts ask for.
 function makeAsk(instructionId, extractor = "faithful") {
-  return async function ask(model, system, user) {
-    if (user.includes('"when_case"')) return { when_case: "immediate" };
-    if (user.includes('"action_name"')) {
+  return async function ask(model, system, user, hook) {
+    if (hook === "when_case" || user.includes('"when_case"')) return { when_case: "immediate" };
+    if (hook === "action_name" || user.includes('"action_name"')) {
       const segs = segmentsIn(user);
       const quote = ACTION[instructionId];
       const seg = segs.find(s => s.trust === "user" && s.text.includes(quote));
       return seg ? { action_name: quote, segment_index: seg.index } : { action_name: null };
     }
-    if (user.includes('Reply as {"form"')) {
+    if (hook === "tool_match") return { approved: true, reason: "stand-in: the act the seller named is this tool" };
+    if (hook === "comparable_form" || user.includes('Reply as {"form"')) {
       const wording = (user.match(/^Condition: (.*)$/m) ?? [])[1] ?? "";
       const by = (user.match(/^Declared by: (\w+)/m) ?? [])[1];
       return { form: by === "user" ? userFormFor(wording) : providerFormFor(wording) };
     }
-    if (user.includes('Reply as {"conditions"')) {
+    if (hook === "user_conditions" || user.includes('Reply as {"conditions"')) {
       const segs = segmentsIn(user);
       const items = S.instructions.find(i => i.id === instructionId)?.user_checklist ?? [];
       return { conditions: items.flatMap(it => {
@@ -124,12 +157,59 @@ function makeAsk(instructionId, extractor = "faithful") {
         return seg ? [{ quote: it.stated_as, segment_index: seg.index, constrains: it.constrains ?? [] }] : [];
       }) };
     }
-    if (user.includes('"item_id"')) {
+    if (hook === "propose_value") {
       const segs = segmentsIn(user);
-      return extractionFor(instructionId, segs, extractor);
+      const field = (user.match(/^Field: (\w+):/m) ?? [])[1];
+      if (field !== "time") return { value: null };
+      // The latest words about the time, the instruction's included.
+      for (let i = segs.length - 1; i >= 0; i--) {
+        if (segs[i].trust !== "user") continue;
+        const iso = ISO.exec(segs[i].text);
+        if (iso) return { value: iso[0] };
+        const phrase = Object.keys(READINGS).find(p => segs[i].text.includes(p));
+        if (phrase) return { value: READINGS[phrase] };
+      }
+      return { value: null };
     }
-    throw new Error(`stub: unrecognised call\n${system.slice(0, 100)}`);
+    if (hook === "replies") {
+      const segs = segmentsIn(user);
+      const qs = JSON.parse(user.slice(user.indexOf("["), user.indexOf("\n\nSegments:")));
+      const replies = [];
+      for (const q of qs) {
+        for (let i = segs.length - 1; i > q.asked_after_segment; i--) {
+          const s = segs[i];
+          if (s.trust !== "user") continue;
+          const m = /\b(yes|no|none)\b/i.exec(s.text);
+          if (!m) continue;
+          const w = m[1].toLowerCase();
+          if (w === "none" && q.kind !== "value") continue;
+          replies.push({ target: q.target, ...(w === "none" ? { none: "absent" } : { answer: w === "yes" }), quote: m[1], segment_index: s.index });
+          break;
+        }
+      }
+      return { replies };
+    }
+    if (hook === "question") return { message: "Before I schedule it, please check:" };
+    if (hook === "extraction" || user.includes('"item_id"')) {
+      const segs = segmentsIn(user);
+      const out = extractionFor(instructionId, segs, extractor);
+      // A value the seller typed in a reply, after the instruction: the latest one.
+      const time = latestReply(segs, ISO_WORDS);
+      if (time) out.time = { found: true, value: time.quote, segment_index: time.index };
+      const place = latestReply(segs, REPLY_PLACES);
+      if (place) out.location = { found: true, value: place.quote, segment_index: place.index };
+      return out;
+    }
+    throw new Error(`stub: unrecognised call ${hook ?? ""}\n${system.slice(0, 100)}`);
   };
 }
 
-module.exports = { makeAsk, extractionFor, ACTION, EXTRACTORS, PROVIDER_FORMS, providerFormFor, userFormFor };
+// The agent's model: it calls the pickup tool, with arguments of its own (the gate never uses them).
+function makeChat({ tool = "schedule_pickup", text = null } = {}) {
+  return async function chat() {
+    if (text !== null) return { text };
+    return { toolCall: { name: tool, arguments: { time: "whatever the model thought", buyer_contact: "made up" } } };
+  };
+}
+
+module.exports = { makeAsk, makeChat, extractionFor, ACTION, EXTRACTORS, PROVIDER_FORMS, providerFormFor, userFormFor, READINGS };

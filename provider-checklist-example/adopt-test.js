@@ -3,9 +3,10 @@
 /**
  * Checks adopt-example/ — the files an adopter keeps — from here, so that folder holds no test files.
  *
- * agent.js runs with stand-in connections: the stub model, the same measurements and user turns as the
- * other checks, a tool call that only records. Where a check is about connect.js itself (labelInput,
- * an unconnected measurement), the real function is used.
+ * agent.js runs with stand-in connections: the stub models, this folder's tool.json as what the server
+ * serves, the same measurements and user turns as the other checks, a tool call that only records. Where
+ * a check is about connect.js itself (labelInput, an unconnected measurement, no server), the real
+ * function is used.
  *
  *   npm run check
  */
@@ -13,13 +14,13 @@
 const fs = require("fs");
 const path = require("path");
 const ADOPT = path.join(__dirname, "..", "adopt-example");
-const { createAgent } = require(path.join(ADOPT, "agent"));
+const { createAgent, systemPrompt } = require(path.join(ADOPT, "agent"));
 const realConnect = require(path.join(ADOPT, "connect"));
 const gate = require(path.join(ADOPT, "gate"));
-const { runArm, measuredFor, confirmProviderForms, MEASUREMENTS } = require("./arm");
+const { runArm, measuredFor, measurePort, MEASUREMENTS } = require("./arm");
 const TOOL = require("./tool.json");
 const { buildUserTurn } = require("./prompts");
-const { makeAsk } = require("./stub");
+const { makeAsk, makeChat } = require("./stub");
 const S = require("./instructions.json");
 
 let failed = 0;
@@ -31,86 +32,101 @@ function check(label, got, want) {
 const SAT_2PM = "2026-10-31T14:00:00+09:00";
 let thread = 0;
 
-// Stand-in connections for one instruction in one condition. Anything not overridden is a stand-in.
+// Stand-in connections for one instruction in one condition. Anything not overridden is a stand-in: the
+//   stub model, this folder's tool.json as the server's one tool, the condition's platform facts.
 function standIn(id, condition, over = {}) {
   const ctx = { ...S.conditions[condition].context, ...(over.ctx ?? {}) }, date = S.date_modes.said;
-  const measured = measuredFor(ctx, date);
-  const calls = [];
-  const base = makeAsk(id);
+  const calls = [], prompts = [];
+  const text = S.instructions.find(i => i.id === id).text;
+  let first = true;
   return {
-    calls,
+    calls, prompts,
     connect: {
-      ask: over.ask ?? (async (m, system, user) => (user.includes('"proposals"') ? { proposals: over.proposals ?? {} } : base(m, system, user))),
-      measure: over.measure ?? (async (name) => { if (!(name in measured)) throw new Error("not measured"); return measured[name]; }),
-      labelInput: over.labelInput ?? (() => buildUserTurn(ctx, S.instructions.find(i => i.id === id).text, date).segments),
+      ask: over.ask ?? makeAsk(id),
+      chat: async req => { prompts.push(req.system); return makeChat()(req); },
+      listTools: async () => [TOOL],
+      readToolDefinition: over.readToolDefinition ?? (async name => [TOOL].find(t => t.name === name)),
+      measure: over.measure ?? measurePort(measuredFor(ctx, date)),
+      // The first message arrives with the condition's context; later ones are what the seller typed.
+      labelInput: over.labelInput ?? (msg => {
+        if (first) { first = false; return buildUserTurn(ctx, text, date).segments; }
+        return realConnect.labelInput(msg);
+      }),
       callTool: async (name, args) => { calls.push({ name, args }); return { ok: true }; },
       store: gate.createStorage(),
       checkpointer: new gate.MemorySaver(),
       // The names this system can measure (connect.js's MEASUREMENTS keys).
       MEASUREMENTS: Object.fromEntries(MEASUREMENTS.map(n => [n, async () => undefined])),
+      MODEL_NAME: "stub",
     },
   };
 }
-const run = async (id, condition, over = {}, reply) => {
+const run = async (id, condition, over = {}, replies = []) => {
   const s = standIn(id, condition, over);
-  // The provider confirmed its lines once, before any of this (spec 3.3).
-  if (over.confirmForms !== false) await confirmProviderForms(s.connect.store, TOOL);
-  const agent = createAgent({ connect: s.connect, propose: over.propose ?? false });
+  const agent = createAgent({ connect: s.connect });
   const threadId = `t${++thread}`;
   const first = await agent.start({ threadId, message: { typed: "(stand-in)" }, userChecklist: S.instructions.find(i => i.id === id).user_checklist ?? [] });
-  const last = reply ? await agent.resume({ threadId, reply }) : first;
-  return { first, last, calls: s.calls };
+  let last = first;
+  for (const r of replies) last = r === "CANCEL" ? await agent.cancel({ threadId }) : await agent.reply({ threadId, message: { typed: r } });
+  return { first, last, calls: s.calls, prompts: s.prompts, store: s.connect.store };
 };
 
 (async () => {
   console.log("--- 1. the folder holds only what an adopter keeps ---");
   const files = fs.readdirSync(ADOPT).filter(f => f !== "node_modules").sort();
-  check("adopt-example files", files, ["README.md", "agent.js", "connect.js", "gate.js", "package-lock.json", "package.json", "principles.md", "tool.json"]);
+  check("adopt-example files", files, ["README.md", "agent.js", "connect.js", "gate.js", "package-lock.json", "package.json", "principles.md", "tool.md"]);
+  // tool.md is a declaration of the tool. The code reads a declaration only where TOOLS_FILE points, and
+  //   the example must be the tool the tests run.
+  const code = ["agent.js", "connect.js", "gate.js"].map(f => fs.readFileSync(path.join(ADOPT, f), "utf8").replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, "")).join("\n");
+  check("  no file name in the code: a declaration is read only where TOOLS_FILE points", /tool\.md|tool\.json/.test(code), false);
+  const md = fs.readFileSync(path.join(ADOPT, "tool.md"), "utf8");
+  const blocks = [...md.matchAll(/```(\w+)\n([\s\S]*?)\n```/g)].map(m => [m[1], m[2]]);
+  const texts = blocks.filter(([k]) => k === "text").map(([, b]) => b), json = blocks.find(([k]) => k === "json")?.[1];
+  check("  tool.md is the tool the tests run: name, description, input schema",
+    [texts[0], texts[1], JSON.stringify(JSON.parse(json ?? "null"))], [TOOL.name, TOOL.description, JSON.stringify(TOOL.inputSchema)]);
   // principles.md is spec 6.2 as prompt sentences: every bullet must be the spec's own sentence.
   const spec = fs.readFileSync(path.join(__dirname, "..", "spec.en.md"), "utf8");
   const bullets = fs.readFileSync(path.join(ADOPT, "principles.md"), "utf8").split("\n").filter(l => l.startsWith("- ")).map(l => l.slice(2));
   check("principles.md: ten bullets, each word for word in spec 6.2", [bullets.length, bullets.filter(b => !spec.includes(b))], [10, []]);
-  check("its tool.json is this folder's", JSON.stringify(JSON.parse(fs.readFileSync(path.join(ADOPT, "tool.json")))) === JSON.stringify(require("./tool.json")), true);
-  check("nothing the adopter writes but tool.json holds a rule: no confirmed.json, no x- keyword",
-    [fs.existsSync(path.join(ADOPT, "confirmed.json")), /"x-/.test(fs.readFileSync(path.join(ADOPT, "tool.json"), "utf8"))], [false, false]);
+  check("  and they are in the agent's system prompt", bullets.every(b => systemPrompt().includes(b)), true);
 
-  console.log("\n--- 2. what is measured is what is declared and confirmed ---");
-  const confirmedStore = gate.createStorage();
-  check("nothing confirmed yet: nothing to measure", await gate.measurementsNeeded(TOOL, confirmedStore), []);
-  await confirmProviderForms(confirmedStore, TOOL);
-  check("the measurements the confirmed forms read", await gate.measurementsNeeded(TOOL, confirmedStore),
-    ["order_status", "listing_owned_by_seller", "time", "buyer_contact"]);
+  console.log("\n--- 2. connect.js as shipped fails closed ---");
+  const unread = await run("g4-01", "clean", { readToolDefinition: realConnect.readToolDefinition });
+  check("no MCP server set: the definition is not read, nothing runs", [unread.first.status, /tool definition not read/.test(unread.first.verdict?.reason ?? "")],
+    ["definition_repair", true]);
   const unconnected = await run("g4-01", "clean", { measure: realConnect.measure });
-  check("connect.js as shipped: nothing measured, the [Required] line unverified", unconnected.first.verdict.decision, "definition_repair");
+  check("no measurement connected: the [Required] lines unverified", unconnected.first.verdict.decision, "definition_repair");
   check("  and nothing runs", unconnected.calls.length, 0);
+  check("an unconnected measurement reads as not measured", await realConnect.measure("order_status", { values: { item_id: "LST-2291" } }), { valid: false });
 
-  // Spec 6.1, 3.3: the record says which version of each line it was judged under, and who confirmed its form.
-  const sv = standIn("g4-01", "clean");
-  await confirmProviderForms(sv.connect.store, TOOL);
-  const kept = [];
-  const inner = sv.connect.store;
-  sv.connect.store = { ...inner, async persist(key, record) { kept.push(record); return inner.persist(key, record); } };
-  await createAgent({ connect: sv.connect, propose: false }).start({ threadId: `t${++thread}`, message: { typed: "x" } });
-  const pc = kept.filter(r => r.provider_checklist).at(-1)?.provider_checklist?.find(c => c.description?.startsWith("The sale must be agreed"));
-  check("the record carries the line's version and its confirmation", [typeof pc?.rule_hash, pc?.form_approval?.approved_by], ["string", "provider (test)"]);
-
-  console.log("\n--- 2-b. the provider confirms each line once, from what the agent shows ---");
-  const fresh = standIn("g1-01", "clean");
-  const provider = createAgent({ connect: fresh.connect, propose: false });
-  const before = await provider.start({ threadId: `t${++thread}`, message: { typed: "x" } });
-  check("nothing confirmed: the run stops, with the lines to confirm", [before.status, before.formApprovals.length], ["definition_repair", 6]);
-  check("  each shows its words, a proposed form, and what it would check", before.formApprovals.every(r => r.wording && r.proposal && typeof r.proposal_text === "string"), true);
-  check("  in words written from the form, not by the model", before.formApprovals.find(r => r.wording.startsWith("The sale")).proposal_text,
-    "holds only when the system measurement order_status is exactly \"agreed\". A measurement that cannot be read leaves it unconfirmed, and the run does not execute.");
-  for (const req of before.formApprovals) await provider.approveForm(req, "provider (review)");
-  const after = await provider.start({ threadId: `t${++thread}`, message: { typed: "x" } });
-  check("  confirmed: the run goes on to the seller", [after.status, after.formApprovals.length], ["waiting", 0]);
+  console.log("\n--- 2-b. building the tool too: the declaration file is the definition ---");
+  {
+    const os = require("os");
+    const prior = process.env.TOOLS_FILE;
+    process.env.TOOLS_FILE = path.join(ADOPT, "tool.md");
+    const listed = await realConnect.listTools();
+    check("TOOLS_FILE: the tools are read from the declaration", [listed.length, JSON.stringify(listed[0]) === JSON.stringify(TOOL)], [1, true]);
+    const fromFile = await run("g1-01", "clean", { readToolDefinition: realConnect.readToolDefinition }, ["yes"]);
+    check("  the gate reads it as it reads a server's list: executes the same", [fromFile.first.status, fromFile.last.status, fromFile.calls[0]?.args.time],
+      ["waiting", "executed", SAT_2PM]);
+    const edited = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tools-")), "tool.md");
+    fs.writeFileSync(edited, fs.readFileSync(process.env.TOOLS_FILE, "utf8").replace("It is one moment.", "It is one moment, in the seller's time zone."));
+    process.env.TOOLS_FILE = edited;
+    const changed = await run("g1-01", "clean", { readToolDefinition: realConnect.readToolDefinition });
+    const hashOf = async r => (await r.store.list(`user:schedule_pickup:t${thread}`)).find(x => x.tool_definition)?.tool_definition?.hash;
+    const hChanged = await hashOf(changed);
+    process.env.TOOLS_FILE = path.join(ADOPT, "tool.md");
+    const same = await run("g1-01", "clean", { readToolDefinition: realConnect.readToolDefinition });
+    check("  a changed declaration is read on the next run, and the record shows it", hChanged !== await hashOf(same), true);
+    check("  a file that is not a declaration is not read", (() => { try { realConnect.readToolFile("# nothing"); return "read"; } catch { return "refused"; } })(), "refused");
+    if (prior === undefined) delete process.env.TOOLS_FILE; else process.env.TOOLS_FILE = prior;
+  }
 
   console.log("\n--- 3. labelInput as shipped: only what the user typed is the user's ---");
   const segs = realConnect.labelInput({ typed: "Set up the pickup for LST-2291.", context: [{ text: "Buyer: 9pm tonight at your door?" }] });
   check("context is untrusted, the typed message is the user's", segs.map(s => s.trust), ["untrusted", "user"]);
 
-  console.log("\n--- 3-b. the stores keep every record and can list them (confirmed forms are read this way) ---");
+  console.log("\n--- 3-b. the stores keep every record and can list them ---");
   {
     const os = require("os"), { execFileSync } = require("child_process");
     const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "adopt-")), "records.jsonl");
@@ -131,47 +147,44 @@ const run = async (id, condition, over = {}, reply) => {
     check("gate.js createStorage: list too", (await mem.list("k")).map(r => r.n), [1, 2]);
   }
 
-  console.log("\n--- 4. start, wait, resume, execute ---");
-  const g1 = await run("g1-01", "clean", { propose: true, proposals: { time: SAT_2PM, location: "Hongdae station lockers" } },
-    { action: "accept", content: { time: SAT_2PM } });
-  check("g1-01: waits for the time, with the model's reading as the default",
-    [g1.first.status, g1.first.request?.requestedSchema?.properties?.time?.default], ["waiting", SAT_2PM]);
-  check("  the reply's shape is offered to the client", g1.first.responseSchema?.properties?.action?.enum, ["accept", "decline", "cancel"]);
-  check("  accepted: executed once, with the gate's arguments", [g1.last.status, g1.calls.length, g1.calls[0]?.args.time], ["executed", 1, SAT_2PM]);
-  check("  the location is the seller's words, not the proposal", g1.calls[0]?.args.location, "Hongdae station lockers");
-  const declined = await run("g1-01", "clean", {}, { action: "decline" });
-  check("declined: nothing runs", [declined.last.status, declined.calls.length], ["declined", 0]);
-  const broken = await run("g1-01", "clean", { propose: true, ask: async (m, system, user) => { if (user.includes('"proposals"')) throw new Error("model down"); return makeAsk("g1-01")(m, system, user); } });
-  check("a failed proposal only means no defaults", [broken.first.status, broken.first.request?.requestedSchema?.properties?.time?.default ?? null], ["waiting", null]);
+  console.log("\n--- 4. start, ask, reply, execute ---");
+  const g1 = await run("g1-01", "clean", {}, ["yes"]);
+  check("g1-01: waits on a question, the model's reading of the time shown by code", [g1.first.status, g1.first.question?.block?.[0]],
+    ["waiting", "time = 2026-10-31 (Sat) 14:00 +09:00"]);
+  check("  the provider's notice goes with it", g1.first.question?.block?.some(l => l.startsWith("Note: The buyer sees")), true);
+  check("  the seller's yes: executed once, with the gate's arguments", [g1.last.status, g1.calls.length, g1.calls[0]?.args.time], ["executed", 1, SAT_2PM]);
+  check("  the location is the seller's words", g1.calls[0]?.args.location, "Hongdae station lockers");
+  check("  the principles were in the model's system prompt", g1.prompts.every(p => p.includes("Do not generate values")), true);
+  const kept = [];
+  for (const key of ["user:schedule_pickup:" + `t${thread}`]) kept.push(...await g1.store.list(key));
+  const rec = kept.filter(r => r.provider_checklist).at(-1);
+  const sale = rec?.provider_checklist?.find(c => c.description?.startsWith("The sale must be agreed"));
+  check("the record carries the definition read, the line's version and its translation",
+    [typeof rec?.tool_definition?.hash, typeof sale?.rule_hash, sale?.form_translation?.translated_by], ["string", "string", "stub"]);
+  const cancelled = await run("g1-01", "clean", {}, ["CANCEL"]);
+  check("the seller stops: nothing runs", [cancelled.last.status, cancelled.calls.length], ["cancelled", 0]);
 
   console.log("\n--- 4-b. a server that asks for more input does not get it behind the gate ---");
   check("the MCP client is set not to answer input_required itself", realConnect.CLIENT_OPTIONS.inputRequired?.autoFulfill, false);
   check("  and declares elicitation, so the request comes back as data", JSON.stringify(realConnect.CLIENT_OPTIONS.capabilities?.elicitation), "{}");
   check("  and to speak 2026-07-28 when the server offers it", realConnect.CLIENT_OPTIONS.versionNegotiation?.mode, "auto");
+  check("  and follows the server's notices that its tool list changed", typeof realConnect.CLIENT_OPTIONS.listChanged?.tools?.onChanged, "function");
   const ask = { method: "elicitation/create", params: { mode: "form", message: "Card PIN?", requestedSchema: { type: "object", properties: { pin: { type: "string" } } } } };
   check("an input_required result is handed back as such", realConnect.toToolResult({ resultType: "input_required", inputRequests: { pin: ask } }), { inputRequired: { pin: ask } });
   const done = { resultType: "complete", content: [{ type: "text", text: "scheduled" }] };
   check("  a complete result passes through", realConnect.toToolResult(done), done);
-  const sir = standIn("g1-01", "clean");
-  await confirmProviderForms(sir.connect.store, TOOL);
-  sir.connect.callTool = async (name, args) => { sir.calls.push({ name, args }); return { inputRequired: { pin: ask } }; };
-  const ag = createAgent({ connect: sir.connect, propose: false });
-  await ag.start({ threadId: "sir", message: { typed: "x" }, userChecklist: [] });
-  const sr = await ag.resume({ threadId: "sir", reply: { action: "accept", content: { time: SAT_2PM } } });
-  check("the server asked during the call: stopped, not executed", [sr.status, sr.executedWith], ["input_required", null]);
-  check("  the server's request is returned to the caller", Object.keys(sr.serverRequests ?? {}), ["pin"]);
-  check("  and the call is not retried", sir.calls.length, 1);
-  for (const [label, fail, want] of [
+  for (const [label, result, want] of [
+    ["the server asked during the call: stopped, not executed", async () => ({ inputRequired: { pin: ask } }), "input_required"],
     ["the tool reports an error: not counted as executed", async () => ({ isError: true, content: [{ type: "text", text: "slot taken" }] }), "tool_error"],
     ["the call throws: reported, not executed", async () => { throw new Error("connection reset"); }, "call_failed"],
   ]) {
     const sf = standIn("g1-01", "clean");
-    await confirmProviderForms(sf.connect.store, TOOL);
-    sf.connect.callTool = async (n, a) => { sf.calls.push(a); return fail(); };
-    const af = createAgent({ connect: sf.connect, propose: false });
-    await af.start({ threadId: `f${++thread}`, message: { typed: "x" } });
-    const rf = await af.resume({ threadId: `f${thread}`, reply: { action: "accept", content: { time: SAT_2PM } } });
-    check(label, [rf.status, rf.executedWith, sf.calls.length, typeof rf.callError], [want, null, 1, "string"]);
+    sf.connect.callTool = async (n, a) => { sf.calls.push(a); return result(); };
+    const af = createAgent({ connect: sf.connect });
+    const id = `f${++thread}`;
+    await af.start({ threadId: id, message: { typed: "x" } });
+    const rf = await af.reply({ threadId: id, message: { typed: "yes" } });
+    check(label, [rf.status, rf.executedWith, sf.calls.length], [want, null, 1]);
   }
 
   console.log("\n--- 5. the agent's first verdict is the arm's ---");

@@ -1,17 +1,21 @@
 "use strict";
 
 /**
- * The LangGraph flow around the unchanged skeleton. No API calls; the model is stub.js.
+ * The LangGraph flow around the unchanged skeleton (adopt-example/gate.js). No API calls; the models are
+ * stub.js.
  *
  *   npm install && node graph-test.js
+ *
+ * The flow as it runs in use: the agent's model reads the conversation and calls the tool; the gate reads
+ * the tool's definition and judges; when something is missing, the model asks in conversation and code
+ * adds the values as they will be used; the user answers in words; the model calls again; the gate judges
+ * again; the tool runs with the gate's arguments only.
  */
 
-const { Command } = require("./graph");   // the same LangGraph the gate uses (adopt-example)
-const { buildGraph, CHECK_PREFIX } = require("./graph");
-const { runArm, measuredFor, confirmProviderForms, MEASUREMENTS, TOOL } = require("./arm");
-const { createStorage } = require("./graph");
+const { buildGraph, createStorage, Command } = require("./graph");
+const { runArm, measuredFor, measurePort, MEASUREMENTS, TOOL } = require("./arm");
 const { buildUserTurn } = require("./prompts");
-const { makeAsk } = require("./stub");
+const { makeAsk, makeChat } = require("./stub");
 const S = require("./instructions.json");
 
 let failed = 0;
@@ -21,144 +25,114 @@ function check(label, got, want) {
   console.log(`${ok ? "ok  " : "FAIL"}  ${label.padEnd(66)} got=${JSON.stringify(got)}${ok ? "" : `  want=${JSON.stringify(want)}`}`);
 }
 
+const CANCEL = Symbol("cancel");
+const CANCEL_TOOL = { name: "cancel_pickup", description: "Cancel a pickup.",
+  inputSchema: { type: "object", properties: { item_id: { type: "string" } }, required: ["item_id"] } };
+
 let thread = 0;
-// One run: start the graph, then answer each pause with the next reply in `replies`.
-async function drive(id, condition, replies = [], { proposals = {}, userChecklist, userAnswers } = {}) {
+// One conversation: the seller's instruction, then each reply in `replies`, typed, for as long as the
+//   assistant asks. chats: what the agent's model does on each turn (default: call the pickup tool).
+async function drive(id, condition, replies = [], { userChecklist, chats = [], ask, storage = createStorage() } = {}) {
   const ins = S.instructions.find(i => i.id === id);
   const ctx = S.conditions[condition].context, date = S.date_modes.said;
-  const calls = [];
-  // The provider confirmed its lines once, before any of this (spec 3.3); the confirmations are in storage.
-  const storage = createStorage();
-  await confirmProviderForms(storage, TOOL);
-  const g = buildGraph({ ask: makeAsk(id), storage, measurements: MEASUREMENTS, callTool: async (name, args) => { calls.push({ name, args }); } });
+  const calls = [], turns = [];
+  const chatFor = makeChat();
+  let turn = 0;
+  const g = buildGraph({
+    ask: ask ?? makeAsk(id), model: "stub",
+    chat: async (req) => { turns.push(req); const c = chats[turn++]; return c ? makeChat(c)(req) : chatFor(req); },
+    listTools: async () => [TOOL, CANCEL_TOOL],
+    readToolDefinition: async name => [TOOL, CANCEL_TOOL].find(t => t.name === name),
+    measure: measurePort(measuredFor(ctx, date)), measurements: MEASUREMENTS,
+    callTool: async (name, args) => { calls.push({ name, args }); return { content: [{ type: "text", text: "done" }] }; },
+    storage,
+  });
   const cfg = { configurable: { thread_id: `t${++thread}` } };
-  const requests = [], schemas = [];
-  let state = await g.invoke({ segments: buildUserTurn(ctx, ins.text, date).segments, measuredData: measuredFor(ctx, date),
-    userChecklist: userChecklist ?? ins.user_checklist ?? [], proposals, ...(userAnswers ? { userAnswers } : {}) }, cfg);
+  const questions = [];
+  let state = await g.invoke({ conversation: buildUserTurn(ctx, ins.text, date).segments, userChecklist: userChecklist ?? ins.user_checklist ?? [] }, cfg);
   for (;;) {
     const pending = (await g.getState(cfg)).tasks.flatMap(t => t.interrupts ?? []);
     if (pending.length === 0) break;
-    requests.push(pending[0].value);
-    schemas.push(pending[0].response_schema ?? null);
+    questions.push(pending[0].value);
+    if (!replies.length) break;                       // nobody answers: the conversation stays paused
     const reply = replies.shift();
-    if (!reply) break;                       // nobody answers: the run stays paused
-    state = await g.invoke(new Command({ resume: reply }), cfg);
+    state = await g.invoke(new Command({ resume: reply === CANCEL ? { cancel: true } : { segments: [{ trust: "user", text: reply }] } }), cfg);
   }
-  return { state, calls, requests, schemas };
+  return { state, calls, questions, turns, storage, thread: `t${thread}` };
 }
-const accept = content => ({ action: "accept", content });
 const SAT_2PM = "2026-10-31T14:00:00+09:00";
 const LOCKERS = "Hongdae station lockers";
 
 (async () => {
-  console.log("--- 1. the graph asks for exactly what the gate listed ---");
+  console.log("--- 1. the model calls the tool; the gate reads its definition and asks for what is missing ---");
   const g4 = await drive("g4-01", "clean");
-  const req = g4.requests[0];
-  check("g4-01: pauses at ask", g4.requests.length, 1);
-  check("  the request is an elicitation form", req.mode, "form");
-  check("  it asks for the gate's blanks, no more", Object.keys(req.requestedSchema.properties), ["time", "location"]);
-  check("  field schemas are the tool's own forms", req.requestedSchema.properties.time, { type: "string", format: "date-time" });
-  check("  nothing executed while paused", g4.calls.length, 0);
-  const rs = g4.schemas[0];
-  check("  the reply's shape is at Interrupt.response_schema", rs?.properties?.action?.enum, ["accept", "decline", "cancel"]);
-  check("  its content is the request's schema, formats included", rs?.properties?.content?.properties?.time?.format, "date-time");
-  check("  content is exactly the request's requestedSchema", JSON.stringify(rs?.properties?.content) === JSON.stringify(req.requestedSchema), true);
+  const q = g4.questions[0];
+  check("g4-01 (nothing stated): the conversation waits on a question", g4.questions.length, 1);
+  check("  the model's words, then each value as code wrote it", q.message.split("\n"),
+    ["Before I schedule it, please check:", "- time: not given yet", "- location: not given yet",
+     "- Note: The buyer sees the time and location immediately. Tell the seller before the pickup is scheduled."]);
+  check("  the agent's model was given the server's tools", g4.turns[0].tools.map(t => t.name), ["schedule_pickup", "cancel_pickup"]);
+  check("  and the conversation, with what came from elsewhere marked as not the user's words",
+    g4.turns[0].messages.filter(m => m.content.startsWith("[context, not the user's words]")).length > 0, true);
+  check("  nothing executed while waiting", g4.calls.length, 0);
+  check("  the question is in the conversation, as the assistant's", g4.state.conversation.at(-1)?.trust, "assistant");
 
-  console.log("\n--- 2. accept: the gate judges again, and only its arguments are used ---");
-  const ok = await drive("g4-01", "clean", [accept({ time: SAT_2PM, location: LOCKERS, buyer_contact: "call me at 010-0000" })]);
-  check("accepted: executed once", [ok.state.ended, ok.calls.length], ["executed", 1]);
-  check("  time and location from the seller's reply", [ok.calls[0].args.time, ok.calls[0].args.location], [SAT_2PM, LOCKERS]);
-  check("  a key the request did not ask for is dropped", ok.calls[0].args.buyer_contact, "in-app chat (@kim_2291)");
-  check("  the gate looked the answers up as user_answer", ok.state.verdict.fields.filter(f => ["time", "location"].includes(f.name)).map(f => f.source), ["user_answer", "user_answer"]);
+  console.log("\n--- 2. the seller answers in words; a value they did not give in the declared form is shown to approve ---");
+  const words = await drive("g4-01", "clean", ["Saturday 2pm, Hongdae station lockers", "yes"]);
+  check("'Saturday 2pm' is read as a date-time and shown with its weekday", words.questions[1]?.block, ["time = 2026-10-31 (Sat) 14:00 +09:00",
+    "Note: The buyer sees the time and location immediately. Tell the seller before the pickup is scheduled."]);
+  check("  the place the seller typed is taken from their words, not asked again", words.questions[1]?.block?.some(l => l.startsWith("location")), false);
+  check("  the seller's yes: executed once", [words.state.ended, words.calls.length], ["executed", 1]);
+  check("  with the approved time and the seller's place", [words.calls[0]?.args.time, words.calls[0]?.args.location], [SAT_2PM, LOCKERS]);
+  check("  the contact from the platform, not the model's arguments", words.calls[0]?.args.buyer_contact, "in-app chat (@kim_2291)");
+  check("  the time is user_answer, the place the seller's words", words.state.verdict.fields.filter(f => ["time", "location"].includes(f.name)).map(f => f.source),
+    ["user_answer", "instruction"]);
 
-  // State can carry values the gate did not accept (here, answers loaded by the adopter). The tool still
-  //   gets the gate's arguments and nothing else.
-  //   Since skeleton 1.18 such answers do not count at all: nobody asked for them.
-  const loadedState = { userAnswers: { time: SAT_2PM, buyer_contact: "call me at 010-0000" } };
-  const unasked = await drive("g1-01", "clean", [], loadedState);
-  check("answers put in state before any question: refused, the gate asks", [unasked.requests.length, unasked.calls.length,
-    Object.keys(unasked.requests[0]?.requestedSchema?.properties ?? {})], [1, 0, ["time"]]);
-  const loaded = await drive("g1-01", "clean", [accept({ time: SAT_2PM })], loadedState);
-  check("a value in state the gate refused never reaches the tool", [loaded.state.ended, loaded.calls[0]?.args.buyer_contact], ["executed", "in-app chat (@kim_2291)"]);
-  check("  the tool gets exactly the gate's call_arguments", JSON.stringify(loaded.calls[0]?.args) === JSON.stringify(loaded.state.executedWith), true);
+  const g1 = await drive("g1-01", "clean", ["yes"]);
+  check("g1-01: the first question shows the model's reading of '2pm this Saturday'", g1.questions[0]?.block?.[0], "time = 2026-10-31 (Sat) 14:00 +09:00");
+  check("  yes: executed with that moment, and the location the seller named", [g1.state.ended, g1.calls[0]?.args.time, g1.calls[0]?.args.location],
+    ["executed", SAT_2PM, LOCKERS]);
+  const corrected = await drive("g1-01", "clean", ["no, Saturday 3pm", "yes"]);
+  check("no, and another time: the new reading is shown, and approved", [corrected.questions[1]?.block?.[0], corrected.calls[0]?.args.time],
+    ["time = 2026-10-31 (Sat) 15:00 +09:00", "2026-10-31T15:00:00+09:00"]);
+  const typed = await drive("g4-01", "clean", [`${SAT_2PM} at ${LOCKERS}`]);
+  check("a time typed in the declared form is the seller's words: no approval needed", [typed.questions.length, typed.state.ended, typed.calls[0]?.args.time],
+    [1, "executed", SAT_2PM]);
 
-  console.log("\n--- 2-b. the seller confirms the form of a condition they stated, in the same flow ---");
-  // No items handed in: the gate takes the seller's conditions from their words (spec 4.4), and asks the
-  //   seller to confirm the form each will be checked in, shown with their words (3.3).
-  const { FORM_PREFIX } = require("./graph");
-  const said = await drive("g2-01", "clean", [], { userChecklist: [] });
-  const first = said.requests[0]?.requestedSchema?.properties ?? {};
-  const formKeys = Object.keys(first).filter(k => k.startsWith(FORM_PREFIX));
-  check("g2-01 said 'Nothing after 8pm, and public places only': both asked as forms to confirm", formKeys.length, 2);
-  check("  each shows the seller's words and what will be checked", formKeys.every(k => /You said: ".+"\. It will be checked like this: .+/.test(first[k].description)), true);
-  check("  the values are asked in the same question", ["time", "location"].every(k => k in first), true);
-  const yesForms = Object.fromEntries(formKeys.map(k => [k, true]));
-  // Round two: the evening limit is compared in its confirmed form; "public places only" has nothing a
-  //   program can compare, so its form is the seller's approval, asked for the place shown.
-  const flow = await drive("g2-01", "clean", [accept({ time: "2026-10-31T20:00:00+09:00", location: LOCKERS, ...yesForms })],
-    { userChecklist: [] });
-  const second = flow.requests[1]?.requestedSchema?.properties ?? {};
-  const approvals = Object.keys(second).filter(k => k.startsWith(CHECK_PREFIX));
-  check("  confirmed: the next question approves 'public places only' for the place shown", [approvals.length, /Hongdae station lockers/.test(second[approvals[0]]?.description ?? "")], [1, true]);
-  check("  and asks for no form again", Object.keys(second).filter(k => k.startsWith(FORM_PREFIX)).length, 0);
-  const done = await drive("g2-01", "clean", [
-    accept({ time: "2026-10-31T20:00:00+09:00", location: LOCKERS, ...yesForms }),
-    accept(Object.fromEntries(approvals.map(k => [k, true]))),
-  ], { userChecklist: [] });
-  check("  approved: executed", [done.state.ended, done.calls.length], ["executed", 1]);
-  const refused = await drive("g2-01", "clean", [accept({ time: "2026-10-31T20:00:00+09:00", location: LOCKERS,
-    ...Object.fromEntries(formKeys.map(k => [k, false])) })], { userChecklist: [] });
-  check("a form the seller says is wrong confirms nothing: asked again", Object.keys(refused.requests[1]?.requestedSchema?.properties ?? {}).filter(k => k.startsWith(FORM_PREFIX)).length, 2);
+  console.log("\n--- 3. a reply that settles nothing is asked again, up to the ceiling ---");
+  const vague = await drive("g4-01", "clean", ["hmm", "not sure"]);
+  check("two replies that give nothing: exhausted, not executed", [vague.state.verdict.decision, vague.calls.length], ["exhausted", 0]);
+  const cancelled = await drive("g4-01", "clean", [CANCEL]);
+  check("the seller stops: cancelled, the tool not called", [cancelled.state.ended, cancelled.calls.length], ["cancelled", 0]);
 
-  console.log("\n--- 3. decline or cancel: nothing runs ---");
-  const dec = await drive("g4-01", "clean", [{ action: "decline" }]);
-  check("declined: ended, tool not called", [dec.state.ended, dec.calls.length], ["declined", 0]);
-  const can = await drive("g4-01", "clean", [{ action: "cancel" }]);
-  check("cancelled: ended, tool not called", [can.state.ended, can.calls.length], ["cancelled", 0]);
+  console.log("\n--- 4. the seller's own conditions: confirmed in conversation, then compared ---");
+  // No items handed in: the gate takes the seller's conditions from their words (spec 4.4), and the
+  //   question shows each with what it will be checked against (3.3).
+  const g2 = await drive("g2-01", "clean", [`yes, 2026-10-31T20:00:00+09:00 at ${LOCKERS}`, "yes"], { userChecklist: [] });
+  const first = g2.questions[0]?.block ?? [];
+  check("g2-01: 'Nothing after 8pm.' and 'public places only.' each shown to confirm", first.filter(l => /will be checked like this/.test(l)).length, 2);
+  check("  the seller's yes keeps both; the place is then asked to approve against 'public places only'",
+    /public places only.*location = "Hongdae station lockers"/.test(g2.questions[1]?.block?.[0] ?? ""), true);
+  check("  approved: executed", [g2.state.ended, g2.calls.length], ["executed", 1]);
+  check("  the evening limit compared in its form, the place by the seller's yes", g2.state.verdict.user_checklist.map(i => `${i.status}:${i.source}`),
+    ["verified:instruction", "verified:user_answer"]);
+  const late = await drive("g2-01", "clean", [`yes, 2026-10-31T21:00:00+09:00 at ${LOCKERS}`], { userChecklist: [] });
+  check("  a time past 8pm against the seller's own limit: held", [late.state.verdict.decision, late.calls.length], ["hold", 0]);
 
-  console.log("\n--- 4. a reply that fails the schema's format is asked again, up to the ceiling ---");
-  // The second reply also slips in a location. Only time was asked for, so it must not reach the gate:
-  //   user_answer is looked up before anything else, so a kept key would replace the settled location.
-  const bad = await drive("g4-01", "clean", [accept({ time: "Saturday 2pm", location: LOCKERS }), accept({ time: SAT_2PM, location: "61 Yeonhui-ro" })]);
-  check("'Saturday 2pm' is not a date-time: asked again", bad.requests.length, 2);
-  check("  the second ask is only for time", Object.keys(bad.requests[1].requestedSchema.properties), ["time"]);
-  check("  the location already given is kept", bad.calls[0]?.args.location, LOCKERS);
-  check("  a location slipped into a time-only reply is dropped before the gate", bad.state.userAnswers.location, LOCKERS);
-  check("  then executed", bad.state.ended, "executed");
-  const odd = await drive("g4-01", "clean", [accept({ time: 1400, location: LOCKERS }), accept({ time: SAT_2PM })]);
-  check("response_schema is not enforced: a reply off its type does not throw, the gate asks again", [odd.requests.length, odd.state.ended], [2, "executed"]);
-  const twice = await drive("g4-01", "clean", [accept({ time: "Saturday 2pm", location: LOCKERS }), accept({ time: "2pm" })]);
-  check("two unusable replies: exhausted, not executed", [twice.state.verdict.decision, twice.calls.length], ["exhausted", 0]);
+  console.log("\n--- 5. the model answers in words, or calls another tool ---");
+  const talk = await drive("g4-01", "clean", [], { chats: [{ text: "Which listing do you mean?" }] });
+  check("no tool call: the model's words, and the gate does not run", [talk.state.ended, talk.state.reply, talk.state.verdict], ["replied", "Which listing do you mean?", null]);
+  const switched = await drive("g4-01", "clean", ["actually, cancel it"], { chats: [{}, { tool: "cancel_pickup" }] });
+  const counts = {};
+  for (const n of ["schedule_pickup", "cancel_pickup"]) counts[n] = (await switched.storage.list(`user:${n}:${switched.thread}`)).length;
+  check("another tool after the question: another unit, under its own key", [counts.schedule_pickup > 0, counts.cancel_pickup > 0], [true, true]);
+  check("  the first unit's records stay as they were", counts.schedule_pickup, 1);
+  check("  the gate judged the new call against its own definition", switched.calls[0]?.name, "cancel_pickup");
 
-  console.log("\n--- 5. a model's proposal is a default, not a value ---");
-  const prop = { time: SAT_2PM, location: LOCKERS };
-  const shown = await drive("g4-01", "clean", [], { proposals: prop });
-  check("the proposal is shown as the fields' defaults", [shown.requests[0].requestedSchema.properties.time.default, shown.requests[0].requestedSchema.properties.location.default], [SAT_2PM, LOCKERS]);
-  check("  and settles nothing on its own: paused, not executed", shown.calls.length, 0);
-  const same = await drive("g4-01", "clean", [accept(prop)], { proposals: prop });
-  check("accepted as shown: executed with the shown values", same.calls[0]?.args.time, SAT_2PM);
-  const edited = await drive("g4-01", "clean", [accept({ time: "2026-10-31T15:00:00+09:00", location: LOCKERS })], { proposals: prop });
-  check("edited by the seller: executed with what the seller sent", edited.calls[0]?.args.time, "2026-10-31T15:00:00+09:00");
-  const dropped = await drive("g4-01", "clean", [{ action: "cancel" }], { proposals: prop });
-  check("proposal shown, then cancelled: not executed", dropped.calls.length, 0);
-
-  // The seller said "2pm this Saturday". Nothing in code turns that into a date. A model reads it as
-  //   Saturday 31 October 14:00 and proposes that; the seller sees it and sends it.
-  const g1 = await drive("g1-01", "clean", [accept({ time: SAT_2PM })], { proposals: { time: SAT_2PM } });
-  check("g1-01: the seller's time words are asked about, with the model's reading as the default",
-    [Object.keys(g1.requests[0].requestedSchema.properties), g1.requests[0].requestedSchema.properties.time.default], [["time"], SAT_2PM]);
-  check("  the location the seller named is not asked again", g1.calls[0]?.args.location, LOCKERS);
-  check("  sent as shown: executed with that moment", [g1.state.ended, g1.calls[0]?.args.time], ["executed", SAT_2PM]);
-
-  console.log("\n--- 6. an item only the seller can confirm ---");
-  const pub = await drive("g2-01", "clean", [accept({ time: "2026-10-31T19:00:00+09:00", location: LOCKERS }), accept({ [CHECK_PREFIX + "chk_public"]: true })]);
-  check("g2-01: first the blanks, then the item it could not compare", pub.requests.map(r => Object.keys(r.requestedSchema.properties)), [["time", "location"], [CHECK_PREFIX + "chk_public"]]);
-  check("  confirmed: executed", pub.state.ended, "executed");
-  check("  chk_evening compared in code, chk_public confirmed by the seller", pub.state.verdict.user_checklist.map(i => `${i.id}:${i.status}:${i.source}`), ["chk_evening:verified:user_answer", "chk_public:verified:user_answer"]);
-  const notPub = await drive("g2-01", "clean", [accept({ time: "2026-10-31T19:00:00+09:00", location: LOCKERS }), accept({ [CHECK_PREFIX + "chk_public"]: false })]);
-  check("the seller says it does not hold: held, not executed", [notPub.state.verdict.decision, notPub.calls.length], ["hold", 0]);
-  const late = await drive("g2-01", "clean", [accept({ time: "2026-10-31T21:00:00+09:00", location: LOCKERS })]);
-  check("an answer past 8pm: held by the seller's own limit", [late.state.verdict.decision, late.calls.length], ["hold", 0]);
+  console.log("\n--- 6. without the model's words, the question is still asked ---");
+  const base = makeAsk("g4-01");
+  const mute = await drive("g4-01", "clean", [], { ask: async (m, s, u, hook) => { if (hook === "question") throw new Error("model down"); return base(m, s, u, hook); } });
+  check("the list, as code wrote it", mute.questions[0]?.message.split("\n")[0], "Before this can run, please answer:");
 
   console.log("\n--- 7. the graph's first verdict is the arm's verdict ---");
   const mismatched = [];

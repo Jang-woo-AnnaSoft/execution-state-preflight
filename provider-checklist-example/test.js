@@ -5,16 +5,17 @@
  *
  *   node test.js
  *
- * Every behaviour this folder adds over v1 has a check here: the provider's lines written in words and
- * compared only in the form the provider confirmed, the input schema's formats, the seller's items in
- * their confirmed forms, and the comparison with v1 itself.
+ * Every behaviour this folder adds over v1 has a check here: the provider's lines written in words, read
+ * from the tool's definition by the gate and compared in the form a model translated them into (kept, and
+ * shown in the record), the input schema's formats, measurements made with the values the gate settled,
+ * the seller's replies read from their words, the seller's items, and the comparison with v1 itself.
  */
 
 const fs = require("fs");
 const path = require("path");
-const { runArm } = require("./arm");
+const { runArm, measuredFor } = require("./arm");
 const { makeAsk, PROVIDER_FORMS } = require("./stub");
-const { labelledLines, checkAgainst } = require("./hooks");
+const { labelledLines, checkAgainst, createStorage } = require("./hooks");
 const { rows, providerName } = require("./compare");
 const S = require("./instructions.json");
 const TOOL = require("./tool.json");
@@ -39,10 +40,9 @@ async function run(id, condition, over = {}) {
   return runArm({ ctx: { ...S.conditions[condition].context, ...(over.ctx ?? {}) }, instructionText: i.text,
     userChecklist: over.userChecklist ?? i.user_checklist ?? [], userAnswers: over.userAnswers ?? {},
     checklistAnswers: over.checklistAnswers ?? {},
-    date: S.date_modes[over.date ?? "said"], ask: makeAsk(id, over.extractor ?? "faithful"), runId: `t-${id}-${condition}`,
+    date: S.date_modes[over.date ?? "said"], ask: over.ask ?? makeAsk(id, over.extractor ?? "faithful"), runId: `t-${id}-${condition}`,
     ...(over.tool ? { tool: over.tool } : {}), ...(over.forms ? { forms: over.forms } : {}),
-    ...(over.confirmedTool ? { confirmedTool: over.confirmedTool } : {}),
-    ...(over.confirmForms === false ? { confirmForms: false } : {}) });
+    ...(over.storage ? { storage: over.storage } : {}), ...(over.seen ? { seen: over.seen } : {}) });
 }
 
 (async () => {
@@ -56,23 +56,30 @@ async function run(id, condition, over = {}) {
   check("the stand-in model has a form for every line but the notice", labelledLines(TOOL.description)
     .filter(l => l.label !== "Notice").every(l => PROVIDER_FORMS.some(([s]) => l.text.startsWith(s))), true);
 
-  console.log("\n--- 2. a line is compared only in the form the provider confirmed ---");
-  // The seller's "2pm this Saturday" is not a date-time, and nothing here converts it. With the seller's
-  //   confirmed time as an answer (what graph.js collects), g1-01 runs.
+  console.log("\n--- 2. each line is translated once, kept, and compared in that form ---");
+  // The seller's "2pm this Saturday" is not a date-time, and nothing here converts it. A model reads it as
+  //   one, the question shows that reading, and the seller's yes approves it.
   const SAT_2PM = { time: "2026-10-31T14:00:00+09:00" };
-  const g1 = await run("g1-01", "clean", { userAnswers: SAT_2PM });
-  check("g1-01 with the seller's confirmed time: executes", g1.outcome, "call");
+  const store = createStorage();
+  const g1 = await run("g1-01", "clean", { userAnswers: SAT_2PM, storage: store });
+  check("g1-01, the seller approving the time read from their words: executes", g1.outcome, "call");
   check("  [Required] sale agreed: checked from the order status", [line(g1, SALE).status, line(g1, SALE).source], ["checked", "measured_data"]);
   check("  [Required] the seller's own listing: checked from the platform", [line(g1, OWNER).status, line(g1, OWNER).source], ["checked", "measured_data"]);
-  check("  each line says who confirmed its form", line(g1, SALE).form_approval?.approved_by, "provider (test)");
+  check("  each line shows the form it was compared in and who translated it", [line(g1, SALE).form_translation?.text, line(g1, SALE).form_translation?.translated_by],
+    ["holds only when the system measurement order_status is exactly \"agreed\". A measurement that cannot be read leaves it unconfirmed, and the run does not execute.", "stub"]);
+  check("  nobody approved it", line(g1, SALE).approval, null);
   check("  [Notice] surfaced as a disclosure", g1.disclosures.length > 0 && line(g1, NOTICE).status, "disclosure_required");
+  const again = await run("g1-01", "clean", { userAnswers: SAT_2PM, storage: store });
+  check("the same words in the next run: the kept translation", [line(again, SALE).form_translation?.new, line(again, SALE).form_translation?.key === line(g1, SALE).form_translation?.key],
+    [false, true]);
 
   const reworded = clone(TOOL);
   reworded.description = reworded.description.replace("as shown by the order status", "as the order status shows");
-  const rw = await run("g1-01", "clean", { tool: reworded, confirmedTool: TOOL, userAnswers: SAT_2PM });
-  check("reworded line: its confirmation does not apply, so it is pending", [line(rw, SALE).status, line(rw, SALE).form_pending], ["unverified", true]);
-  check("  [Required] goes back to the provider", line(rw, SALE).route, "definition_repair");
-  check("  and the run does not execute", rw.outcome, "definition_repair");
+  const rw = await run("g1-01", "clean", { tool: reworded, userAnswers: SAT_2PM, storage: store });
+  const rwKey = line(rw, SALE).form_translation?.key;
+  check("a reworded line: translated again, kept under a key of its own", [rwKey === line(g1, SALE).form_translation?.key,
+    /as the order status shows/.test((await store.list(rwKey))[0]?.wording ?? "")], [false, true]);
+  check("  the record shows the definition changed", rw.tool_definition?.hash === g1.tool_definition?.hash, false);
 
   const typo = clone(TOOL);
   typo.description = typo.description.replace("[Required] The sale", "[Requried] The sale");
@@ -86,8 +93,18 @@ async function run(id, condition, over = {}) {
   const notMine = await run("g1-01", "clean", { ctx: { listing_owned_by_seller: false }, userAnswers: SAT_2PM });
   check("someone else's listing: unmet, held", [line(notMine, OWNER).status, notMine.outcome], ["unmet", "hold"]);
 
-  const none = await run("g1-01", "clean", { confirmForms: false, userAnswers: SAT_2PM });
-  check("no line confirmed: nothing is compared, the run stops", [none.provider_checklist.filter(c => c.form_pending).length, none.outcome], [6, "definition_repair"]);
+  const noForms = Object.fromEntries(PROVIDER_FORMS.map(([start]) => [start, null]));
+  const none = await run("g1-01", "clean", { forms: noForms, userAnswers: SAT_2PM });
+  check("a model that writes no form: every line unverified, the run stops", [none.provider_checklist.filter(c => c.form_untranslated).length, none.outcome], [6, "definition_repair"]);
+
+  console.log("\n--- 2-b. the gate reads the definition, measures with what it settled, records the call ---");
+  const seen = [];
+  const m = await run("g1-01", "clean", { userAnswers: SAT_2PM, seen });
+  check("every measurement about the listing is made with the listing the seller named", seen.every(x => x.item_id === "LST-2291"), true);
+  check("  the order status among them", seen.some(x => x.name === "order_status"), true);
+  check("  and the record lists each, with the settled values it was made with", (m.measurements ?? []).find(x => x.name === "order_status")?.with.includes("item_id"), true);
+  check("the model's arguments are recorded, never used", [m.tool_call?.arguments?.time, m.args?.time], ["the model's own guess", SAT_2PM.time]);
+  check("the definition read is in the record", [m.tool_definition?.name, typeof m.tool_definition?.schema_hash], ["schedule_pickup", "string"]);
 
   console.log("\n--- 3. who gives each value comes from the provider's lines; its form from the schema ---");
   check("item_id: the seller's only", field(g1, "item_id").allowed_sources, ["user_answer", "instruction", "pre_set_data"]);
@@ -96,19 +113,25 @@ async function run(id, condition, over = {}) {
   check("  each says which line narrowed it", field(g1, "buyer_contact").source_rule_ids?.length, 1);
   const raw = await run("g1-01", "clean");
   check("g1-01 as said: '2pm this Saturday' fails the date-time format", [field(raw, "time").status, vcheck(raw, "time:format")?.status, raw.outcome], ["unknown", "rejected", "ask"]);
+  const tq = raw.questions.find(q => q.target === "value:time");
+  check("  the question shows the model's reading, written by code with its weekday", [tq?.candidate?.value, raw.question_block],
+    ["2026-10-31T14:00:00+09:00", ["time = 2026-10-31 (Sat) 14:00 +09:00"]]);
+  check("  with the provider's line about the time", tq?.lines?.map(l => l.label), ["Verify"]);
   check("  the location the seller named is taken from the instruction", [field(raw, "location").status, field(raw, "location").source], ["known", "instruction"]);
   check("every value's format is a check of its own", ["item_id", "location", "buyer_contact"].map(n => vcheck(raw, `${n}:format`)?.status), ["checked", "checked", "checked"]);
   check("the listing number has the provider's form", [checkAgainst(TOOL.inputSchema.properties.item_id, "LST-2291").ok, checkAgainst(TOOL.inputSchema.properties.item_id, "LST-229").ok], [true, false]);
+  check("  the seller's yes sets the time as user_answer, bound to the value shown", [field(g1, "time").source, field(g1, "time").approval?.shown?.time],
+    ["user_answer", SAT_2PM.time]);
   const offer = await run("g5-01", "offer_in_range");
   check("g5 offer_in_range: the measured location is not taken", field(offer, "location").status, "unknown");
   check("  the measured time is, inside the seller's window", [field(offer, "time").source, field(offer, "time").range_declared], ["measured_data", true]);
   const noWindow = await run("g5-01", "offer_in_range", { userChecklist: [] });
   check("same offer, no window declared: the time is not taken (3.3)", [field(noWindow, "time").status, field(noWindow, "time").range_declared], ["unknown", false]);
-  check("  settled at execution, from the [Verify] line's confirmed form", field(noWindow, "time").settled_at_execution, true);
+  check("  settled at execution, from the [Verify] line's form", field(noWindow, "time").settled_at_execution, true);
   const g4 = await run("g4-01", "clean", { userAnswers: { time: "Saturday 2pm", location: "Hongdae station lockers" } });
-  check("g4 answered 'Saturday 2pm': fails the schema's date-time format", field(g4, "time").status, "unknown");
-  check("  the note names the format", /date-time/.test(JSON.stringify(field(g4, "time"))), true);
-  check("  the answered location is taken (a user source)", [field(g4, "location").status, field(g4, "location").source], ["known", "user_answer"]);
+  check("g4: a reading that is not a date-time is not shown, so nothing is approved", field(g4, "time").status, "unknown");
+  check("  the record says why it was not shown", /date-time/.test(vcheck(g4, "time:candidate")?.note ?? ""), true);
+  check("  the location shown and approved is taken (a user source)", [field(g4, "location").status, field(g4, "location").source], ["known", "user_answer"]);
 
   console.log("\n--- 4. the user's items are compared in their confirmed form ---");
   const late = await run("g2-01", "clean", { userAnswers: { time: "2026-10-31T21:00:00+09:00", location: "Hongdae station lockers" } });
@@ -116,18 +139,17 @@ async function run(id, condition, over = {}) {
   const eight = await run("g2-01", "clean", { userAnswers: { time: "2026-10-31T20:00:00+09:00", location: "Hongdae station lockers" } });
   check("g2-01 answered 20:00: inside", item(eight, "chk_evening").status, "verified");
   check("  a location limit with no comparison form is unverified, not passed", item(eight, "chk_public").status, "unverified");
-  check("  so the seller is asked about it", eight.outcome, "ask");
-  const said = { time: "2026-10-31T21:00:00+09:00", location: "Hongdae station lockers" };
-  // An approval is bound to the item's version and the values shown (6.3), as the gate asks for it.
-  const yes = id => ({ answer: true, shown: { location: "Hongdae station lockers" }, rule_hash: item(eight, id).rule_hash });
-  const overrule = await run("g2-01", "clean", { userAnswers: said,
-    checklistAnswers: { chk_evening: { answer: true, shown: { time: said.time }, rule_hash: item(eight, "chk_evening").rule_hash }, chk_public: yes("chk_public") } });
-  check("a seller's yes does not overrule a comparison form", item(overrule, "chk_evening").status, "unmet");
-  check("  it does settle an item that has none", [item(overrule, "chk_public").status, item(overrule, "chk_public").source], ["verified", "user_answer"]);
-  const bare = await run("g2-01", "clean", { userAnswers: said, checklistAnswers: { chk_public: true } });
-  check("  a bare yes, naming no place, settles nothing", [item(bare, "chk_public").status, typeof item(bare, "chk_public").approval_voided], ["unverified", "string"]);
-  const moved = await run("g2-01", "clean", { userAnswers: { ...said, location: "Gangnam station exit 3" }, checklistAnswers: { chk_public: yes("chk_public") } });
-  check("  a yes given for another place settles nothing", item(moved, "chk_public").status, "unverified");
+  check("  so the seller is asked about it, for the place shown", [eight.outcome, eight.questions.find(q => q.target === "approve:chk_public")?.shown_text?.location],
+    ["ask", JSON.stringify("Hongdae station lockers")]);
+  const said = { time: "2026-10-31T20:00:00+09:00", location: "Hongdae station lockers" };
+  const approved = await run("g2-01", "clean", { userAnswers: said, checklistAnswers: { chk_public: true } });
+  check("  the seller's yes settles an item that has no form", [item(approved, "chk_public").status, item(approved, "chk_public").source, approved.outcome],
+    ["verified", "user_answer", "call"]);
+  const refused = await run("g2-01", "clean", { userAnswers: said, checklistAnswers: { chk_public: false } });
+  check("  the seller's no: unmet, held", [item(refused, "chk_public").status, refused.outcome], ["unmet", "hold"]);
+  const overrule = await run("g2-01", "clean", { userAnswers: { ...said, time: "2026-10-31T21:00:00+09:00" }, checklistAnswers: { chk_evening: true } });
+  check("a yes for an item with a form: it was never asked, and the form decides", [item(overrule, "chk_evening").status, vcheck(overrule, "approve:chk_evening:answer")?.status],
+    ["unmet", "rejected"]);
   const out = await run("g5-01", "offer_out_of_range");
   check("g5 offer outside the window: unmet, held", [item(out, "chk_window").status, out.outcome], ["unmet", "hold"]);
   const utc = await run("g5-01", "offer_in_range", { ctx: { pickup_request: { ...S.conditions.offer_in_range.context.pickup_request, time: "2026-10-31T05:00:00Z" } } });
@@ -136,7 +158,7 @@ async function run(id, condition, over = {}) {
   console.log("\n--- 4-b. a check that cannot be run is not a check that passed ---");
   const ts = await run("g1-01", "clean", { userAnswers: SAT_2PM,
     forms: { [SALE]: { compare: { source: "measured_data", measure: "order_status", schema: { constt: "agreed" } }, constrains: [] } } });
-  check("a confirmed schema with an unknown keyword: unverified", line(ts, SALE).status, "unverified");
+  check("a translated schema with an unknown keyword: unverified", line(ts, SALE).status, "unverified");
   check("  [Required] goes back to the provider, not executed", [line(ts, SALE).route, ts.outcome], ["definition_repair", "definition_repair"]);
   const badItem = clone(S.instructions.find(i => i.id === "g2-01").user_checklist);
   badItem[0].compare = { type: "string", notBefore: "20:00" };
