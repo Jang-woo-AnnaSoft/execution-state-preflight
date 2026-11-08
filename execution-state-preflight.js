@@ -3448,7 +3448,22 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.18",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.19",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.19: the gate runs on the model's tool call (tool_call: its name, and its arguments recorded and
+    //        never used as values) and reads the tool's definition itself (tool_definition: name, hash,
+    //        schema_hash); a definition it cannot read is definition_repair, gate.kind
+    //        "tool_definition_unread". checklist_digest covers the input schema. measurements lists every
+    //        measurement of the round with the settled values it was made with (name, with, result, value).
+    //        A provider line carries form_translation (the form a model wrote, kept per line, with the
+    //        words code wrote from it and who wrote it) or form_untranslated (why it has none: unverified,
+    //        definition_repair); it no longer carries form_approval, and gate.form_approvals holds only
+    //        the user's conditions (with proposal_text). A reply is the user's words in the instruction:
+    //        user_answer is a value a question showed and the user approved (the field carries approval
+    //        with located_at); a value typed in a reply is instruction. value_checks may hold kind
+    //        "answer" (each reply claim, with target) and "candidate" (a value read to show). gate carries
+    //        questions, question_block and asked_through when it asks. A user's condition whose form is
+    //        not confirmed yet is not a range (range_declared false). Records written with 1.18 by the
+    //        code just before this version may already carry proposal_text and form_approval.text.
     //   1.18: answers count only for questions this unit was asked, and the route counts come from the
     //        unit's records (storage.list); a refused answer is a value_checks entry of kind "answer"
     //        and a user_answer trace entry "rejected". The key must be the unit's across rounds.
