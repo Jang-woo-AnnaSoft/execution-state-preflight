@@ -86,7 +86,7 @@
  *   //   no_place       the hook reports there is no place to check ({ none: "no_place" }) — a gap in
  *   //                  the declaration (5.1, 4.5c)
  *   //   no_report      nothing came back — NOT a report of nothing. The source was not checked (5.2).
- *   //                  Also what an absent key in userAnswers / preSetData / a prior record gives; see
+ *   //                  Also what an absent key in the user's answers / preSetData / a prior record gives; see
  *   //                  [REPORTING NOTHING]
  *   //   cannot_answer  the source said it could not answer (measured_data valid:false). Not a
  *   //                  confirmation of "nothing" either (5.1)
@@ -1094,7 +1094,7 @@ function valueChecksFrom(fields, extraFields, fieldSchemas) {
 //     "null" value is never sent. Anything left open — no_report, cannot_answer, rejected, a candidate,
 //     a route that ended at its ceiling — keeps the slot UNKNOWN.
 //   The three map sources report nothing the same way, from whoever filled the map (D1, D3):
-//     userAnswers[slot] = { none: "absent" }      the user said there is none
+//     the user's reply   { none: "absent" }       the user said there is none ([REPLIES])
 //     preSetData[slot]  = { none: "absent" }      the caller looked in the settings, none
 //     priorExecutionState = { none: "absent" }    the caller looked in storage, nothing executed
 //   An absent KEY stays no_report: the gate cannot tell "loaded, none" from "passed {}". Only "absent"
@@ -1147,7 +1147,7 @@ async function verifyDerivedFrom(h, declared, instruction, ctx) {
       deps.push({ source: "instruction", segment_index: d.segment_index, span: [sp[0], sp[1]],
                   text: seg.text.slice(sp[0], sp[1]) });
     } else if (d?.source === "measured_data" && typeof d.name === "string") {
-      const m = await safeHook(h.measureFromEnvironment, [d.name, ctx], lookupFailed("measured_data"));
+      const m = await ctx.measure(d.name);
       if (m?.[LOOKUP_HOOK_FAILED]) return { failed: m };
       if (!m || m.valid !== true || JSON.stringify(m.value) !== JSON.stringify(d.value)) {
         return { ok: false, why: `measured input "${d.name}" is not what the system measures` };
@@ -1186,9 +1186,9 @@ async function lookupField(h, fieldName, ctx) {
   //   nothing; no_place in particular is a declaration gap, which a user or a caller does not report.
   const mapNone = v => { const r = noneReport(v); return r === null ? null : (r === "absent" ? "absent" : "rejected"); };
 
-  // Source 1 — user_answer (injected on re-run after ask_user)
-  // NOTE: filling userAnswers happens outside the skeleton.
-  // BREAKS: LLM parsing output here makes the first source model output.
+  // Source 1 — user_answer: a value the gate showed the user and the user approved ([REPLIES]). Built by
+  //   the gate from the user's own words in a later segment, located there, and bound to the value the
+  //   question showed — never a value a caller or a model hands in.
   // NOTE: a user_answer has no expiry and outranks a later measurement.
   // POLICY: invalidate on a change to what the value derived from, not on elapsed time.
   // D1: the user may answer "there is none" — { none: "absent" }. That is a report of nothing by the
@@ -1200,11 +1200,9 @@ async function lookupField(h, fieldName, ctx) {
         saw("user_answer", none);
       } else {
         saw("user_answer", "found");
-        return fresh({ name: fieldName, value: userAnswers[fieldName], status: "known", source: "user_answer" });
+        return fresh({ name: fieldName, value: userAnswers[fieldName], status: "known", source: "user_answer",
+                       ...(ctx.valueApprovals?.[fieldName] ? { approval: ctx.valueApprovals[fieldName] } : {}) });
       }
-    } else if (ctx.refusedAnswers?.has?.(fieldName)) {
-      // Something came back and the gate refused it: an answer to a question it never asked.
-      saw("user_answer", "rejected");
     } else {
       saw("user_answer", "no_report");
     }
@@ -1318,10 +1316,11 @@ async function lookupField(h, fieldName, ctx) {
     }
   }
 
-  // Source 4 — measured_data: accepted only when valid.
+  // Source 4 — measured_data: accepted only when valid. Read now, through the measure port, with the
+  //   values already settled in this round ([MEASURE]).
   // NOTE: the means of observation is not recorded. If this hook is LLM-based, it is not a measurement.
   const fromMeasurement = allowed.has("measured_data")
-    ? await safeHook(h.measureFromEnvironment, [fieldName, ctx], lookupFailed("measured_data"))
+    ? await ctx.measure(fieldName)
     : undefined;
   if (fromMeasurement?.[LOOKUP_HOOK_FAILED]) return failedAt(fromMeasurement);
   // Read before the found check: an object carrying `none` is never a value, whatever else it carries.
@@ -1433,7 +1432,14 @@ function validateFieldSchema(value, schema, ctx) {
   return { unverified: "validateFieldSchema not wired: the declared form was not checked" };
 }
 
-// [REQUIRED-OP] CONTRACT: one of
+// [MEASURE] [REQUIRED-OP] The measurement port. The gate calls it when it needs a system value, in the
+//   round it judges, with the values this round has already settled — so a measurement that depends on
+//   another value ("the order status of the listing the seller named") reads the value the gate settled,
+//   not one a caller guessed before the tool was known. Nothing is measured ahead of the gate, and a
+//   measurement from an earlier round is never reused: each round reads again (3.5).
+//   Called with (name, { values, userId, tool }): name is a slot, or the measurement a condition's form
+//   names; values holds only the settled values ({ slot: value }).
+// CONTRACT: one of
 //   { valid: true, value }   measured, and this is the value
 //   { valid: false }         this source cannot answer the question (5.1). Never becomes known
 //   { none: "absent" }       measured, and there is nothing there — a report of nothing (5.2, 6.2)
@@ -1442,9 +1448,67 @@ function validateFieldSchema(value, schema, ctx) {
 // NOTE: any other shape is refused and traced as rejected. A raw value with no `valid` is one of them.
 // NOTE: everything but a throw moves on to prior_state; a throw settles the field unknown. Do not throw
 //   for "cannot observe" — say which of the above it is.
-function measureFromEnvironment(fieldName, ctx) {
-  if (ctx.measured_data && fieldName in ctx.measured_data) return ctx.measured_data[fieldName];
+//   Every call is in the record (measurements): what was read, with which settled values, and what came back.
+function measure(name, settled) {
   return undefined;
+}
+
+// [TOOL DEFINITION] [REQUIRED-OP] The definition of the tool the model called, read by the gate once the
+//   call is in hand (4.4: the provider checklist comes from the tool's own declaration once the tool is
+//   settled). Never a copy the caller keeps: the gate reads it, so what is checked is what the provider
+//   declares now. For MCP, the client's tool list (refreshed when the server says it changed).
+// CONTRACT: (name) → { name, description, inputSchema } for that tool. A throw, no object, or a
+//   definition of another tool: the run goes to definition_repair ("tool definition not read").
+function readToolDefinition(name) {
+  throw new Error("readToolDefinition not wired: the gate cannot read the tool's definition");
+}
+
+// [REPLIES] [OPTIONAL — on UNSAFE_DEFAULT_HOOKS] What the user's words after a question say about it.
+//   The model asks in conversation; the user answers in words, and those words are appended to the
+//   instruction. This hook reports, for each question the gate asked (gate.questions), where the user
+//   answered it and how — a located claim the gate checks, like every other claim.
+//   Called with (instruction, questions): the questions still open in this unit, each with its target.
+// CONTRACT: [{ target, answer: true|false, quote, segment_index, span }] — quote copied from one
+//   trust:"user" segment, span its range there. For a value question the user can also say there is
+//   none: { target, none: "absent", quote, segment_index, span }. Or { none: "absent" } (no reply to any
+//   question), or undefined (no report).
+//   The gate accepts a claim only for a question it asked, in a segment after it asked, at the words the
+//   claim quotes. What the answer approves is what the question showed, read from the gate's record —
+//   never from the claim. Unwired, no answer ever counts: every question is asked again, up to the ceiling.
+function readReplies() {
+  return undefined;
+}
+
+// [OPTIONAL] A value for one blank, read by a model from the user's words and written in the slot's
+//   declared form ("2pm this Saturday" → "2026-11-14T14:00:00+09:00"). Shown to the user with the question
+//   for them to approve; it settles nothing. A proposal that fails the slot's format is not shown.
+// CONTRACT: (fieldName, instruction, schema) → { value } or undefined.
+function proposeValue() {
+  return undefined;
+}
+
+// [RENDERED VALUES] A value as the user is shown it, written by code from the value and its declared
+//   form — never by the model that asks — so what the user approves reads the same as what is checked.
+//   A date-time carries its weekday, computed from the date as written: "2026-11-14T14:00:00+09:00" reads
+//   "2026-11-14 (Sat) 14:00 +09:00". Anything else is shown as JSON.
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function weekdayOf(y, m, d) {
+  return WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+}
+function renderValue(value, schema) {
+  const fmt = schema && typeof schema === "object" ? schema.format : undefined;
+  if (typeof value === "string" && fmt === "date-time") {
+    const m = /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?([Zz]|[+-]\d{2}:\d{2})$/.exec(value);
+    if (m) {
+      const tz = /^[Zz]$/.test(m[6]) ? "+00:00" : m[6];
+      return `${m[1]}-${m[2]}-${m[3]} (${weekdayOf(+m[1], +m[2], +m[3])}) ${m[4]}:${m[5]} ${tz}`;
+    }
+  }
+  if (typeof value === "string" && fmt === "date") {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (m) return `${m[1]}-${m[2]}-${m[3]} (${weekdayOf(+m[1], +m[2], +m[3])})`;
+  }
+  return JSON.stringify(value);
 }
 
 // [REQUIRED-OP] Extract a value from the instruction (LLM). Unimplemented means every field stays unknown.
@@ -1523,8 +1587,34 @@ function verifyUserChecklistItem(item, ctx) {
 //   cannot show a confirmation, so every form is pending: fail-closed.
 //   The record: { kind: "form_approval", key, declared_by, tool, user_id, label, wording, line_hash,
 //     form: { compare, constrains, description? }, status: "approved" | "revoked", approved_by, at }.
-//   Written by preflight.approveForm / revokeForm, never by the gate during a run.
+//   Written when the user confirms in conversation ([REPLIES]), or by preflight.approveForm / revokeForm.
+//   Only the user's conditions are confirmed this way. A provider line is translated ([TRANSLATED FORMS]).
 const FORM_APPROVAL_KIND = "form_approval";
+
+// [TRANSLATED FORMS] A labelled line of the tool's description is put into a comparable form by a model
+//   (proposeComparableForm) the first time the gate meets it, and the form is kept, under the line's own
+//   key, so the same words are compared the same way on every run. Nobody approves it: the provider is not
+//   there to, and whoever runs the agent did not write the line. What makes the translation checkable is
+//   the record — every verdict carries, for each line, the form it was compared in, the words code wrote
+//   from that form, and which model wrote it. A reworded line has another key and is translated again.
+//   A line the model cannot put into a form that fits its label stays unverified (definition_repair).
+//   The record: { kind: "form_translation", key, tool, label, wording, line_hash, form: { compare, constrains },
+//     status: "translated" | "revoked", translated_by, at }. revokeForm drops a translation; the next run
+//   translates the line again. Reading needs storage.list: without it a translation cannot be kept, so
+//   the line is unverified rather than translated afresh on every run.
+const FORM_TRANSLATION_KIND = "form_translation";
+function formTranslationKey({ tool, label, wording }) {
+  return `__form_translation__:provider:${tool ?? ""}:${ruleHash(`[${label ?? ""}] ${wording ?? ""}`)}`;
+}
+async function loadFormTranslation(h, key) {
+  const recs = await listRecords(h, key);
+  if (!recs) return { unavailable: true };
+  for (let i = recs.length - 1; i >= 0; i--) {
+    const r = recs[i];
+    if (r?.kind === FORM_TRANSLATION_KIND && r.key === key) return r.status === "translated" ? r : null;
+  }
+  return null;
+}
 function formApprovalKey({ declared_by, tool, userId, label, wording }) {
   const owner = declared_by === "user" ? `user:${userId ?? ""}` : `provider:${tool ?? ""}`;
   return `__form_approval__:${owner}:${ruleHash(`[${label ?? ""}] ${wording ?? ""}`)}`;
@@ -1539,31 +1629,143 @@ async function listRecords(h, key) {
 // [UNIT HISTORY] What this unit's records say: the questions it was asked and the routes it tried.
 //   Only the records since its last execution: an executed unit is finished, and the next request under
 //   the same key starts with nothing asked and every count at zero.
-//   Asked: the blanks a verdict put in front of the user (gate.unknown_fields, and the slots of a branch
-//   question) and the items it asked to approve (gate.unverified_checklist, gate.unverified_provider),
-//   in any phase — an answer given at instruction time is still the answer at the trigger.
+//   Asked: every question a verdict put in gate.questions, with what it showed and how far the
+//   instruction ran when it was asked (asked_through), in any phase — an answer given at instruction time
+//   is still the answer at the trigger. The latest asking of a target is the one a reply answers.
 //   Counted, in this phase: value-gate asks (ask_user other than the intent, tool and branch questions,
 //   which have their own ceilings or none) and system lookups; tool asks in any phase.
 const NOT_VALUE_ASKS = new Set(["intent_undetermined", "intent_undetermined_exhausted", "tool_undetermined",
                                 "tool_undetermined_exhausted", "branch_unresolved", "branch_conflict"]);
 async function unitHistory(h, actionKey, phase) {
-  const none = { available: false, asked_slots: new Set(), asked_items: new Set(), ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0 };
+  const none = { available: false, asked: new Map(), ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0 };
   if (typeof actionKey !== "string" || actionKey === "") return none;
   const all = await listRecords(h, actionKey);
-  if (!all) return none;
+  if (!all) return { ...none, unlisted: true };
   let start = 0;
   for (let i = all.length - 1; i >= 0; i--) if (all[i]?.execution_decision === "executed") { start = i + 1; break; }
-  const recs = all.slice(start).filter(r => r && typeof r === "object" && r.kind !== FORM_APPROVAL_KIND);
-  const out = { available: true, asked_slots: new Set(), asked_items: new Set(), ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0 };
+  const recs = all.slice(start).filter(r => r && typeof r === "object" && r.kind !== FORM_APPROVAL_KIND &&
+    r.kind !== FORM_TRANSLATION_KIND);
+  const out = { available: true, asked: new Map(), ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0 };
   for (const r of recs) {
     const g = r.gate ?? {};
-    for (const f of g.unknown_fields ?? []) if (typeof f?.name === "string") out.asked_slots.add(f.name);
-    for (const opt of g.branch_options ?? []) for (const n of opt ?? []) if (typeof n === "string") out.asked_slots.add(n);
-    for (const i of [...(g.unverified_checklist ?? []), ...(g.unverified_provider ?? [])]) if (i?.id) out.asked_items.add(i.id);
+    const through = Number.isInteger(g.asked_through) ? g.asked_through : null;
+    if (through !== null) {
+      for (const q of Array.isArray(g.questions) ? g.questions : []) {
+        if (typeof q?.target === "string") out.asked.set(q.target, { question: q, asked_through: through });
+      }
+    }
     if (g.kind === "tool_undetermined") out.tool_attempts += 1;
     if (r.phase !== phase) continue;
     if (r.execution_decision === "ask_user" && !NOT_VALUE_ASKS.has(g.kind)) out.ask_attempts += 1;
     if (r.execution_decision === "system_lookup") out.lookup_attempts += 1;
+  }
+  return out;
+}
+
+// [REPLIES] The user's answers, read from their own words. The model asked in conversation; the user's
+//   reply is a later segment of the instruction, and readReplies says where each question was answered.
+//   The gate keeps a claim only when
+//     - its target is a question this unit asked (unitHistory), and
+//     - its quote is at its span, in a segment the user typed, after the question was asked (asked_through).
+//   What a yes approves is what the question showed — the candidate value, the values shown with an
+//   item, the form of a condition — read from the gate's own record of the question, never from the claim.
+//   Every claim is a check of its own (value_checks, kind "answer"): checked, or rejected with why. A reply
+//   reader that throws is unverified, and the run goes to definition repair.
+//   A value the user typed in a reply is not an answer here: it is the user's words, read from the
+//   instruction like any other (the instruction covers the whole conversation about this unit).
+function checkLocatedQuote(claim, instruction, from) {
+  const { quote, segment_index, span } = claim ?? {};
+  if (typeof quote !== "string" || quote.trim() === "") return { ok: false, why: "no quote" };
+  const seg = Array.isArray(instruction) && Number.isInteger(segment_index) ? instruction[segment_index] : undefined;
+  if (!seg || typeof seg.text !== "string") return { ok: false, why: `no segment ${JSON.stringify(segment_index ?? null)}` };
+  if (seg.trust !== "user") return { ok: false, why: `segment ${segment_index} is not the user's` };
+  if (Number.isInteger(from) && segment_index < from) return { ok: false, why: `segment ${segment_index} comes before the question was asked` };
+  if (!Array.isArray(span) || span.length !== 2 || !Number.isInteger(span[0]) || !Number.isInteger(span[1]) ||
+      span[0] < 0 || span[0] >= span[1] || span[1] > seg.text.length) {
+    return { ok: false, why: `invalid span ${JSON.stringify(span ?? null)}` };
+  }
+  if (foldActionText(seg.text.slice(span[0], span[1])) !== foldActionText(quote)) return { ok: false, why: "the text at the span is not the quote" };
+  return { ok: true, located_at: { segment_index, span: [span[0], span[1]] } };
+}
+
+async function readUserReplies(h, instruction, history) {
+  const out = { userAnswers: {}, checklistAnswers: {}, valueApprovals: {}, forms: [], checks: [] };
+  if (!history.available) {
+    // Nothing shows what this unit was asked, so no reply can be matched to a question (fail-closed).
+    if (history.unlisted) {
+      out.checks.push({ id: "replies", kind: "answer", target: null, slot: null, status: "rejected", source: null,
+                        note: "storage cannot list this unit's records, so no reply can be matched to a question" });
+    }
+    return out;
+  }
+  if (history.asked.size === 0) return out;
+  const asked = [...history.asked.values()];
+  let failure = null;
+  const raw = await safeHook(h.readReplies, [instruction, asked.map(a => ({ ...a.question, asked_through: a.asked_through }))],
+    e => { failure = e?.message ?? String(e); return undefined; });
+  const entry = (target, extra) => ({ id: `${target}:answer`, kind: "answer", target,
+    slot: history.asked.get(target)?.question?.slot ?? null, item: history.asked.get(target)?.question?.id ?? null, ...extra });
+  if (failure !== null) {
+    out.checks.push({ id: "replies", kind: "answer", target: null, slot: null, status: "unverified", source: null,
+                      note: `readReplies failed: ${failure}` });
+    return out;
+  }
+  if (raw === undefined) return out;
+  if (raw?.none === "absent") {
+    out.checks.push({ id: "replies", kind: "answer", target: null, slot: null, status: "checked", source: "instruction",
+                      note: "no reply to the questions asked" });
+    return out;
+  }
+  if (!Array.isArray(raw)) {
+    out.checks.push({ id: "replies", kind: "answer", target: null, slot: null, status: "unverified", source: null,
+                      note: "readReplies returned neither a list nor { none: \"absent\" }" });
+    return out;
+  }
+  // The latest located answer per target wins: a user may change their mind. Two different answers in
+  //   one segment say both, and neither counts.
+  const valid = new Map();   // target → located claims
+  for (const c of raw) {
+    const target = typeof c?.target === "string" ? c.target : null;
+    const reject = why => out.checks.push(entry(target ?? "(none)", { status: "rejected", source: "user_answer", note: why }));
+    const a = target ? history.asked.get(target) : null;
+    if (!a) { reject(`${JSON.stringify(target)} was not asked in this unit`); continue; }
+    const q = a.question;
+    const isNone = c?.none === "absent";
+    if (!isNone && typeof c?.answer !== "boolean") { reject("not an answer: { answer: true|false } or { none: \"absent\" }"); continue; }
+    if (isNone && q.kind !== "value") { reject("only a value question can be answered with \"there is none\""); continue; }
+    if (!isNone && c.answer === true && q.kind === "value" && !q.candidate) { reject("nothing was shown to approve for this value"); continue; }
+    const loc = checkLocatedQuote(c, instruction, a.asked_through);
+    if (!loc.ok) { reject(loc.why); continue; }
+    valid.set(target, [...(valid.get(target) ?? []), { target, q, answer: isNone ? null : c.answer, none: isNone, located_at: loc.located_at }]);
+  }
+  const accepted = new Map();
+  for (const [target, claims] of valid) {
+    const last = Math.max(...claims.map(c => c.located_at.segment_index));
+    const atLast = claims.filter(c => c.located_at.segment_index === last);
+    const same = atLast.every(c => c.answer === atLast[0].answer && c.none === atLast[0].none);
+    accepted.set(target, same ? atLast[0] : { conflict: true, located_at: atLast[0].located_at, q: atLast[0].q });
+  }
+  for (const [target, c] of accepted) {
+    if (c.conflict) {
+      out.checks.push(entry(target, { status: "rejected", source: "user_answer", located_at: c.located_at,
+                                      note: "the reply says both yes and no in one place" }));
+      continue;
+    }
+    const q = c.q;
+    out.checks.push(entry(target, { status: "checked", source: "user_answer", located_at: c.located_at,
+      answer: c.none ? "none" : c.answer }));
+    if (q.kind === "value") {
+      if (c.none) out.userAnswers[q.slot] = { none: "absent" };
+      else if (c.answer === true) {
+        out.userAnswers[q.slot] = q.candidate.value;
+        out.valueApprovals[q.slot] = { answer: true, shown: { [q.slot]: q.candidate.value }, located_at: c.located_at };
+      }
+    } else if (q.kind === "approve") {
+      out.checklistAnswers[q.id] = { answer: c.answer, shown: q.shown ?? {}, rule_hash: q.rule_hash ?? null,
+                                     located_at: c.located_at };
+    } else if (q.kind === "confirm_form") {
+      out.forms.push({ question: q, answer: c.answer, located_at: c.located_at });
+    }
   }
   return out;
 }
@@ -1594,6 +1796,7 @@ async function withConfirmedForm(h, item, { declared_by, tool, userId, mcpTool }
   if (!needs) return item;
   const wording = declared_by === "user" ? item.stated_as : item.description;
   const keyLabel = declared_by === "user" ? "" : item.label;
+  if (declared_by === "provider") return withTranslatedForm(h, item, { tool, wording, label: keyLabel, mcpTool });
   const key = formApprovalKey({ declared_by, tool, userId, label: keyLabel, wording });
   const approval = await loadFormApproval(h, key);
   if (approval) {
@@ -1623,6 +1826,42 @@ async function withConfirmedForm(h, item, { declared_by, tool, userId, mcpTool }
     constrains: Array.isArray(proposal?.constrains) ? proposal.constrains : (item.constrains ?? []),
     compare: null,
     form_pending: { key },
+  };
+}
+
+// A provider line in its translated form ([TRANSLATED FORMS]): the kept translation, or a new one written
+//   now and kept. Never pending: the line is compared in this run, or it is unverified (form_untranslated).
+async function withTranslatedForm(h, item, { tool, wording, label, mcpTool }) {
+  const key = formTranslationKey({ tool, label, wording });
+  const untranslated = why => ({ ...item, compare: null, form_untranslated: { key, why } });
+  const stored = await loadFormTranslation(h, key);
+  if (stored?.unavailable) return untranslated("storage cannot list records, so a translation cannot be kept for this line");
+  let rec = stored;
+  if (!rec) {
+    let failure = null;
+    const proposed = await safeHook(h.proposeComparableForm,
+      [{ declared_by: "provider", label, wording, mcpTool, constrains: item.constrains ?? [] }],
+      e => { failure = e?.message ?? String(e); return undefined; });
+    if (failure !== null) return untranslated(`the translation failed: ${failure}`);
+    if (!proposed || typeof proposed !== "object" || Array.isArray(proposed)) return untranslated("no form was proposed for this line");
+    const form = { compare: proposed.compare, constrains: proposed.constrains ?? [] };
+    const bad = validateForm({ declared_by: "provider", label }, form);
+    if (bad) return untranslated(bad);
+    rec = {
+      kind: FORM_TRANSLATION_KIND, key, tool: tool ?? null, label: label ?? "", wording,
+      line_hash: ruleHash(`[${label ?? ""}] ${wording}`), form, status: "translated",
+      translated_by: typeof proposed.by === "string" && proposed.by !== "" ? proposed.by : null, at: h.now(),
+    };
+    await h.storage.persist(key, rec);
+  } else if (validateForm({ declared_by: "provider", label }, rec.form)) {
+    return untranslated(`the kept translation does not fit the line: ${validateForm({ declared_by: "provider", label }, rec.form)}`);
+  }
+  return {
+    ...item,
+    compare: rec.form.compare,
+    constrains: Array.isArray(rec.form.constrains) ? rec.form.constrains : [],
+    form_translation: { key, translated_by: rec.translated_by ?? null, at: rec.at ?? null, new: !stored,
+                        text: describeForm(rec.form, label) },
   };
 }
 
@@ -1666,17 +1905,18 @@ function describeForm(form, label) {
     : `a check that names no value to compare: ${stableJson(c)}`;
 }
 
-// [CONFIRMED FORMS] for the adopting system: each labelled line of a tool's description with the form
-//   confirmed for it, or null. The same lookup the gate makes, so an adopter can see — before a run — which
-//   measurements the confirmed forms read, without keeping its own copy of them.
-async function readConfirmedForms(storage, mcpTool) {
+// [TRANSLATED FORMS] for the adopting system: each labelled line of a tool's description with the form
+//   kept for it, or null when it has not been translated yet. The same lookup the gate makes, so the forms
+//   can be read and audited outside a run.
+async function readTranslatedForms(storage, toolDefinition) {
   const h = { storage };
   const out = [];
-  for (const l of labelledLines(mcpTool?.description)) {
-    const key = formApprovalKey({ declared_by: "provider", tool: mcpTool?.name ?? null, label: l.label, wording: l.text });
-    const approval = await loadFormApproval(h, key);
-    out.push({ label: l.label, wording: l.text, key, form: approval?.form ?? null,
-               text: approval?.form ? describeForm(approval.form, l.label) : null });
+  for (const l of labelledLines(toolDefinition?.description)) {
+    const key = formTranslationKey({ tool: toolDefinition?.name ?? null, label: l.label, wording: l.text });
+    const t = await loadFormTranslation(h, key);
+    const rec = t && !t.unavailable ? t : null;
+    out.push({ label: l.label, wording: l.text, key, form: rec?.form ?? null, translated_by: rec?.translated_by ?? null,
+               text: rec?.form ? describeForm(rec.form, l.label) : null });
   }
   return out;
 }
@@ -1714,6 +1954,18 @@ async function recordFormDecision(h, request, { form, approved_by, revoked_by },
   if (typeof request.wording !== "string" || request.wording.trim() === "") throw new Error("form approval: request.wording is required");
   const by = status === "approved" ? approved_by : revoked_by;
   if (typeof by !== "string" || by.trim() === "") throw new Error(`form approval: ${status === "approved" ? "approved_by" : "revoked_by"} is required`);
+  if (request.declared_by === "provider") {
+    if (status === "approved") {
+      throw new Error("form approval: a provider line is not approved — the gate translates it and records the form it compares (form_translation)");
+    }
+    // Dropping a translation: the next run translates the line again.
+    const key = formTranslationKey({ tool: request.tool, label: request.label, wording: request.wording });
+    const record = { kind: FORM_TRANSLATION_KIND, key, tool: request.tool ?? null, label: request.label ?? "",
+      wording: request.wording, line_hash: ruleHash(`[${request.label ?? ""}] ${request.wording}`), form: null,
+      status: "revoked", revoked_by, at: h.now() };
+    await h.storage.persist(key, record);
+    return record;
+  }
   if (status === "approved") {
     const bad = validateForm(request, form);
     if (bad) throw new Error(`form approval: ${bad}`);
@@ -1809,6 +2061,11 @@ function pendingFormNote(it) {
     : "no confirmed comparison form yet; whoever declared it confirms one (3.3)";
 }
 
+// Why a provider line is not compared.
+function untranslatedNote(c) {
+  return `the line could not be put into a comparable form: ${c?.form_untranslated?.why ?? "no reason recorded"}`;
+}
+
 // What the gate shows with an approval question: the item's version and the values it is about.
 function approvalPrompt(item, fieldsByName) {
   const shown = {};
@@ -1863,18 +2120,18 @@ async function runPreflight(h, input) {
 //   specification exists to rule out, so it is absent rather than carried unread.
 //   A policy that must gate execution is declared as a checklist item: it becomes a slot and is
 //   compared like any other.
-async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, fixedPreSet, user_action_name, measured_data, priorExecutionState, userChecklist, userAnswers, checklistAnswers: checklistAnswersIn, intent_attempt, tool_attempt, ask_attempt, lookup_attempt, checklist_digest_at_instruction }) {
+async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mcpToolIn, preSetData, fixedPreSet, user_action_name, measured_data: measuredIn, priorExecutionState, userChecklist, userAnswers: userAnswersIn, checklistAnswers: checklistAnswersIn, intent_attempt, tool_attempt, ask_attempt, lookup_attempt, checklist_digest_at_instruction }) {
   // Each item carries the version it is judged under (6.1), written by the gate, over anything the
   //   caller put there: its label, its wording, its comparison form.
   //   Reassigned once below, when the conditions the user stated in this instruction join it (4.4).
   const withUserHash = items => items.map(i => (i && typeof i === "object" && !Array.isArray(i))
     ? { ...i, rule_hash: itemRuleHash(i, i.stated_as ?? i.description) } : i);
   let checklist = withUserHash(userChecklist ?? []);
-  // The user's answers to approval questions, as given. Each is bound to what it approved before it
-  //   counts ([APPROVAL BINDING]); hooks only ever see the ones that hold.
-  //   Only the answers to questions this unit was actually asked count ([UNIT HISTORY]); the rest are
-  //   dropped before anything reads them.
-  let checklistAnswers = checklistAnswersIn;
+  // The user's answers, read by the gate from the user's own words ([REPLIES]): approvals of items, and
+  //   values the user approved. Each approval is bound to what it approved before it counts ([APPROVAL
+  //   BINDING]); hooks only ever see the ones that hold.
+  let checklistAnswers = {};
+  let userAnswers = {};
   // Ceilings on the two resolution routes that can be retried (4.5: asking the user and the system
   //   lookup both have one; the adopting system sets it). Counted by the gate from this unit's own
   //   records ([UNIT HISTORY]); the caller's count is read too, and the larger one counts — a caller
@@ -1928,9 +2185,46 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     };
   }
 
+  // Step 0-c: inputs that are no longer accepted. Refused, not ignored — ignored, a caller that relies on
+  //   them sees its runs change with nothing saying why.
+  //   mcpTool        the gate reads the tool's definition itself, from the provider ([TOOL DEFINITION])
+  //   measured_data  the gate measures when it needs a value, with what it has settled ([MEASURE])
+  //   userAnswers / checklistAnswers  a reply is the user's words, appended to the instruction ([REPLIES])
+  const retired = [
+    ...(mcpToolIn !== undefined ? ["mcpTool (the gate reads the definition through readToolDefinition)"] : []),
+    ...(measuredIn !== undefined ? ["measured_data (the gate measures through measure, with the values it settled)"] : []),
+    ...(userAnswersIn !== undefined ? ["userAnswers (a reply is the user's words in the instruction)"] : []),
+    ...(checklistAnswersIn !== undefined ? ["checklistAnswers (an approval is the user's words in the instruction)"] : []),
+  ];
+  if (retired.length > 0) {
+    return {
+      fixed: null, action_key: null, phase: null, fields: null, advisory_notes: "", user_checklist: checklist,
+      unknown_count: null, unverified_checklist_count: null,
+      provider_checklist: null, unverified_provider_count: null,
+      gate: null,
+      execution_decision: "definition_repair",
+      reason: `definition_repair: no longer accepted — ${retired.join("; ")}`,
+      timestamp: h.now(),
+    };
+  }
+  // The tool call the model made. The gate runs on it: which tool, from its name; what the model put in
+  //   its arguments is recorded and never read as a value (5.2: a value the model read is not a source).
+  if (!toolCall || typeof toolCall !== "object" || typeof toolCall.name !== "string" || toolCall.name === "") {
+    return {
+      fixed: null, action_key: null, phase: null, fields: null, advisory_notes: "", user_checklist: checklist,
+      unknown_count: null, unverified_checklist_count: null,
+      provider_checklist: null, unverified_provider_count: null,
+      gate: null,
+      execution_decision: "definition_repair",
+      reason: "definition_repair: toolCall.name is required — the gate runs on the tool call the model made",
+      timestamp: h.now(),
+    };
+  }
+  const tool_call = { name: toolCall.name, arguments: toolCall.arguments ?? null };
+
   // Step 1: settle Fixed. Hook failures do not throw — they come back as issues.
   //   BREAKS: move this later and later returns record no action_key, severing the lineage.
-  const { fixed, issues: fixedIssues } = await resolveFixedChecklist(h, instruction, mcpTool);
+  const { fixed, issues: fixedIssues } = await resolveFixedChecklist(h, instruction, { name: toolCall.name });
 
   // Step 1-a: intent gate. C1 and C2 share one ceiling — same remedy (restate), so separate counters would
   //   allow INTENT_ATTEMPT_LIMIT asks per slot.
@@ -1939,6 +2233,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     const exhausted = attempt >= INTENT_ATTEMPT_LIMIT;
     return {
       fixed,                    // Recorded with nulls in the unsettled slots. Never a substituted value
+      tool_call,
       action_key: null,         // buildActionKey needs C2 — no lineage. Lands under UNKEYED_RECORD_KEY
       phase: null,              // C1 undecided means phase is undecided. Not defaulted
       fields: null,
@@ -1985,7 +2280,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     e => { keyFailure = e?.message ?? String(e); return null; });
   if (keyFailure !== null) {
     return {
-      fixed, action_key: null, phase,
+      fixed, tool_call, action_key: null, phase,
       fields: null, extra_fields: null,
       advisory_notes: "",
       user_checklist: checklist,
@@ -2002,9 +2297,8 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   // [UNIT HISTORY] This unit's own records, read from storage under its key: what it was asked, and how
   //   many times each route was tried. 4.5: a route that reached its ceiling has finished and is not
   //   tried again — so the count is the gate's, from the record, not a number the caller hands back.
-  //   And 4.6: the model asks, code judges, and an answer is looked up again as user_answer — an
-  //   answer to a question the gate never asked is not an answer, whatever it says.
-  //   Read with storage.list. A storage without it cannot show what was asked: every answer is refused
+  //   And 4.6: the model asks, code judges — a reply counts only for a question the gate asked ([REPLIES]).
+  //   Read with storage.list. A storage without it cannot show what was asked: no reply counts
   //   (fail-closed) and the counts are the caller's.
   //   CONTRACT: the key is the unit's across rounds. A key unique per round shows the gate a unit that
   //   was never asked anything.
@@ -2014,35 +2308,63 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     lookupAttempt = Math.max(lookupAttempt, history.lookup_attempts);
     toolAttempt = Math.max(toolAttempt, history.tool_attempts);
   }
-  const answerChecks = [];
-  const unasked = why => ({ status: "rejected", source: "user_answer", note: why });
-  const noHistory = "storage cannot list this unit's records, so no answer can be matched to a question";
-  const heldUserAnswers = {};
-  const refusedUserAnswers = new Set();
-  for (const [slot, v] of Object.entries(userAnswers ?? {})) {
-    if (history.available && history.asked_slots.has(slot)) { heldUserAnswers[slot] = v; continue; }
-    refusedUserAnswers.add(slot);
-    answerChecks.push({ id: `${slot}:answer`, kind: "answer", slot,
-      ...unasked(history.available ? `${slot} was not asked for in this unit` : noHistory) });
+
+  // [TOOL DEFINITION] Read now, from the provider, for the tool the model called. Everything below —
+  //   the provider's lines, the slots, the formats — comes from this definition and nothing else.
+  let defFailure = null;
+  const definition = await safeHook(h.readToolDefinition, [toolCall.name],
+    e => { defFailure = e?.message ?? String(e); return undefined; });
+  const defProblem = defFailure !== null ? defFailure
+    : (!definition || typeof definition !== "object" || Array.isArray(definition)) ? "no definition was returned"
+    : definition.name !== toolCall.name ? `the definition returned is for ${JSON.stringify(definition.name ?? null)}, not ${JSON.stringify(toolCall.name)}`
+    : null;
+  if (defProblem !== null) {
+    return {
+      fixed, tool_call, action_key, phase,
+      fields: null, extra_fields: null,
+      advisory_notes: "",
+      user_checklist: checklist,
+      unknown_count: null, unverified_checklist_count: null,
+      provider_checklist: null, unverified_provider_count: null,
+      call_arguments: null,
+      gate: { kind: "tool_definition_unread", _diag: { detail: defProblem } },
+      execution_decision: "definition_repair",
+      reason: `definition_repair: tool definition not read (${defProblem})`,
+      timestamp: h.now(),
+    };
   }
-  userAnswers = heldUserAnswers;
-  if (checklistAnswers && typeof checklistAnswers === "object") {
-    const held = {};
-    for (const [id, v] of Object.entries(checklistAnswers)) {
-      if (history.available && history.asked_items.has(id)) { held[id] = v; continue; }
-      answerChecks.push({ id: `${id}:answer`, kind: "answer", slot: null, item: id,
-        ...unasked(history.available ? `${id} was not asked about in this unit` : noHistory) });
+  const mcpTool = definition;
+  // Which definition this verdict was made under (6.1): the whole of it, and the input schema alone.
+  const schemaHash = ruleHash(stableJson(mcpTool.inputSchema ?? null));
+  const tool_definition = { name: mcpTool.name,
+    hash: ruleHash(stableJson({ description: mcpTool.description ?? null, inputSchema: mcpTool.inputSchema ?? null })),
+    schema_hash: schemaHash };
+  const toolFacts = { tool_call, tool_definition };
+
+  // [REPLIES] What the user's words say about the questions this unit asked. A form the user confirmed
+  //   is kept now, so the condition is compared in it in this run.
+  const replies = await readUserReplies(h, instruction, history);
+  userAnswers = replies.userAnswers;
+  checklistAnswers = replies.checklistAnswers;
+  const answerChecks = [...replies.checks];
+  for (const f of replies.forms) {
+    if (f.answer !== true) continue;
+    const q = f.question;
+    try {
+      await recordFormDecision(h, { declared_by: "user", tool: mcpTool.name, user_id: userId ?? null, label: "",
+        wording: q.wording }, { form: q.form, approved_by: `user:${userId ?? ""}` }, "approved");
+    } catch (e) {
+      answerChecks.push({ id: `${q.target}:confirm`, kind: "answer", target: q.target, slot: null, item: q.id ?? null,
+        status: "unverified", source: null, note: `the confirmed form could not be kept: ${e?.message ?? String(e)}` });
     }
-    checklistAnswers = held;
   }
 
   // [CORE] Step 1-0: Tool determination gate. Must sit above getRequiredFields/getAdvisoryNotes.
   //   The verdict is the hook's; everything around it is not. Reaching lookupField at all depends on this.
   //   BREAKS: move it lower and an undetermined Tool's required/description ride into the gate.
-  // [CALLER CONTRACT] mcpTool arrives already selected; there is no selection hook here, and c3 only records
-  //   mcpTool.name. Order owed by the caller: settle C2, then select the Tool from it. Selected earlier,
-  //   this gate is validating a guess. A contract, not a guarantee — the gate refuses a Tool without ever
-  //   learning how it was chosen.
+  // [CALLER CONTRACT] The tool arrives already selected — the model called it (toolCall) — and the gate
+  //   read its definition above. There is no selection hook here, and c3 only records toolCall.name. The
+  //   gate checks the selection against C2, the act the user named; it never learns how it was chosen.
   // The record decides when it names this C2 (4.1.1); otherwise the hook judges. C2 itself never comes
   //   from the record — it was settled from the user's words above, or this line is not reached.
   const fromRecord = matchFromUserActionName(fixed.c2_user_action_name, mcpTool?.name ?? null, user_action_name);
@@ -2068,7 +2390,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     //   _diag.candidate_tool across attempts under one action_key, which happens outside.
     const toolExhausted = toolAttempt >= TOOL_ATTEMPT_LIMIT;
     return {
-      fixed, action_key, phase,
+      fixed, ...toolFacts, action_key, phase,
       fields: null,
       advisory_notes: "",              // Do not carry an undetermined Tool's description
       user_checklist: checklist,       // Echo of the raw input. Not a verification result
@@ -2089,8 +2411,9 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
           attempt: toolAttempt, limit: TOOL_ATTEMPT_LIMIT,
         },
       },
-      // ask_user re-entry: raise tool_attempt and call again with a REPLACED mcpTool. The user's restatement
-      //   feeds the reselection; it is not an answer to attach to a field.
+      // ask_user re-entry: raise tool_attempt and call again with the model's NEW tool call. The user's
+      //   restatement feeds the reselection; it is not an answer to attach to a field. A different tool is
+      //   a different unit (its own key), and the records of this one stay as they are.
       // exhausted: leave the skeleton; settle it in conversation. Re-entry is a NEW request at attempt 0.
       //   POLICY: the caller carries the count. Resetting it every turn restores the loop this ceiling stops.
       execution_decision: toolExhausted ? "exhausted" : "ask_user",
@@ -2114,10 +2437,11 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   //   hook that returns a non-array would otherwise put null in provider_checklist, which already means
   //   "no decision made". Two meanings on one value is how a record stops being readable.
   //   Each carries its version (6.1), written by the gate.
-  // [CONFIRMED FORMS] A labelled line read from the description is compared only in the form its
-  //   declarer confirmed (4.2.1, 3.3). The gate looks the confirmation up itself; a line without one
-  //   is pending, and the request to confirm it — with a proposed form, if a model wrote one — goes
-  //   back in gate.form_approvals. [Notice] needs no form: there is nothing to compare.
+  // [TRANSLATED FORMS] A labelled line read from the description is compared only in a comparable form
+  //   (4.2.1, 3.3): the translation kept for its words, or one a model writes now and the gate keeps. A
+  //   line that cannot be translated is unverified (definition_repair). [Notice] needs no form.
+  //   The user's own conditions are still confirmed by the user ([CONFIRMED FORMS]): their requests go
+  //   back in gate.form_approvals and are asked in conversation.
   const formRequests = [];
   const providerConditions = [];
   for (const c of (Array.isArray(rawProviderConditions) ? rawProviderConditions : [])) {
@@ -2149,9 +2473,11 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   //   changed does not count: each approval is bound to the version of its item ([APPROVAL BINDING]),
   //   so the approvals of the changed items are voided and the others stand. The values the user gave
   //   are kept: a value is the user's statement, not a verdict, and every check on it runs again here.
+  //   The input schema is part of it: a format or a required value the provider changed is a changed rule.
   const checklist_digest = ruleHash([
     ...providerConditions.map(c => `p:${c?.rule_hash ?? ""}`),
     ...checklist.map(i => `u:${i?.rule_hash ?? ""}`),
+    `s:${schemaHash}`,
   ].sort().join("\n"));
   const checklistChanged = typeof checklist_digest_at_instruction === "string" &&
     checklist_digest_at_instruction !== checklist_digest;
@@ -2164,13 +2490,103 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   // [VALUE SOURCE] Who may give each slot's value, from the conditions that say so.
   const sourceRules = valueSourceRules(providerConditions);
 
-  const ctx = { userAnswers, checklistAnswers, instruction, preSetData, measured_data, priorExecutionState,
+  // [MEASURE] Every measurement of this round goes through here: the port is called with the values
+  //   settled so far, and each call is recorded (measurements). The same measurement with the same
+  //   settled values is read once per round; nothing is carried to the next round.
+  const measurements = [];
+  const measureCache = new Map();
+  const settledValues = {};
+  async function measureNow(name, values) {
+    const args = { values: { ...values }, userId: userId ?? null, tool: mcpTool.name };
+    const cacheKey = `${name}\u0000${stableJson(args.values)}`;
+    if (measureCache.has(cacheKey)) return measureCache.get(cacheKey);
+    const out = await safeHook(h.measure, [name, args], lookupFailed("measured_data"));
+    const none = noneReport(out);
+    measurements.push({
+      name, with: Object.keys(args.values).sort(),
+      result: out?.[LOOKUP_HOOK_FAILED] ? "failed" : out === undefined ? "no_report"
+        : none ? (none === "malformed" ? "rejected" : none)
+        : out?.valid === true ? "found" : out?.valid === false ? "cannot_answer" : "rejected",
+      ...(out?.valid === true && !none ? { value: out.value } : {}),
+      ...(out?.[LOOKUP_HOOK_FAILED] ? { note: out.detail } : {}),
+    });
+    measureCache.set(cacheKey, out);
+    return out;
+  }
+
+  const ctx = { userAnswers, checklistAnswers, instruction, preSetData, priorExecutionState,
                 userChecklist: checklist,   // read by resolveField: does a range exist for a slot settled at execution (3.3)
                 phase,   // The basis for applyFieldPolicy's per-phase judgment
                 fieldSchemas: mcpTool?.inputSchema?.properties ?? {},
                 sourceRules,
-                refusedAnswers: refusedUserAnswers,   // answers to questions this unit was not asked
+                valueApprovals: replies.valueApprovals,   // the user's yes to a value shown, bound to it
+                measure: name => measureNow(name, settledValues),
                 mcpTool };
+
+  // [QUESTIONS] What the model is given to ask the user, when the decision is ask_user. The model writes
+  //   the question, in conversation, from this list and the provider's lines about each value; the user
+  //   answers in words ([REPLIES]). Three kinds, each with a target the reply names:
+  //     value         a blank. With a candidate when there is one — a model's reading of the user's words
+  //                   in the slot's declared form (proposeValue), or a value from an earlier execution —
+  //                   shown for the user to approve. A candidate that fails the slot's format is not shown
+  //                   (value_checks, kind "candidate").
+  //     approve       an item the user approves, for the values shown with it
+  //     confirm_form  a condition the user stated, shown with what it would check, for the user to confirm
+  //   question_block is what code writes for the user to see with the model's question: each value as it
+  //   will be used, rendered by code ([RENDERED VALUES]). A yes approves exactly what was shown there.
+  async function buildQuestions({ askFields, approveItems, formItems }) {
+    const questions = [], block = [], checks = [];
+    for (const f of askFields) {
+      const schema = ctx.fieldSchemas?.[f.name];
+      const lines = providerConditions
+        .filter(c => c && typeof c === "object" &&
+          (valueSourceRule(c)?.slot === f.name || (Array.isArray(c.constrains) && c.constrains.includes(f.name))))
+        .map(c => ({ id: c.id ?? null, label: c.label ?? null, text: c.description ?? null }));
+      let proposal, from = null;
+      if (f.prior_candidate) { proposal = f.prior_candidate.value; from = "prior_state"; }
+      else {
+        let failure = null;
+        const p = await safeHook(h.proposeValue, [f.name, instruction, schema ?? null],
+          e => { failure = e?.message ?? String(e); return undefined; });
+        if (failure !== null) {
+          checks.push({ id: `${f.name}:candidate`, kind: "candidate", slot: f.name, status: "rejected", source: null,
+                        note: `proposeValue failed: ${failure}` });
+        } else if (p && typeof p === "object" && "value" in p) { proposal = p.value; from = "model"; }
+      }
+      let candidate = null;
+      if (from !== null) {
+        const v = schema === undefined || schema === null ? null
+          : await safeHook(h.validateFieldSchema, [proposal, schema, ctx, f.name], e => ({ unverified: e?.message ?? String(e) }));
+        if (v === null || v === undefined) {
+          candidate = { value: proposal, from, shown_text: renderValue(proposal, schema) };
+          checks.push({ id: `${f.name}:candidate`, kind: "candidate", slot: f.name, status: "checked",
+                        source: from === "prior_state" ? "prior_state" : null, note: "shown to the user to approve" });
+        } else {
+          checks.push({ id: `${f.name}:candidate`, kind: "candidate", slot: f.name, status: "rejected", source: null,
+            note: typeof v === "string" ? `not shown: ${v}`
+              : `not shown: its format could not be checked (${v?.unverified ?? "unreadable reply"})` });
+        }
+      }
+      questions.push({ target: `value:${f.name}`, kind: "value", slot: f.name, schema: schema ?? null, lines,
+                       ...(candidate ? { candidate } : {}) });
+      block.push(candidate ? `${f.name} = ${candidate.shown_text}` : `${f.name}: not given yet`);
+    }
+    for (const it of approveItems) {
+      const shown = it.approve?.shown ?? {};
+      const shown_text = Object.fromEntries(Object.entries(shown).map(([k, v]) => [k, renderValue(v, ctx.fieldSchemas?.[k])]));
+      questions.push({ target: `approve:${it.id}`, kind: "approve", id: it.id, label: it.label ?? null,
+                       description: it.description ?? null, shown, shown_text, rule_hash: it.approve?.rule_hash ?? null });
+      const vals = Object.entries(shown_text).map(([k, v]) => `${k} = ${v}`).join(", ");
+      block.push(`${it.description ?? it.id}${vals ? ` — for ${vals}` : ""}`);
+    }
+    for (const r of formItems) {
+      questions.push({ target: `form:${r.item_id}`, kind: "confirm_form", id: r.item_id, wording: r.wording,
+                       form: r.proposal, text: r.proposal_text, key: r.key });
+      block.push(`"${r.wording}" — will be checked like this: ${r.proposal_text}`);
+    }
+    return { questions, block, checks };
+  }
+  const askedThrough = Array.isArray(instruction) ? instruction.length : 0;
 
   // Step 2-a: candidate slots. The superset the lookup may try, not the slot list.
   let candidateFailure = null;
@@ -2179,7 +2595,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   if (!Array.isArray(candidates)) {
     // An unreadable schema is not a tool with no arguments.
     return {
-      fixed, action_key, phase,
+      fixed, ...toolFacts, measurements, action_key, phase,
       fields: null, extra_fields: null,
       advisory_notes: advisoryNotes,
       user_checklist: checklist,
@@ -2199,8 +2615,28 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   // Step 3: per-field lookup chain → Known/Unknown records. Common to both phases.
   //   BREAKS: skip it for non-immediate work and a missing value surfaces at trigger time, with nobody to ask.
   // Sequential on purpose: parallel fires one LLM/measurement call per field at once (rate limits, cost).
+  //   [MEASURE] Slots are looked up in an order that lets a measurement use the values settled before it
+  //   ("the contact of the buyer on the listing the user named"): first the slots a measurement may not
+  //   settle, then those it may settle alongside the user's own sources, then those only the system
+  //   gives. Within each group, the schema's order.
+  const rankOf = async name => {
+    const declared = await safeHook(h.getAllowedSources, [name, mcpTool], () => null);
+    const rule = sourceRules.get(name);
+    const allowed = [...allowedSourceSet(declared)].filter(x => !rule || rule.sources.has(x));
+    if (!allowed.includes("measured_data")) return 0;
+    return allowed.every(x => x === "measured_data" || x === "prior_state") ? 2 : 1;
+  };
+  const ranks = new Map();
+  for (const n of candidates) ranks.set(n, await rankOf(n));
+  const lookupOrder = [...candidates].sort((a, b) => ranks.get(a) - ranks.get(b));
   const resolvedAll = [];
-  for (const fieldName of candidates) resolvedAll.push(await resolveField(h, fieldName, ctx));
+  for (const fieldName of lookupOrder) {
+    const f = await resolveField(h, fieldName, ctx);
+    if (f.status === "known") settledValues[fieldName] = f.value;
+    resolvedAll.push(f);
+  }
+  // Back in the schema's order, so the record reads as before.
+  resolvedAll.sort((a, b) => candidates.indexOf(a.name) - candidates.indexOf(b.name));
 
   // Step 3-0: materialize the slot list. Only names that came back known are handed over.
   const groundedNames = resolvedAll.filter(f => f.status === "known").map(f => f.name);
@@ -2209,7 +2645,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
 
   if (!slotSet || slotSet.status === "unsupported") {
     return {
-      fixed, action_key, phase,
+      fixed, ...toolFacts, measurements, action_key, phase,
       fields: null,                 // No slot decision was made. Distinct from []
       extra_fields: resolvedAll,
       advisory_notes: advisoryNotes,
@@ -2232,7 +2668,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     // NOTE: no ceiling here, same as the value gate. See [Re-ask ceiling] in APPENDIX.
     const conflict = slotSet.status === "branch_conflict";
     return {
-      fixed, action_key, phase,
+      fixed, ...toolFacts, measurements, action_key, phase,
       fields: null,
       extra_fields: resolvedAll,
       advisory_notes: advisoryNotes,
@@ -2303,18 +2739,24 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     const pendingCount = unknownNow.length - blocking.length - repairNow.length;
     const askExhaustedNow = askAttempt >= h.limits.ask;
     // Confirming a form is a declaration-time act (3.3), so it is settled now, while the user is here:
-    //   the user's conditions ask, the provider's unconfirmed lines are a gap waiting will not fill.
+    //   the user's conditions ask; a provider line that could not be translated is a gap waiting will
+    //   not fill.
     const userFormsNow = checklist.filter(i => i?.form_pending);
-    const providerFormsNow = providerConditions.filter(c => c?.form_pending);
+    const providerFormsNow = providerConditions.filter(c => c?.form_untranslated);
 
     if (blocking.length > 0 || repairNow.length > 0 || valueCheckRepair.length > 0 ||
         userFormsNow.length > 0 || providerFormsNow.length > 0) {
       const decision = (repairNow.length || valueCheckRepair.length || providerFormsNow.length) ? "definition_repair"
         : askExhaustedNow ? "exhausted" : "ask_user";
+      const asked = decision === "ask_user"
+        ? await buildQuestions({ askFields: blocking, approveItems: [],
+            formItems: formRequests.filter(r => r.proposal && userFormsNow.some(i => i.id === r.item_id)) })
+        : null;
+      if (asked) value_checks.push(...asked.checks);
       // Block the scheduling itself (fail-closed). This is the last moment the user is present.
       // POLICY: can be changed to "schedule anyway, flagged unresolved" — a choice that accepts failure at trigger time.
       return {
-        fixed, action_key, phase, fields, extra_fields,
+        fixed, ...toolFacts, measurements, action_key, phase, fields, extra_fields,
         advisory_notes: advisoryNotes,
         user_checklist: checklist,        // Raw input. Not verified at this phase
         unknown_count: unknownNow.length, // Total (including pending). gate is authoritative for what blocks
@@ -2333,7 +2775,8 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
           ...(formRequests.length ? { form_approvals: formRequests } : {}),
           ...(providerFormsNow.length ? {
             ...((failedNow.length || gapsNow.length) ? {} : { kind: "definition_repair" }),
-            definition_repair: providerFormsNow.map(c => ({ id: c.id, label: c.label, description: c.description, note: pendingFormNote(c) })),
+            definition_repair: providerFormsNow.map(c => ({ id: c.id, label: c.label, description: c.description,
+              note: untranslatedNote(c) })),
           } : {}),
           ...(failedNow.length ? {
             kind: "lookup_failed",
@@ -2352,6 +2795,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
           ...(decision === "exhausted" ? { kind: "exhausted",
             exhausted: [{ route: "ask_user", attempt: askAttempt, limit: h.limits.ask, names: blocking.map(f => f.name) }] } : {}),
           next_ask_attempt: decision === "ask_user" ? askAttempt + 1 : (askExhaustedNow ? null : askAttempt),
+          ...(asked ? { questions: asked.questions, question_block: asked.block, asked_through: askedThrough } : {}),
           // Recorded, not blocking: these are answered at the trigger (see above).
           ...(systemNow.length ? { deferred_system_lookup: systemNow.map(f => f.name) } : {}),
           _diag: { phase, pending_at_trigger: pendingCount, lookup_failures: lookupFailures(fields) },
@@ -2373,7 +2817,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
     }
 
     return {
-      fixed, action_key, phase, fields, extra_fields,   // Actual decision results. For comparison at trigger time
+      fixed, ...toolFacts, measurements, action_key, phase, fields, extra_fields,   // Actual decision results. For comparison at trigger time
       advisory_notes: advisoryNotes,
       user_checklist: checklist,          // Carried unverified, as things to confirm at trigger time
       unknown_count: unknownNow.length,   // Only pending remains. May not be 0
@@ -2389,7 +2833,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       // The digest it was scheduled under goes with it, written by the gate after the hook, so the
       //   trigger run can tell whether the rules changed in between (6.1). A hook cannot drop it.
       deferred_input: {
-        ...(await h.buildDeferredInput({ instruction, mcpTool, preSetData, userChecklist: checklist, userAnswers, checklistAnswers }) ?? {}),
+        ...(await h.buildDeferredInput({ instruction, toolCall: tool_call, preSetData, userChecklist: checklist }) ?? {}),
         checklist_digest_at_instruction: checklist_digest,
       },
       timestamp: h.now(),
@@ -2523,12 +2967,12 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
       continue;
     }
 
-    // A labelled line with no confirmed form: nothing to compare yet. The provider confirms one, so it
-    //   is the provider's gap whatever the label (4.5c) — the user is not asked to approve a rule whose
-    //   form nobody has confirmed. The request is in gate.form_approvals.
-    if (cond.form_pending) {
+    // A labelled line that could not be put into a comparable form: nothing to compare. It is the
+    //   declaration's gap whatever the label (4.5c) — the user is not asked to approve a rule nobody can
+    //   compare ([TRANSLATED FORMS]).
+    if (cond.form_untranslated) {
       finalProviderChecklist.push({ ...base, status: "unverified", source: null, route: "definition_repair",
-        note: pendingFormNote(cond) });
+        note: untranslatedNote(cond) });
       continue;
     }
 
@@ -2601,7 +3045,17 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
           ? { status: "checked", source: "user_answer", approval: approval.approval, note: "the user approved it for the values shown" }
           : { status: "unmet", source: "user_answer", approval: approval.approval, note: "the user did not approve it for the values shown" };
       } else {
-        out = await safeHook(h.verifyProviderCondition, [cond, checklistCtx],
+        // [MEASURE] A form that names a measurement is measured now, with every value this round settled,
+        //   and the hook compares what came back (ctx.measurements). The hook never measures on its own.
+        const measureName = cond.compare?.source === "measured_data" && typeof cond.compare.measure === "string"
+          ? cond.compare.measure : null;
+        const condCtx = measureName
+          ? { ...checklistCtx, measurements: { [measureName]: await (async () => {
+              const m = await measureNow(measureName, settledValues);
+              return m?.[LOOKUP_HOOK_FAILED] ? { valid: false, failed: m.detail } : m;
+            })() } }
+          : { ...checklistCtx, measurements: {} };
+        out = await safeHook(h.verifyProviderCondition, [cond, condCtx],
           e => ({ status: "unverified", source: null, note: `provider condition hook failed: ${e?.message ?? String(e)}` }));
         if (approval && !approval.ok) out = { ...(out ?? {}), approval_voided: approval.why };
       }
@@ -2694,11 +3148,11 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   // NOTE: no per-Tool risk branching. delete_all_records and list_records pass the same gate.
   const gate = {
     // A slot with a prior_state candidate carries it, so the question can be "use this again?" — the
-    //   confirmation 5.2 requires. The answer comes back as user_answer; the candidate itself never settles.
+    //   confirmation 5.2 requires. The user's yes makes it user_answer; the candidate itself never settles.
     unknown_fields: unknownFields.map(f => ({ name: f.name, note: f.note ?? null,
       ...(f.prior_candidate ? { candidate: f.prior_candidate } : {}) })),
     // Each question says what answering it means: confirm a form (form_request), or approve the item
-    //   for the values shown (approve — send back { answer, shown, rule_hash } as checklistAnswers[id]).
+    //   for the values shown (approve). gate.questions is the same list, as the model is given it.
     unverified_checklist: unverifiedItems.map(i => ({ id: i.id, description: i.description, note: i.note ?? null,
       ...(i.form_pending ? { form_request: formRequests.find(r => r.item_id === i.id) ?? null }
                          : { approve: approvalPrompt(i, fieldsByName) }) })),
@@ -2875,6 +3329,20 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   gate.next_ask_attempt = execution_decision === "ask_user" ? askAttempt + 1 : (askExhausted ? null : askAttempt);
   gate.next_lookup_attempt = execution_decision === "system_lookup" ? lookupAttempt + 1
     : (lookupExhausted ? null : lookupAttempt);
+  if (execution_decision === "ask_user") {
+    const asked = await buildQuestions({
+      askFields: unknownFields,
+      approveItems: [
+        ...unverifiedItems.filter(i => !i.form_pending).map(i => ({ id: i.id, description: i.description ?? i.stated_as ?? null, approve: approvalPrompt(i, fieldsByName) })),
+        ...providerAsk.map(c => ({ id: c.id, label: c.label, description: c.description, approve: approvalPrompt(c, fieldsByName) })),
+      ],
+      formItems: formRequests.filter(r => r.proposal && unverifiedItems.some(i => i.form_pending && i.id === r.item_id)),
+    });
+    value_checks.push(...asked.checks);
+    gate.questions = asked.questions;
+    gate.question_block = asked.block;
+    gate.asked_through = askedThrough;
+  }
   if (execution_decision === "exhausted") {
     if (!gate.kind) gate.kind = "exhausted";
     gate.exhausted = [
@@ -2888,7 +3356,7 @@ async function runPreflightInner(h, { userId, instruction, mcpTool, preSetData, 
   }
 
   return {
-    fixed, action_key, phase, fields, extra_fields,
+    fixed, ...toolFacts, measurements, action_key, phase, fields, extra_fields,
     advisory_notes: advisoryNotes,   // Recorded only. Not part of the gate
     user_checklist: finalUserChecklist,
     provider_checklist: finalProviderChecklist,
@@ -2939,13 +3407,14 @@ function formatReason(execution_decision, gate) {
     (ds ? `, disclosures=${ds}` : "");
 }
 
-// [OPTIONAL] POLICY: preserve = intent at instruction time (instruction/userChecklist/userAnswers).
-//       re-fetch = reality at trigger time (mcpTool schema/preSetData).
-//       measured_data and checklistAnswers must not be preserved (stale measurements; conditions are a trigger-time decision).
-// NOTE: preserving is freezing. user_answer is the first source and beats the measurement at trigger time.
+// [OPTIONAL] POLICY: preserve = intent at instruction time (the instruction — the conversation, replies
+//       included — the user checklist, and the tool call). re-fetch = reality at trigger time (the tool's
+//       definition, preSetData, every measurement: the gate reads them again at the trigger).
+// NOTE: preserving is freezing. An approval in the preserved conversation still counts at the trigger,
+//   bound to the values it was shown and the version of the rule it was given under (6.1, 6.3).
 //   Values that go stale should not be asked for — pass them through with pending_at_trigger.
-function buildDeferredInput({ instruction, mcpTool, preSetData, userChecklist, userAnswers }) {
-  return { instruction, userChecklist, userAnswers };
+function buildDeferredInput({ instruction, toolCall, preSetData, userChecklist }) {
+  return { instruction, userChecklist, toolCall };
 }
 
 /** Keep decision and recording separate, but call them as a pair so nothing goes unrecorded */
@@ -3037,6 +3506,12 @@ async function recordExecutionState(h, executionState) {
     action_key,
     phase: executionState.phase ?? null,   // Instruction-time and trigger-time records accumulate under the same key
     fixed: executionState.fixed,
+    // The tool call the model made (its arguments recorded, never read as values), and which definition of
+    //   the tool the gate read for it ([TOOL DEFINITION]). null = the run ended before it got that far.
+    tool_call: executionState.tool_call ?? null,
+    tool_definition: executionState.tool_definition ?? null,
+    // Every measurement the gate made in this round, with the settled values it was made with ([MEASURE]).
+    measurements: executionState.measurements ?? null,
     fields: executionState.fields,
     advisory_notes: executionState.advisory_notes ?? "",   // Not part of the gate. Recorded for audit
     user_checklist: executionState.user_checklist,
@@ -3057,7 +3532,7 @@ async function recordExecutionState(h, executionState) {
   };
 
   // NOTE: there is no masking hook. fields.value is persisted verbatim (account numbers, amounts, recipients, tokens).
-  //   Deferred records and deferred_input.userAnswers also sit in plaintext from instruction time until trigger.
+  //   Deferred records and deferred_input.instruction (replies included) also sit in plaintext from instruction time until trigger.
   // CONTRACT: records accumulate under the same key. Append-only, or at minimum preserve executed separately.
   //   BREAKS: with last-write-wins, a preflight record overwrites the executed baseline.
   // [UNKEYED BUCKET POLICY] retention, capacity, and what must never be stored — see APPENDIX.
@@ -3084,7 +3559,7 @@ async function getPriorExecutionState(h, actionKey) {
 // CONTRACT: pass only a record returned by recordExecutionState.
 // NOTE: no re-fetch from storage, no integrity check. Hand it a hand-built object and the gate is bypassed.
 // NOTE: nothing here checks that mcpTool is the tool the gate judged — compare mcpTool.name against
-//   executionState.fixed.c3_provider_action_name upstream. Not an integrity concern but an MCP-management
+//   executionState.tool_call.name (and fixed.c3_provider_action_name) upstream. Not an integrity concern but an MCP-management
 //   one: where the agent binds a request to a server and tool, and how long that binding survives
 //   re-entry (tool_reselected_by_user) and the deferred wait.
 // POLICY: if decision and execution cross a trust boundary, signing/TTL/nonce belong to the adopting system.
@@ -3104,7 +3579,7 @@ async function getPriorExecutionState(h, actionKey) {
 // POLICY: a conforming adopter deletes this function and reads the persisted record instead.
 async function executeIfReady(h, executionState, mcpTool, callMcpTool) {
   if (executionState.execution_decision !== "execute") {
-    // ask_user: inject answers as userAnswers/checklistAnswers and re-run (the question text comes from gate).
+    // ask_user: the model asks from gate.questions; append the user's reply to the instruction and re-run.
     // deferred: not applicable. Reached only if the scheduler re-ran it and it became execute.
     return { status: "held", executionState };
   }
@@ -3145,7 +3620,7 @@ async function executeIfReady(h, executionState, mcpTool, callMcpTool) {
 // Hooks with no default implementation, or where no safe default exists. Missing ones make createPreflight refuse to build.
 const REQUIRED_HOOKS = [
   "classifyWhenCase", "extractUserActionName", "confirmToolNameMatchesIntent",
-  "extractFromInstruction", "measureFromEnvironment", "buildActionKey",
+  "extractFromInstruction", "measure", "readToolDefinition", "buildActionKey",
 ];
 
 // Hooks that have a default implementation whose default is "do not verify". Unwired, the gate is weak.
@@ -3168,17 +3643,19 @@ const REQUIRED_HOOKS = [
 //   it cannot compare is unverified, never absent.
 // NOTE: extractUserConditions returns no report. Unwired, a condition the user states in the
 //   instruction becomes an item only if the caller builds one (4.4).
+// NOTE: readReplies returns no report. Unwired, no answer to a question ever counts — no approval, no
+//   confirmed form — so the run asks again until the ceiling. Fail-closed, but a gate that cannot finish.
 const UNSAFE_DEFAULT_HOOKS = ["applyFieldPolicy", "validateFieldSchema", "verifyUserChecklistItem",
                               "validatePayload", "spanSupportsValue",
                               "verifyProviderCondition",
-                              "getAllowedSources", "extractUserConditions"];
+                              "getAllowedSources", "extractUserConditions", "readReplies"];
 
 const defaultHooks = {
   classifyWhenCase, extractUserActionName, confirmToolNameMatchesIntent,
   getRequiredFields, getCandidateSlots, materializeSlots, getAdvisoryNotes,
   getProviderConditions, verifyProviderCondition, getAllowedSources, isSettledAtExecution,
-  proposeComparableForm, extractUserConditions,
-  extractFromInstruction, spanSupportsValue, measureFromEnvironment,
+  proposeComparableForm, extractUserConditions, readReplies, proposeValue,
+  extractFromInstruction, spanSupportsValue, measure, readToolDefinition,
   applyFieldPolicy, validateFieldSchema, validatePayload, verifyUserChecklistItem,
   formatReason, buildDeferredInput, buildActionKey,
 };
@@ -3190,6 +3667,12 @@ const defaultHooks = {
  * If unsafeDefaults in the return value is non-empty, the gate is in a weak state.
  */
 function createPreflight({ hooks = {}, storage, clock, strict = false, limits = {} } = {}) {
+  // Migration guard. measureFromEnvironment read values a caller measured before the gate ran; the gate
+  //   now asks for each measurement itself, with the values it has settled ([MEASURE]).
+  if ("measureFromEnvironment" in hooks) {
+    throw new Error("createPreflight: measureFromEnvironment is replaced by measure(name, { values, userId, tool }) — " +
+      "the gate calls it when it needs a value, with the values settled so far; nothing is measured ahead of it");
+  }
   const known = new Set(Object.keys(defaultHooks));
   const unknown = Object.keys(hooks).filter(n => !known.has(n));
   if (unknown.length) throw new Error(`createPreflight: unknown hook name — ${unknown.join(", ")}`);
@@ -3233,28 +3716,36 @@ function createPreflight({ hooks = {}, storage, clock, strict = false, limits = 
     executeIfReady: (state, mcpTool, callMcpTool) => executeIfReady(h, state, mcpTool, callMcpTool),
     recordExecutionState: state => recordExecutionState(h, state),
     getPriorExecutionState: actionKey => getPriorExecutionState(h, actionKey),
-    // [CONFIRMED FORMS] The declarer's confirmation of a form, and its withdrawal. request is an entry
-    //   of gate.form_approvals. Needs storage.list to be read back; without it nothing is confirmed.
+    // [CONFIRMED FORMS] The user's confirmation of the form of their own condition, outside a run (a
+    //   standing setting); inside a run the user confirms in conversation ([REPLIES]). request is an
+    //   entry of gate.form_approvals. Needs storage.list to be read back; without it nothing is confirmed.
+    //   A provider line is not approved: the gate translates it ([TRANSLATED FORMS]). revokeForm on a
+    //   provider line drops its translation, and the next run translates the line again.
     approveForm: (request, { form, approved_by } = {}) => recordFormDecision(h, request, { form, approved_by }, "approved"),
     revokeForm: (request, { revoked_by } = {}) => recordFormDecision(h, request, { revoked_by }, "revoked"),
     unsafeDefaults,
   };
 }
 
-module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, labelledLines, describeForm, readConfirmedForms };
+module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, labelledLines, describeForm,
+                   readTranslatedForms, renderValue };
 
 
 /* ============================================================================
  * [APPENDIX] Decision path — top to bottom. Early exits take precedence.
  *
- * Instruction (array of trust-labeled segments)
+ * Instruction (array of trust-labeled segments: the whole conversation about this unit, replies included)
+ * + toolCall (the tool call the model made)
  *      ▼
  * Step 0. checklist id check ────────► "definition_repair" (config defect — before any question is asked)
  *      ▼
  * Step 0-b. fixedPreSet passed ───────► "definition_repair" (no longer accepted; see user_action_name)
+ * Step 0-c. mcpTool / measured_data / userAnswers / checklistAnswers passed ► "definition_repair"
+ *           (no longer accepted: the gate reads the definition, measures and reads replies itself)
+ *           no toolCall.name ─────────► "definition_repair"
  *      ▼
  * Step 1. resolveFixedChecklist
- *      │ └─ Extract C1 (When/Case), C2 (User Action Name); C3 = mcpTool.name
+ *      │ └─ Extract C1 (When/Case), C2 (User Action Name); C3 = toolCall.name
  *      │    C2: the user's words in this request only — a located claim the gate checks. No fallback;
  *      │        user_action_name is never read here (4.1.1)
  *      │    C1: no fallback. It sets phase and irreversibility — utterance only
@@ -3274,10 +3765,16 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, l
  *      └─ throws ────────────────────────► "definition_repair" (kind: action_key_failed)
  *      │ └─ Both the record key and the prior_state lookup key. It sets the blast radius.
  *      ▼
+ * Step 1-b'. unit history (storage.list): questions asked, tries per route
+ *      readToolDefinition(toolCall.name) ─ throws / none / another tool ► "definition_repair"
+ *                                           (kind: tool_definition_unread, "tool definition not read")
+ *      readReplies: each claim kept only for a question asked, located in the user's words after it;
+ *                   a yes approves what the question showed (a value, an item's values, a form)
+ *      ▼
  * Step 1-c. tool gate: user_action_name names this C2 → decided by the record (matched_by "record")
  *                     otherwise confirmToolNameMatchesIntent judges (matched_by "judgment")
  *      ├─ [approved !== true, tool_attempt <  2] ► "ask_user" (kind: tool_undetermined)
- *      │                                    └─ next_tool_attempt = attempt+1; reselect mcpTool, re-call
+ *      │                                    └─ next_tool_attempt = attempt+1; the model calls again, re-run
  *      ├─ [approved !== true, tool_attempt >= 2] ► "exhausted" (kind: tool_undetermined_exhausted)
  *                                           └─ next_tool_attempt = null. Settle the Tool in conversation.
  *      ▼
@@ -3286,7 +3783,12 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, l
  * Step 2-a. getCandidateSlots → the superset the lookup may try (declared properties ∪ every branch's required)
  *      └─ not a list ────────────────────► "definition_repair" (kind: schema_unsupported)
  *      ▼
+ * Step 2. provider lines: each labelled line in its kept translation, or translated now and kept
+ *      │    (proposeComparableForm). Untranslatable → unverified, definition_repair. Nobody approves it.
+ *      ▼
  * Step 2-3. resolveField per candidate                      ← common to both phases
+ *      │ └─ slots a measurement may settle go last, so they are measured with the values settled before
+ *      │    them (measure port, every call recorded in measurements)
  *      │ └─ lookupField walks five sources → all empty means "unknown"
  *      │    an instruction/measurement hook that THROWS settles unknown on the spot — no later source,
  *      │    no applyFieldPolicy

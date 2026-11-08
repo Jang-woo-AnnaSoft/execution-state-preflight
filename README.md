@@ -137,7 +137,7 @@ This file is the overview. Each thing below is explained where it lives, not her
 | [**The specification**](./spec.en.md) · [ko](./spec.ko.md) | **the standard.** What counts as confirmed, who judges, what is recorded. The problems this works through are §2; the three checklists are §4; the slot states and sources are §5 |
 | **The skeleton** ([`execution-state-preflight.js`](./execution-state-preflight.js)) | a reference skeleton, not a library. Hook contracts, the record shape, and where it falls short of the specification — in the source comments, beside the code they describe |
 | [**Hook examples**](./hooks-example/) | what has to be declared, and how much of this you have to keep — each shown by putting a piece in and taking it out |
-| [**Adopt example**](./adopt-example/) | the files you keep to use this: the rules written in a tool description, how each is checked, and the connections to your own model, data and tool — nothing else |
+| [**Adopt example**](./adopt-example/) | the files you keep to use this: the connections to your own model, MCP server and data, and the flow the gate runs in — nothing else. The rules stay in the tool's definition on the server, where the gate reads them |
 | [**Provider checklist example**](./provider-checklist-example/) | the same tool with every rule moved out of code into declarations — the provider's checklist as labelled lines in a standard MCP description — and what that changes, run against the hook examples on the same inputs |
 | [**A case report**](./case-muse-marketplace.en.md) | a reported incident mapped onto the checklists |
 
@@ -154,10 +154,12 @@ const preflight = createPreflight({
     extractUserActionName,        // → { value, segment_index, span } in a user segment | { none: "absent" } | undefined
     confirmToolNameMatchesIntent, // → { approved, reason } — called only when user_action_name says nothing
     extractFromInstruction,       // → { value, segment_index, span } | { none: "absent" | "no_place" } | undefined
-    measureFromEnvironment,       // → { valid, value } | { valid: false } | { none: "absent" | "no_place" } | undefined
-    buildActionKey,               // → opaque string; sets the blast radius of prior_state
+    readToolDefinition,           // (name) → { name, description, inputSchema }, from the provider (MCP: tools/list)
+    measure,                      // (name, { values, userId, tool }) → { valid, value } | { valid: false } | { none } | undefined
+    buildActionKey,               // → opaque string; one per unit, the same in every round of it
+    readReplies,                  // → where the user's words answer each question the gate asked
   },
-  storage,        // { persist, load } — append-only, or preserve `executed` separately
+  storage,        // { persist, load, list } — append-only; list(key) returns every record under a key
   strict: true,   // also reject the defaults that verify nothing
 });
 
@@ -166,8 +168,10 @@ const state = await preflight.runPreflightAndRecord({
   instruction: [
     { text: "send 500,000 won to my landlord", trust: "user" },
     { text: "<forwarded email body>", trust: "untrusted", origin: "gmail:msg_881" },
+    // …and every later turn of this conversation, the user's replies included
   ],
-  mcpTool, preSetData, measured_data, priorExecutionState, userChecklist,
+  toolCall: { name: "transfer_funds", arguments },   // the call the model made; its arguments are recorded, never used as values
+  preSetData, priorExecutionState, userChecklist,
   // Optional. What this user calls a tool, settled earlier in conversation with consent (spec 4.1.1).
   //   Read only by the tool gate, as reference; it never stands in for what the user said now.
   user_action_name: { "send": { tool: "transfer_funds", trust: "user" } },
@@ -179,7 +183,8 @@ const state = await preflight.runPreflightAndRecord({
 if (state.execution_decision === "execute") {
   await preflight.executeIfReady(state, mcpTool, callMcpTool);
 } else {
-  // state.gate says exactly what is missing, and in which shape
+  // state.gate says exactly what is missing. On ask_user, state.gate.questions is what the model asks
+  //   the user, and state.gate.question_block the values as code wrote them, to show with the question.
 }
 ```
 
@@ -195,7 +200,7 @@ if (state.execution_decision === "execute") {
 - **Flat arguments assumed.**
 - **Verdict and execution are not separated here, and that is on purpose.** **That is for demonstration, not a design to copy.**
 
-These are limits of the skeleton. It also does not record which checklist version a verdict used (spec 6.1), and does not bind an approval to the value it approved (spec 6.3). Take them into account when applying it.
+These are limits of the skeleton. Take them into account when applying it.
 
 ---
 
