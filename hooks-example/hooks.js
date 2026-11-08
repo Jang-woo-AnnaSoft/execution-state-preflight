@@ -325,7 +325,7 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter, userChec
     spanSupportsValue(value, textAtSpan, fieldName, ctx) {
       if (FIELD_FORMATS[fieldName] === "iso_datetime" && ISO_DATETIME.test(String(value))) {
         const r = resolveDatetime(textAtSpan, ctx?.instruction,
-                                  measuredClock(ctx?.measured_data ?? measuredData));
+                                  measuredClock(measuredData));
         return r && r.iso === value ? { supported: true, derived: true, derived_from: r.derived_from } : false;
       }
       return squash(value) === squash(textAtSpan);
@@ -363,11 +363,12 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter, userChec
       return null;
     },
 
-    // [REQUIRED-OP] CONTRACT: { valid, value }, { valid: false }, { none: "absent" | "no_place" }, or
-    //   undefined. Here measuredData carries whatever the arm put in it, passed through as is.
-    measureFromEnvironment(fieldName, ctx) {
-      const src = ctx?.measured_data ?? measuredData;
-      if (src && fieldName in src) return src[fieldName];
+    // [REQUIRED-OP] The measure port: the gate calls it when it needs a value. CONTRACT: { valid, value },
+    //   { valid: false }, { none: "absent" | "no_place" }, or undefined. Here measuredData carries what the
+    //   arm says the platform holds, passed through as is. The tool's definition (readToolDefinition) is
+    //   wired by the arm (ports.js), which holds the tool.
+    measure(fieldName) {
+      if (measuredData && fieldName in measuredData) return measuredData[fieldName];
       return undefined;
     },
 
@@ -413,7 +414,7 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter, userChec
       // Group 5's window is placed on the calendar from what the seller said and the measured year
       //   and zone (datetime.js). The bounds it was compared against go into the note, so the record
       //   says which Saturday "this Saturday" was taken to be — the comparison is re-checkable.
-      const clock = measuredClock(ctx?.measured_data ?? measuredData);
+      const clock = measuredClock(measuredData);
       const placed = item.window ? placeWindow(item.window, ctx?.instruction, clock) : null;
       const rules = {
         chk_evening:  { slot: "time",     test: violatesEvening,     bad: "is after the stated cutoff" },

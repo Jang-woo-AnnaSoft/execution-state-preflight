@@ -34,6 +34,7 @@
 const { createPreflight } = require("../execution-state-preflight");
 const { createHooks, createStorage } = require("./hooks");
 const { buildUserTurn } = require("./prompts");
+const { withPorts, askRound, answerRound, hasAnswers } = require("./ports");
 
 /**
  * @param ask  Optional injection point for the hooks' model call. Defaults to
@@ -42,9 +43,11 @@ const { buildUserTurn } = require("./prompts");
  * @param measured  Optional, tests only: replaces the measurement, so a failed
  *             one can be exercised through this function.
  */
-// storage: tests only. A round that answers must share the unit's storage (and runId, which is its key)
-//   with the round that asked: since skeleton 1.18 an answer to a question never asked is refused.
-async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, userId = "seller_1", ask, measured, userChecklist = [], userAnswers = {}, date = null, storage: sharedStorage = null }) {
+// userAnswers / checklistAnswers: tests only. The user's reply to the gate's question. A reply counts
+//   only for a question this unit asked, in the user's words after it ([REPLIES]), so the round that
+//   asks runs first — showing the values the user then approves — and the reply is appended to the
+//   instruction as the user's own words. Both rounds share the unit's storage and key.
+async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, userId = "seller_1", ask, measured, userChecklist = [], userAnswers = {}, checklistAnswers = {}, date = null, storage: sharedStorage = null }) {
   // buyer_contact is always measured, and measurement is the only source it permits
   // (tool.js ALLOWED_SOURCES). With a date mode, the platform's clock year and the
   // account's time zone are measured too — the parts of a date nobody says. In group 5's
@@ -77,24 +80,32 @@ async function runGateArm({ adapter, model, tool, ctx, instructionText, runId, u
   async function runOnce(segments, suffix = "") {
     const storage = sharedStorage ?? createStorage();
     // userChecklist goes to the hooks too: spanSupportsValue reads the limits' wording (decision f).
-    const hooks = createHooks({ adapter, model, runId: runId + suffix, measuredData, meter, userChecklist,
-                                ...(ask ? { ask } : {}) });
-    const preflight = createPreflight({ hooks, storage });
-
-    const state = await preflight.runPreflight({
-      userId,
-      instruction: segments,
-      mcpTool: tool,
-      preSetData: {},
-      measured_data: measuredData,
-      // The limits the seller stated, declared as items. See instructions.json.
-      userChecklist,
-      userAnswers,
-      intent_attempt: 0,
-      tool_attempt: 0
-    });
-
-    await preflight.recordExecutionState(state);
+    // The gate reads the tool's definition and measures through its ports (ports.js).
+    const hooks = withPorts(createHooks({ adapter, model, runId: runId + suffix, measuredData, meter, userChecklist,
+                                          ...(ask ? { ask } : {}) }), { tool, measured: measuredData });
+    const answers = { userAnswers, checklistAnswers };
+    const gateRun = async (h, instruction) => {
+      const preflight = createPreflight({ hooks: h, storage });
+      const state = await preflight.runPreflight({
+        userId,
+        instruction,
+        toolCall: { name: tool.name },
+        preSetData: {},
+        // The limits the seller stated, declared as items. See instructions.json.
+        userChecklist,
+        intent_attempt: 0,
+        tool_attempt: 0
+      });
+      await preflight.recordExecutionState(state);
+      return { state, preflight };
+    };
+    if (!hasAnswers(answers)) {
+      const { state, preflight } = await gateRun(hooks, segments);
+      return project(state, preflight, tool);
+    }
+    await gateRun(askRound(hooks, answers), segments);
+    const reply = answerRound(hooks, segments, answers);
+    const { state, preflight } = await gateRun(reply.hooks, reply.instruction);
     return project(state, preflight, tool);
   }
 }
@@ -155,6 +166,10 @@ function project(state, preflight, tool) {
     })),
     // Which version of the checklist the verdict was made under (6.1).
     checklist_digest: state.checklist_digest ?? null,
+    // Which definition of the tool the gate read for the call, and every measurement it made, with the
+    //   settled values it made it with.
+    tool_definition: state.tool_definition ?? null,
+    measurements: state.measurements ?? null,
     unsafe_defaults: preflight.unsafeDefaults,
     // The fixed checklist (4.1, 4.1.1, 6.4): the name the user used, where in their words the gate found
     //   it, and the tool it was matched against and how. Named field by field — a whitelist, like the rest.

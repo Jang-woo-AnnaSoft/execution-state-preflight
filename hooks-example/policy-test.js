@@ -27,6 +27,7 @@
 
 const { createPreflight } = require("../execution-state-preflight");
 const { locatedActionName } = require("./c2-stub");
+const { withPorts } = require("./ports");
 
 let failures = 0;
 function row(label, got, want, why) {
@@ -51,7 +52,7 @@ const PICKUP = { name: "schedule_pickup", description: "Schedule a pickup.",
 const LIMIT_TEXT = "Pick up tomorrow. Nothing after 8pm.";
 const LIMIT_SPAN = [LIMIT_TEXT.indexOf("8pm"), LIMIT_TEXT.indexOf("8pm") + 3];
 
-// The six required hooks, answered as cheaply as the domain allows. This IS the reduction in
+// The required hooks, answered as cheaply as the domain allows (withPorts adds readToolDefinition). This IS the reduction in
 // spec 1.2: an immediate-only domain answers the timing question once, with a constant.
 function minimalHooks(over = {}) {
   return {
@@ -59,7 +60,7 @@ function minimalHooks(over = {}) {
     extractUserActionName: locatedActionName(),   // a located claim (4.1); see c2-stub.js
     confirmToolNameMatchesIntent: (n, t) => ({ approved: true, reason: `single tool: ${t?.name}` }),
     extractFromInstruction: () => undefined,
-    measureFromEnvironment: () => undefined,
+    measure: () => undefined,
     buildActionKey: (uid, fixed) => `${uid}:${fixed?.c3_provider_action_name}`,
     // Not required to BUILD, but since 1.16 required to EXECUTE: an unwired validator reads as
     //   unverified and the run goes to definition repair. This file is about the other hooks, so both
@@ -71,12 +72,12 @@ function minimalHooks(over = {}) {
 }
 
 async function run(hooks, { tool, instruction, prior } = {}) {
-  const preflight = createPreflight({ hooks, storage: STORAGE() });
+  const t = tool ?? PAY;
+  const preflight = createPreflight({ hooks: withPorts(hooks, { tool: t }), storage: STORAGE() });
   const state = await preflight.runPreflightAndRecord({
     userId: "u_1042",
     instruction: instruction ?? [{ trust: "user", text: "Pay the supplier." }],
-    mcpTool: tool ?? PAY,
-    measured_data: {},
+    toolCall: { name: t.name },
     priorExecutionState: prior ?? null,
     userChecklist: [],
   });
@@ -88,13 +89,13 @@ const slot = (state, name) => (state.fields ?? []).find(f => f.name === name) ??
   console.log("WHAT YOU MAY REPLACE, AND WHAT BREAKS WHEN YOU DROP IT");
   console.log("the specification is the standard; this skeleton is one way of meeting it");
 
-  // ══ 1. The six required hooks ══════════════════════════════════════════════════
+  // ══ 1. The required hooks ══════════════════════════════════════════════════════
   heading("1. Can the fixed checklist be left to the existing agent?");
   {
     let refused = null;
     try {
       createPreflight({
-        hooks: { extractFromInstruction: () => undefined, measureFromEnvironment: () => undefined,
+        hooks: { extractFromInstruction: () => undefined, measure: () => undefined,
                  buildActionKey: () => "k" },
         storage: STORAGE(),
       });
@@ -106,7 +107,7 @@ const slot = (state, name) => (state.fields ?? []).find(f => f.name === name) ??
       "4.1: the fixed checklist settles the execution unit the gate runs once per");
 
     // The reduction spec 1.2 actually grants: answer the question once, with a constant.
-    const { state } = await run(minimalHooks({ measureFromEnvironment: () => ({ valid: true, value: 4200 }) }));
+    const { state } = await run(minimalHooks({ measure: () => ({ valid: true, value: 4200 }) }));
     row("answer them with constants instead", state.execution_decision, "execute",
       "1.2: immediate-only domain, single tool — the question is answered, not deleted");
     row("  and the answer is on the record", state.fixed?.c1_when_case, "immediate",
@@ -119,7 +120,7 @@ const slot = (state, name) => (state.fields ?? []).find(f => f.name === name) ??
     // belongs in the prompt. What does NOT move to the prompt is the ceiling and the record.
     const { state } = await run(minimalHooks({
       confirmToolNameMatchesIntent: () => ({ approved: false, reason: "the user asked for something else" }),
-      measureFromEnvironment: () => ({ valid: true, value: 4200 }),
+      measure: () => ({ valid: true, value: 4200 }),
     }));
     row("the tool is refused", state.execution_decision, "ask_user", "re-selection, with a count");
     row("  the attempt is recorded", /attempt=0\/\d/.test(state.reason ?? ""), "true",
@@ -163,12 +164,12 @@ const slot = (state, name) => (state.fields ?? []).find(f => f.name === name) ??
   }
 
   // ══ 3. Where the gate cannot tell ══════════════════════════════════════════════
-  heading("4. measureFromEnvironment replaced by a model call (the gate CANNOT tell)");
+  heading("4. measure replaced by a model call (the gate CANNOT tell)");
   {
     // 5.2: "the lookup must be a live measurement." The skeleton's own note says it plainly — if
     // this hook is LLM-based it is not a measurement — and then cannot check it.
     const { state } = await run(minimalHooks({
-      measureFromEnvironment: () => ({ valid: true, value: 4200 }),   // stands in for a model call
+      measure: () => ({ valid: true, value: 4200 }),   // stands in for a model call
     }));
     row("a hook that invents a value", state.execution_decision, "execute",
       "PASSES — and it is supposed to, because the gate has no way to see inside a hook");
@@ -188,14 +189,14 @@ const slot = (state, name) => (state.fields ?? []).find(f => f.name === name) ??
     // checks only that it says executed, then matches by field name. So a narrow key does not stop
     // the wrong record from being accepted.
     const hooks = minimalHooks({
-      measureFromEnvironment: (f) => (f === "amount" ? { valid: true, value: 18400 } : undefined),
+      measure: (f) => (f === "amount" ? { valid: true, value: 18400 } : undefined),
       applyFieldPolicy: (r) => r,                      // the adopter accepts inheritance
     });
     const { state: paid } = await run(hooks, { tool: PAY });
     const executed = { ...paid, execution_decision: "executed" };
 
     const narrow = minimalHooks({
-      measureFromEnvironment: () => undefined,         // the refund's amount is NOT measured
+      measure: () => undefined,         // the refund's amount is NOT measured
       applyFieldPolicy: (r) => r,
     });
     const { state: refund } = await run(narrow, { tool: REFUND, prior: executed });
@@ -214,7 +215,7 @@ const slot = (state, name) => (state.fields ?? []).find(f => f.name === name) ??
 
     // With the default policy, the same. The guard is in the gate now, not in the default.
     const { state: refused } = await run(
-      minimalHooks({ measureFromEnvironment: () => undefined }), { tool: REFUND, prior: executed });
+      minimalHooks({ measure: () => undefined }), { tool: REFUND, prior: executed });
     row("default applyFieldPolicy instead", slot(refused, "amount").status, "unknown",
       "5.2: inheritance alone does not confirm — refuse it and the leak closes");
   }
@@ -222,9 +223,9 @@ const slot = (state, name) => (state.fields ?? []).find(f => f.name === name) ??
   // ══ 4. The conditions, left out ════════════════════════════════════════════════
   heading("6. Leaving the condition hooks unwired");
   {
-    const preflight = createPreflight({ hooks: minimalHooks({
-      measureFromEnvironment: () => ({ valid: true, value: 18400 }),
-    }), storage: STORAGE() });
+    const preflight = createPreflight({ hooks: withPorts(minimalHooks({
+      measure: () => ({ valid: true, value: 18400 }),
+    }), { tool: PAY }), storage: STORAGE() });
     const flagged = preflight.unsafeDefaults ?? [];
     row("verifyProviderCondition unwired", flagged.includes("verifyProviderCondition"), "true",
       "declared on unsafeDefaults, which lands in every record");
@@ -232,7 +233,7 @@ const slot = (state, name) => (state.fields ?? []).find(f => f.name === name) ??
 
     const state = await preflight.runPreflightAndRecord({
       userId: "u_1042", instruction: [{ trust: "user", text: "Pay the supplier." }],
-      mcpTool: PAY, measured_data: {},
+      toolCall: { name: PAY.name },
       userChecklist: [{ id: "u_limit", description: "nothing over 10,000", constrains: ["amount"] }],
     });
     row("a declared user limit", state.user_checklist?.[0]?.status, "unverified",
@@ -245,7 +246,7 @@ const slot = (state, name) => (state.fields ?? []).find(f => f.name === name) ??
   heading("7. The record");
   {
     const { state, preflight } = await run(minimalHooks({
-      measureFromEnvironment: () => ({ valid: true, value: 4200 }),
+      measure: () => ({ valid: true, value: 4200 }),
     }));
     row("the gate's output is a record", typeof state.gate, "object",
       "3.5: there must be no execution path that does not go through it");

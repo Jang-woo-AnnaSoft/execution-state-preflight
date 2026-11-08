@@ -129,9 +129,8 @@ async function runCase(name, instructionText, plan) {
     ask: makeStub({ ...plan, extraction: plan.buildExtraction(turn.segments) }),
     storage: createRunStorage(),
   };
-  // Since skeleton 1.18 an answer counts only for a question this unit was asked: a case that answers
-  //   first runs the round that asked, in the same storage under the same key.
-  if (Object.keys(args.userAnswers).length) await runGateArm({ ...args, userAnswers: {} });
+  // An answer counts only for a question this unit asked: runGateArm runs the round that asked, then the
+  //   reply, in the same storage under the same key.
   const result = await runGateArm(args);
   const byName = Object.fromEntries((result.fields ?? []).map(f => [f.name, f]));
   return { result, byName };
@@ -157,6 +156,10 @@ async function main() {
     check("time status", byName.time?.status, "known");
     check("location status", byName.location?.status, "known");
     check("buyer_contact source", byName.buyer_contact?.source, "measured_data");
+    // The projection carries which definition the gate read, and what it measured, with which values.
+    check("the definition the gate read is in the results", [typeof result.tool_definition?.hash, result.tool_definition?.name],
+      ["string", "schedule_pickup"]);
+    check("  and the measurements it made", (result.measurements ?? []).some(m => m.name === "buyer_contact" && m.result === "found"), true);
     // The projection is a whitelist: the value checks and the checklist's version reach the results file.
     check("each slot's format check is in the results", (result.value_checks ?? []).filter(c => c.kind === "format").map(c => `${c.slot}:${c.status}`).sort().join(","),
       "buyer_contact:checked,item_id:checked,location:checked,time:checked");
@@ -823,12 +826,13 @@ async function main() {
       extractUserActionName: () => WORD,
       confirmToolNameMatchesIntent: () => { judged += 1; return { approved: true, reason: "judged" }; },
       extractFromInstruction: () => undefined,
-      measureFromEnvironment: () => undefined,
+      measure: () => undefined,
+      readToolDefinition: () => WIRE,
       buildActionKey: (u, f) => `${u}:${f?.c3_provider_action_name}`,
       ...over,
     });
     const pre = (input, over = {}) => createPreflight({ hooks: hooks(over), storage: createStorage() })
-      .runPreflightAndRecord({ userId: "u", instruction: said, mcpTool: WIRE, measured_data: {}, userChecklist: [], ...input });
+      .runPreflightAndRecord({ userId: "u", instruction: said, toolCall: { name: WIRE.name }, userChecklist: [], ...input });
 
     judged = 0;
     const byRecord = await pre({ user_action_name: { wire: { tool: "send_wire", trust: "user" } } });
@@ -932,7 +936,8 @@ async function main() {
       extractUserActionName: () => at("Send"),
       confirmToolNameMatchesIntent: () => ({ approved: true, reason: "one tool" }),
       extractFromInstruction: name => (name === "account" ? at("123-45") : name === "amount" ? at("500") : { none: "absent" }),
-      measureFromEnvironment: () => undefined,
+      measure: () => undefined,
+      readToolDefinition: () => SEND,
       buildActionKey: (u, f) => `${u}:${f?.c3_provider_action_name}`,
       // This case is about the candidate set, not about validation. Since 1.16 an unwired validator
       //   reads as unverified (definition_repair), so the controls below would stop there: they are
@@ -943,7 +948,7 @@ async function main() {
       ...over,
     });
     const run = over => createPreflight({ hooks: hooks(over), storage: createStorage() })
-      .runPreflightAndRecord({ userId: "u", instruction: said, mcpTool: SEND, measured_data: {}, userChecklist: [] });
+      .runPreflightAndRecord({ userId: "u", instruction: said, toolCall: { name: SEND.name }, userChecklist: [] });
 
     const narrowed = await run({ getCandidateSlots: () => ["account"] });
     const amount = (narrowed.fields ?? []).find(f => f.name === "amount");

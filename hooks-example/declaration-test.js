@@ -32,6 +32,7 @@
  */
 
 const { createPreflight } = require("../execution-state-preflight");
+const { withPorts } = require("./ports");
 const { locatedActionName } = require("./c2-stub");
 
 let failures = 0;
@@ -64,7 +65,7 @@ function hooks({ measured, conditions, verify, validators = "wired" }) {
     extractUserActionName: locatedActionName(),   // a located claim (4.1); see c2-stub.js
     confirmToolNameMatchesIntent: (n, t) => ({ approved: true, reason: `single tool: '${n}' / '${t?.name}'` }),
     extractFromInstruction: () => undefined,
-    measureFromEnvironment: (f) => (f in m ? { valid: true, value: m[f] } : undefined),
+    measure: (f) => (f in m ? { valid: true, value: m[f] } : undefined),
     buildActionKey: () => "u:pay",
     ...(conditions !== undefined ? { getProviderConditions: () => conditions } : {}),
     ...(verify ? { verifyProviderCondition: verify } : {}),
@@ -81,15 +82,15 @@ function hooks({ measured, conditions, verify, validators = "wired" }) {
 }
 
 async function run({ schema, description, ...rest }) {
+  const tool = { name: "send_payment", description: description ?? "Send a payment.", inputSchema: schema };
   const preflight = createPreflight({
-    hooks: hooks(rest),
+    hooks: withPorts(hooks(rest), { tool }),
     storage: { async persist() {}, async load() { return null; } },
   });
   return preflight.runPreflightAndRecord({
     userId: "u",
     instruction: [{ trust: "user", text: "Pay the supplier." }],
-    mcpTool: { name: "send_payment", description: description ?? "Send a payment.", inputSchema: schema },
-    measured_data: {},
+    toolCall: { name: tool.name },
     userChecklist: [],
   });
 }
@@ -289,13 +290,13 @@ const UNMET = { status: "unmet", source: "measured_data", note: "limit exceeded"
       "the default reads the labelled lines, and this description has none");
 
     const preflight = createPreflight({
-      hooks: { ...hooks({}), getProviderConditions: () => { throw new Error("registry down"); } },
+      hooks: withPorts({ ...hooks({}), getProviderConditions: () => { throw new Error("registry down"); } },
+        { tool: { name: "send_payment", description: "d", inputSchema: FULL } }),
       storage: { async persist() {}, async load() { return null; } },
     });
     const b = await preflight.runPreflightAndRecord({
       userId: "u", instruction: [{ trust: "user", text: "Pay the supplier." }],
-      mcpTool: { name: "send_payment", description: "d", inputSchema: FULL },
-      measured_data: {}, userChecklist: [],
+      toolCall: { name: "send_payment" }, userChecklist: [],
     });
     row("it throws", b.execution_decision, "definition_repair", "a crashed fetch is not a tool with no conditions");
   }

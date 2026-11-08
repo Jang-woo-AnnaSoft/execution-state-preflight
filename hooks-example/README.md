@@ -32,12 +32,13 @@ npm run check                     # everything below. No API calls
 | File | What it looks at |
 |---|---|
 | `declaration-test.js` | Puts in and takes out what the provider declares. At the end it prints what is declared by whom, which file covers it, and what was deliberately left unplugged |
-| `declared-checks-test.js` | The checks the skeleton makes itself, each its own slot in the record: labelled description lines and their confirmed forms, each value's format and the payload's, the checklist's version, who may give a value, words inside a declared limit, the conditions the user stated in the instruction, and approvals bound to the values they were given for |
+| `declared-checks-test.js` | The checks the skeleton makes itself, each its own slot in the record: labelled description lines and the forms they are translated into and kept in, each value's format and the payload's, the checklist's version, who may give a value, words inside a declared limit, the conditions the user stated in the instruction, replies read from the user's words and bound to what they answered, the tool's definition read by the gate, and measurements made with the values it settled |
 | `policy-test.js` | A swap that satisfies the specification gives the same result; a removal gives a named failure. At the end it prints "what the specification requires · how this skeleton does it · what the adopter decides" |
 | `gate-test.js` | Runs `hooks.js` through the real skeleton (via `arm-gate.js`) |
 | `value-source-test.js` | Seats one value in each of the five sources in turn. Includes the storage round trip and allowed sources |
 | `provider-conditions-test.js` | Direction, route and source constraints of provider conditions |
 | `payment-limit-test.js` | An approval limit declared as a provider condition |
+| `ports.js` | Not a test: wires the gate's ports from a test case — the tool it reads (`readToolDefinition`), what the system measures (`measure`), and the user's reply appended to the conversation (`readReplies`) |
 | `selftest.js` | The normalizer, the analyzer, and the consistency of the experiment's declarations |
 | `provider-test.js` | The request shape the provider adapters build |
 
@@ -85,7 +86,9 @@ Returns the timing as one of `immediate` / `scheduled` / `conditional` / `recurr
 
 A time inside the act is an argument, not a timing (spec 3.3). "Set up the pickup for 2pm Saturday" is `immediate`, and 2pm Saturday is an argument. If it is classified `scheduled`, the skeleton treats it as an instruction-time verdict and, even when the values are complete, returns `deferred`, waiting for a trigger instead of executing. This folder's prompt states the distinction.
 
-### `measureFromEnvironment`
+### `measure`
+
+The gate calls it when it needs a system value, in the round it judges, with the values it has settled so far (`{ values, userId, tool }`). Nothing is measured ahead of the gate, and every call is in the record (`measurements`).
 
 | Return | Meaning |
 |---|---|
@@ -96,6 +99,10 @@ A time inside the act is an argument, not a timing (spec 3.3). "Set up the picku
 | `undefined` | No report |
 
 The skeleton does not record what did the measuring. If this hook calls a model, the record still says `measured_data` and the gate cannot tell the difference (spec 5.2: a lookup must be a measurement). This folder's implementation returns the measurement given for each run as is.
+
+### `readToolDefinition`
+
+The gate reads the definition of the tool the model called — its description and input schema — itself, once the call is in hand. A definition it cannot read, or one for another tool, sends the run to `definition_repair` ("tool definition not read"). This folder's arm wires it to the tool it runs ([`ports.js`](./ports.js)).
 
 ### `buildActionKey`
 

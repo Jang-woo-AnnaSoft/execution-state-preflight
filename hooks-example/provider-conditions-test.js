@@ -75,10 +75,11 @@ function createHooks({ runId, conditions, conditionsThrow, measured }) {
     confirmToolNameMatchesIntent: (name, tool) =>
       ({ approved: true, reason: `single-tool test: '${name}' for '${tool?.name}'` }),
     extractFromInstruction: () => undefined,
-    measureFromEnvironment(fieldName) {
+    measure(fieldName) {
       const m = measured ?? MEASURED;
       return fieldName in m ? { valid: true, value: m[fieldName] } : undefined;
     },
+    readToolDefinition: () => SEND_WIRE,
     buildActionKey: (userId, fixed) => `${userId}:${fixed?.c3_provider_action_name}:${runId}`,
     // Since skeleton 1.16 an unwired validator reads as unverified (definition_repair). This file is not
     //   about validation, so both are wired with stand-ins that report the values checked; the unwired
@@ -119,8 +120,7 @@ async function run(runId, opts = {}) {
   return preflight.runPreflightAndRecord({
     userId: "u_test",
     instruction: [{ trust: "user", text: "send the wire" }],
-    mcpTool: SEND_WIRE,
-    measured_data: {},
+    toolCall: { name: SEND_WIRE.name },
     userChecklist: opts.userChecklist ?? [],
   });
 }
@@ -361,8 +361,7 @@ function len(x) { return (x ?? []).length; }
     const r = await preflight.runPreflightAndRecord({
       userId: "u_test",
       instruction: [{ trust: "user", text: "send the wire" }],
-      mcpTool: SEND_WIRE,
-      measured_data: {},
+      toolCall: { name: SEND_WIRE.name },
       userChecklist: [],
     });
     console.log("\n--- case 12: verifyProviderCondition unwired ---");

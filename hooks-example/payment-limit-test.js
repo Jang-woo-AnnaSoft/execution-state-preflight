@@ -90,6 +90,8 @@ const COND_APPROVER_LIMIT = {
   description: "an approval only counts if the approver's limit covers the amount",
   constrains: ["amount"],
   source: "ERP approval record, compared against the declared approval matrix",
+  // What the gate measures for this condition, through its measure port, before the comparison runs.
+  compare: { source: "measured_data", measure: "approval_record" },
   declared_by: APPROVAL_MATRIX.declared_by,
   checklist_version: APPROVAL_MATRIX.version,
 };
@@ -110,7 +112,7 @@ function erpInvoice({ id, amount, approverRole, approvalRecord = true }) {
 }
 
 // ── Hooks. All deterministic. No model anywhere in the verdict. ────────────────────
-function createHooks({ runId, conditions, override }) {
+function createHooks({ runId, conditions, override, erp }) {
   return {
     classifyWhenCase: () => "immediate",
     extractUserActionName: locatedActionName(),   // a located claim (4.1); see c2-stub.js
@@ -119,11 +121,14 @@ function createHooks({ runId, conditions, override }) {
       ({ approved: true, reason: `single-tool test: '${name}' accepted for '${tool?.name}'` }),
     // The user's instruction states no values; every argument comes from the ERP.
     extractFromInstruction: () => undefined,
-    measureFromEnvironment(fieldName, ctx) {
-      const inv = ctx?.measured_data?.__erp?.invoice;
-      if (inv && fieldName in inv) return { valid: true, value: inv[fieldName] };
+    // The ERP, read when the gate asks: an invoice field, or the approval record the condition names.
+    measure(name) {
+      if (name === "approval_record") return erp?.approval ? { valid: true, value: erp.approval } : { valid: false };
+      const inv = erp?.invoice;
+      if (inv && name in inv) return { valid: true, value: inv[name] };
       return undefined;
     },
+    readToolDefinition: () => CREATE_PAYMENT,
     buildActionKey: (userId, fixed) => `${userId}:${fixed?.c3_provider_action_name}:${runId}`,
     // Since skeleton 1.16 an unwired validator reads as unverified (definition_repair). This file is not
     //   about validation, so both are wired with stand-ins that report the values checked; the unwired
@@ -143,7 +148,9 @@ function createHooks({ runId, conditions, override }) {
       }
       const amountField = (ctx?.fields ?? []).find(f => f.name === "amount");
       const amount = amountField?.value;
-      const approval = ctx?.measured_data?.__erp?.approval ?? null;
+      // Measured by the gate for this condition (its compare names the measurement).
+      const m = ctx?.measurements?.approval_record;
+      const approval = m?.valid === true ? m.value : null;
 
       // Who approved is read from the approval record, never from status = "Approved"
       // and never from text in the instruction. No record → not compared → not cleared.
@@ -180,17 +187,15 @@ function createStorage() {
 }
 
 async function runCase(runId, { erp, instruction, conditions = [COND_APPROVER_LIMIT], override }) {
-  const hooks = createHooks({ runId, conditions, override });
+  const hooks = createHooks({ runId, conditions, override, erp });
   if (override) hooks.verifyProviderCondition = () => override;
   const preflight = createPreflight({ hooks, storage: createStorage() });
   return preflight.runPreflightAndRecord({
     userId: "ap_agent",
     instruction,
-    mcpTool: CREATE_PAYMENT,
+    toolCall: { name: CREATE_PAYMENT.name },
     preSetData: {},
-    measured_data: { __erp: erp },
     userChecklist: [],
-    userAnswers: {},
     intent_attempt: 0,
     tool_attempt: 0,
   });

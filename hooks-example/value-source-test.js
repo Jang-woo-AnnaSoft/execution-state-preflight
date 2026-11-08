@@ -84,6 +84,7 @@ const PROVIDER_CONDITIONS = [
 //   So this wraps hooks.createStorage rather than replacing it. If its signature drifts again, part 4
 //   fails here instead of passing against a copy that happens to be correct.
 const { createStorage: exampleStorage } = require("./hooks");
+const { withPorts, askRound, answerRound, hasAnswers } = require("./ports");
 
 function createStorage() {
   const inner = exampleStorage();
@@ -112,7 +113,7 @@ function createHooks({ locate, measured, acceptPriorState, whenCase, allowed, me
     spanSupportsValue: support ?? ((value, atSpan) => value === atSpan),
 
     // Seat 4.
-    measureFromEnvironment: measure ?? ((fieldName) =>
+    measure: measure ?? ((fieldName) =>
       (measured && fieldName in measured) ? { valid: true, value: measured[fieldName] } : undefined),
 
     // Seat 5 never settles: the gate turns a value there into a candidate for the user (5.2). Wiring
@@ -146,33 +147,32 @@ async function run({ locate, instruction, preSetData, measured, userAnswers, pri
                      acceptPriorState, whenCase, storage, allowed, measure, policy, extract,
                      ask_attempt, lookup_attempt, intent_attempt, limits, support, settled, userChecklist, tool }) {
   const store = storage ?? createStorage();
-  const preflight = createPreflight({
-    hooks: createHooks({ locate, measured, acceptPriorState, whenCase, allowed, measure, policy, extract, support, settled }),
-    storage: store,
-    ...(limits ? { limits } : {}),
-  });
-  // Since skeleton 1.18 an answer counts only for a question this unit was asked. A run that answers
-  //   first runs the round that asked: the same unit, in the same storage, with the slot still blank
-  //   (no other source has it yet), so the gate puts the question.
-  if (userAnswers && Object.keys(userAnswers).length) {
+  const t = tool ?? TOOL;
+  const answers = { userAnswers: userAnswers ?? {} };
+  // An answer is the user's words in reply to a question this unit was asked ([REPLIES]). A run that
+  //   answers first runs the round that asked: the same unit, in the same storage, with the slot still
+  //   blank (no other source has it yet), so the gate puts the question — showing the value the user
+  //   then approves.
+  if (hasAnswers(answers)) {
     const asker = createPreflight({
-      hooks: createHooks({ locate: undefined, measured: undefined, acceptPriorState, whenCase, allowed, measure: () => undefined, policy, extract: undefined, support, settled }),
+      hooks: askRound(withPorts(createHooks({ locate: undefined, measured: undefined, acceptPriorState, whenCase, allowed, measure: () => undefined, policy, extract: undefined, support, settled }), { tool: t }), answers),
       storage: store,
     });
     await asker.runPreflightAndRecord({
-      userId: "u_1042", instruction: PLAIN_INSTRUCTION, mcpTool: tool ?? TOOL, preSetData: {}, measured_data: {},
-      priorExecutionState: null, userChecklist: userChecklist ?? [], userAnswers: {},
+      userId: "u_1042", instruction: PLAIN_INSTRUCTION, toolCall: { name: t.name }, preSetData: {},
+      priorExecutionState: null, userChecklist: userChecklist ?? [],
     });
   }
+  const base = withPorts(createHooks({ locate, measured, acceptPriorState, whenCase, allowed, measure, policy, extract, support, settled }), { tool: t });
+  const round = hasAnswers(answers) ? answerRound(base, instruction ?? PLAIN_INSTRUCTION, answers) : { hooks: base, instruction: instruction ?? PLAIN_INSTRUCTION };
+  const preflight = createPreflight({ hooks: round.hooks, storage: store, ...(limits ? { limits } : {}) });
   const state = await preflight.runPreflightAndRecord({
     userId: "u_1042",
-    instruction: instruction ?? PLAIN_INSTRUCTION,
-    mcpTool: tool ?? TOOL,
+    instruction: round.instruction,
+    toolCall: { name: t.name },
     preSetData: preSetData ?? {},
-    measured_data: {},
     priorExecutionState: prior ?? null,
     userChecklist: userChecklist ?? [],
-    userAnswers: userAnswers ?? {},
     ask_attempt, lookup_attempt, intent_attempt,
   });
   return { state, preflight, store };
