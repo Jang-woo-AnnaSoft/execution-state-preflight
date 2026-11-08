@@ -21,10 +21,16 @@
  *   provider_verdicts: {condition_id: verdict}; or provider_verifier "measured", which reads
  *   measured_data[condition.measured_key] = {valid, value} and reports measured_data as the source.
  *   candidate_slots: string[] = an adopter's getCandidateSlots override (cases in candidate_set_cases).
+ *
+ * The case files were written for the skeleton's earlier input, which took the tool, the measurements and
+ *   the answers as input. The gate now reads them through its ports, so the runner hands the case data to
+ *   the ports, unchanged: input.mcpTool is what readToolDefinition returns, measured_data what measure
+ *   reads, and input.userAnswers / checklistAnswers the user's reply to the round that asked (see askFirst).
  */
 const fs = require("fs");
 const path = require("path");
 const { createPreflight } = require(path.join(__dirname, "..", "..", "execution-state-preflight"));
+const { askRound, answerRound } = require(path.join(__dirname, "..", "ports"));
 
 const args = process.argv.slice(2);
 const outAt = args.indexOf("--out");
@@ -68,8 +74,13 @@ function hooksFor(c, unitKey) {
     extractUserActionName: () => (has(H, "c2_claim") ? val(H.c2_claim) : undefined),
     confirmToolNameMatchesIntent: () => val(H.tool_match),
     extractFromInstruction: f => (has(H.extract ?? {}, f) ? val(H.extract[f]) : undefined),
-    // Same as the skeleton's reference body: measured_data[field] as given.
-    measureFromEnvironment: (f, ctx) => (ctx.measured_data && f in ctx.measured_data) ? val(ctx.measured_data[f]) : undefined,
+    // measured_data[name] as given, when the gate asks for it.
+    measure: f => (c.measured_data && f in c.measured_data) ? val(c.measured_data[f]) : undefined,
+    // The case's tool, for that tool's name.
+    readToolDefinition: name => {
+      if (c.input?.mcpTool?.name !== name) throw new Error(`no definition for ${name}`);
+      return clone(c.input.mcpTool);
+    },
     // One key per case run, the same in each of its rounds (the asking round, the run, the trigger re-run).
     buildActionKey: () => unitKey,
     // Since skeleton 1.16 an unwired validator reads as unverified (definition_repair). The cases do not
@@ -105,32 +116,41 @@ function summarize(r) {
   return `${r.execution_decision} -- ${bits.join(", ")}`;
 }
 
-async function runOne(c, unit) {
-  return createPreflight({ hooks: hooksFor(c, unit.key), storage: unit.storage })
-    .runPreflightAndRecord({ ...c.input, measured_data: c.measured_data });
+const answersOf = c => ({ userAnswers: c.input?.userAnswers ?? {}, checklistAnswers: c.input?.checklistAnswers ?? {} });
+const answering = c => Object.keys(answersOf(c).userAnswers).length + Object.keys(answersOf(c).checklistAnswers).length > 0;
+
+// round: "plain" (no answers), "ask" (the round that asks, showing the values the case's answers will
+//   approve) or "answer" (the user's reply appended to the instruction, read by readReplies).
+async function runOne(c, unit, round = "plain") {
+  const { mcpTool, userAnswers, checklistAnswers, ...input } = clone(c.input ?? {});
+  let hooks = hooksFor(c, unit.key);
+  let instruction = input.instruction;
+  if (round === "ask") hooks = askRound(hooks, answersOf(c));
+  if (round === "answer") ({ hooks, instruction } = answerRound(hooks, input.instruction, answersOf(c)));
+  return createPreflight({ hooks, storage: unit.storage })
+    .runPreflightAndRecord({ ...input, instruction, toolCall: { name: mcpTool?.name ?? "" } });
 }
 
-// Since skeleton 1.18 an answer counts only for a question the unit was asked. A case that carries
-//   answers (input.userAnswers / input.checklistAnswers) is the round AFTER the question, so the runner
-//   first runs the round that asked: the same case with no answers, in the same storage, under the
-//   same key. An answer the case gives to something that round did not ask is refused, as the gate
+// A reply counts only for a question the unit was asked, in the user's words after it. A case that
+//   carries answers (input.userAnswers / input.checklistAnswers) is the round AFTER the question, so the
+//   runner first runs the round that asked — the same case, in the same storage, under the same key —
+//   and then the reply: a value the case answers is the user's yes to that value shown, an item's
+//   answer the user's yes or no. A reply to something that round did not ask is refused, as the gate
 //   would refuse it in use.
 async function askFirst(c, unit) {
-  const answers = Object.keys(c.input?.userAnswers ?? {}).length + Object.keys(c.input?.checklistAnswers ?? {}).length;
-  if (!answers) return;
-  const q = clone(c); q.input.userAnswers = {}; q.input.checklistAnswers = {};
-  await runOne(q, unit);
+  if (!answering(c)) return;
+  await runOne(c, unit, "ask");
 }
 
 // A deferred instruction-time verdict is re-run as the trigger would run it (c1 immediate), as theirs does.
 async function decide(c) {
   const unit = { key: `crosscheck:${++seq}`, storage: memStorage() };
   await askFirst(c, unit);
-  const r = await runOne(c, unit);
+  const r = await runOne(c, unit, answering(c) ? "answer" : "plain");
   const out = { decision: r.execution_decision, why: summarize(r), phase: r.phase };
   if (r.phase === "at_instruction" && r.execution_decision === "deferred") {
     const t = clone(c); t.hooks.c1 = "immediate";
-    const rt = await runOne(t, unit);
+    const rt = await runOne(t, unit, answering(c) ? "answer" : "plain");
     out.at_trigger_rerun = { decision: rt.execution_decision, why: summarize(rt) };
   }
   return out;
