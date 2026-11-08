@@ -205,7 +205,7 @@ Verification today looks at values only. The input schema checks a value's type 
     - [Verify]: something that needs the user's approval. It creates a user approval slot.
     - [Notice]: something the user must be told before execution. It does not block.
   - A condition can be declared as a range, by the provider or by the user. If a value or state confirmed by measurement at execution time falls within that range, the condition is met and the user is not asked again. Who produced the value is not considered; only whether it was confirmed by measurement. A value the model read is not a measurement (5.2).
-  - Conditions are declared in natural language. When a sentence is clear, the user, the provider and a third party can all check it. A declared sentence is put into a form that can be compared, and shown with the original so that its declarer confirms it. A user's condition is put into that form by the model and confirmed by the user, and the model asks when the meaning is not clear. At execution time, only the confirmed form is compared. A condition that could not be put into that form, or was not confirmed, stays unconfirmed (4.5).
+  - Conditions are declared in natural language. When a sentence is clear, the user, the provider and a third party can all check it. A declared sentence is put into a form that can be compared, and at execution time only that form is compared. A user's condition is confirmed by the user, who is asked when the meaning is not clear. A condition that could not be put into a form, and one that had to be confirmed and was not, stay unconfirmed (4.5).
 
 #### 3.3.1 Slots on the same footing (Intent, Value, Condition)
 
@@ -274,7 +274,7 @@ Every intent, value, and condition item is registered in an external checklist, 
 #### 4.2.1 How to write them in the tool description (Description Labels)
 
 - Providers already write conditions in the tool description. Written with the labels for the three kinds of condition (3.3), [Required], [Verify] and [Notice], those sentences become the checklist, since the description arrives with the tool list.
-- To use labeled sentences as an enforced checklist, the declaring party must be trusted. Each sentence is put into a form that can be compared, and confirmed, at declaration time; at execution time only that form is compared (3.3).
+- To use labeled sentences as an enforced checklist, the declaring party must be trusted. The gate reads the definition as its provider declared it, not a copy kept on the agent's side. When the same party builds the agent and the tool, that party is the provider. The sentences are put into a form that can be compared and compared only in that form (3.3), and the record keeps which definition the verdict was made under.
 
 ### 4.3 User Checklist: varies per user and environment.
 
@@ -288,6 +288,7 @@ Every intent, value, and condition item is registered in an external checklist, 
 - Slots are created when each of the three checklists is obtained. The fixed checklist comes before tool selection. The provider checklist comes from the tool's declarations once the tool is settled. The user checklist comes from the trusted segments of the instruction once the execution unit is settled.
 - The user checklist can grow until execution. The user is still in the conversation until the call starts and can add conditions while answering.
 - A condition the user approved in advance as a standing setting also enters the user checklist. The adopting system loads it at instruction time, and it is compared the same way as a condition stated in this instruction (5.2).
+- When the tool changes, the execution unit changes. The new unit's checklists are obtained anew, and the earlier unit's records are left as they are.
 
 ### 4.5 Resolution routes for unconfirmed state
 
@@ -307,7 +308,7 @@ Items are counted the same way, but resolve differently when unconfirmed. An imp
 - Items routed to asking the user in 4.5 can be carried out by the model.
 - Code builds the list of blanks. Asking the user and bringing the answers back can be the model's job. The list decides what to ask. The model decides how to ask it.
 - What the model decides is the form of the asking. It can ask several items at once, choose the order, explain why it is asking, and gather answers that arrive across several turns.
-- What the model does not decide is the list itself. It does not drop items or add them, and it does not mark a slot confirmed because an answer came back. The answer is looked up again as the user_answer source, and the verdict stays with code.
+- What the model does not decide is the list itself. It does not drop items or add them, and it does not mark a slot confirmed because an answer came back. The answer is looked up again, and the verdict stays with code.
 - Nothing is asked that does not need asking. Items the system can measure never reach the user (previous section), and a value that came up earlier in the conversation is looked up rather than asked again (5.3, 6.2).
 - The gate stands only in front of irreversible execution (1). Reversible calls such as reads do not go through this at all.
 - This part gets better as models get better. Because the verdict sits outside the model, a gain in capability goes into the quality of the asking rather than into more authority.
@@ -342,14 +343,14 @@ user_answer → instruction → pre_set_data → measured_data → prior_state
 - user_answer: a response the user entered directly after an ask_user interaction. Empty on the first round.
 - instruction: a value taken, with its location specified, from a segment the user typed directly. When segments are labeled as the user's, pasted text, forwarded or quoted text, and attachments are excluded; they stay in the input as untrusted segments, even inside the user's message. The labels are set by the adopting system when the message arrives, before the model sees it, never by the model. Where the input path does not preserve that distinction, the labels cannot be trusted either.
 - pre_set_data: settings the user approved and stored in advance. A value that was used, or a value the model proposed, can become pre_set_data when the user approves it. A pre-set setting is either standing, holding until the user changes it, or one-use, ending once it has been used. The system stores the approved value as approved; the model does not (6.3). The record of what the user calls a tool is not part of it (4.1.1).
-- measured_data: system state confirmed on the spot by calling a system API. The lookup must be a live measurement.
+- measured_data: system state confirmed on the spot by calling a system API. The lookup must be a live measurement, and a measurement used in a verdict must be from that verdict. A measurement whose target depends on another value is made once that value is confirmed.
 - prior_state: a value inherited from a previous execution that the record confirms was executed. Applies to values only; conditions are not inherited. Inheritance alone does not confirm a slot. The value counts only after the user confirms it.
   - A value found at this source does not end the lookup. Once the user confirms it, it is confirmed as user_answer.
 - If no value is confirmed by the last step, the slot is UNKNOWN. It is NULL only when every declared check has reported nothing and no route remains (5.1). A route that ended at its ceiling has not reported nothing (4.5). Even when the model offers a value, that is only a claim about a location, and the gate checks whether a value is actually there. This structure does not assume the model is honest.
 
 ### 5.3 What instruction covers
 
-- Users start vague and settle on a tool after several exchanges. So instruction covers not just the last prompt, but the whole conversation segment leading up to the point where tool use was settled.
+- Users start vague and settle on a tool after several exchanges. So instruction covers not just the last prompt, but the whole conversation about that execution unit. What the user says in answering questions is part of it.
 - Implement it as a single prompt, and a value mentioned N turns earlier (an account number, for example) is found in no source, which leads to needless re-asking.
 
 ---
@@ -384,7 +385,7 @@ The two items below are different in kind. They concern tool selection, so viola
 
 ### 6.3 Responsibilities of the code gate
 
-- Build the checklist and count UNKNOWN slots. When Unknown Count == 0, judge the check complete. What is counted is whether checks happened.
+- Build the checklist and count UNKNOWN slots. If the declaration the checklist rests on cannot be obtained, no checklist is built and nothing executes. When Unknown Count == 0, judge the check complete. What is counted is whether checks happened.
 - Compare each confirmed slot with its declared requirement, and record the ones that fall short as unmet. A requirement is the standard the checklist declares on the slot (for a value, whether it is required; for a condition, what prohibits or permits). This covers a confirmed condition that prohibits execution (hold) and a required value confirmed as NULL. Unmet items are not counted. The comparison must be deterministic. A condition that cannot be compared stays UNKNOWN and routes to definition repair.
 - Walk the search order in 5.2, and check that a value actually exists at the location the slot points to. If it does not match, that source has not confirmed the slot, and the lookup moves to the next one.
 - Route each UNKNOWN slot to one of the three routes in 4.5, and record the route taken on that slot in the decision record. What the model receives is the list of blanks produced by the ask-the-user route (4.6).
