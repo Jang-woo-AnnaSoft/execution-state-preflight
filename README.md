@@ -72,7 +72,7 @@ Not a new layer. It does for the owner of each value what the frame already does
 
 **It divides responsibility and makes it traceable.** Which checklist an empty slot belongs to is where the responsibility lies: a value points to the source integration, a condition to the provider's declaration, an intent to the conversation design (spec 7.1). Today, with no record, an anomaly is left blamed on the agent developer or the model. A decision record cannot be made after the incident.
 
-**It opens other ways to improve.** It shows what to fix without retraining the model. None of the three types needs a training budget (spec 7.1). Rules are written as sentences instead of code: each one becomes an item that must pass before execution, and changing it needs no new branch and no deploy. The gate code stays the same as tools are added or models are swapped. Decision records become data by failure type, an input to model development (spec 7.2).
+**It opens other ways to improve.** It shows what to fix without retraining the model. None of the three types needs a training budget (spec 7.1). Rules are written as sentences instead of code: each one becomes an item that must pass before execution, and changing it needs no code change and no deploy. **Checks that developers used to hard-code move out of the code.** The gate code stays the same as tools are added or models are swapped. Decision records become data by failure type, an input to model development (spec 7.2).
 
 [The case report](./case-muse-marketplace.en.md) maps this incident's message log onto the checklists and is explicit about what this gate would **not** have caught.
 
