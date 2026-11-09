@@ -7,7 +7,7 @@ and checks it.
 **To use it, see [`adopt-example/`](../adopt-example/).** That folder holds only the files you keep.
 The gate code lives there (`gate.js`). This folder holds the comparison with v1 and every test.
 `hooks.js` and `graph.js` here only load `adopt-example/gate.js`. [`tool.json`](./tool.json) stands in
-for what the MCP server serves: the gate reads it through its port, as it would read the server.
+for the tool's declaration (`adopt-example/tool.md`, which the tests check it matches): the gate reads it through its port.
 
 In `hooks-example/` (v1), the hooks hold the rules. `tool.js` keeps the time format, the allowed
 sources and the provider's conditions as JS constants. `hooks.js` decides what "public place",
@@ -152,7 +152,7 @@ over-eager one also quotes the seller's limits.
 
 - that it holds only the files an adopter keeps; that its `tool.md` is the tool these tests run, and that no code there reads it;
 - that its `connect.js`, as shipped, fails closed: no server, no definition; no measurement, no run;
-- that with `TOOLS_FILE` the definition is read from the declaration file, run after run;
+- that the definition is read from `tool.md` by default, or from the files in `TOOLS_FILE`, run after run; and that the MCP connection kept as comments is still code;
 - that start, ask, reply and execute run end to end;
 - that its first decision equals this folder's in all 35 runs.
 
@@ -168,7 +168,7 @@ START → agent ─ tool call ─→ gate ─ execute ─→ execute → END
           └─ words, no call → END        └─ hold, definition_repair, exhausted, … → END
 ```
 
-- **The agent's model** reads the conversation and the server's tools, and calls one. What it puts in
+- **The agent's model** reads the conversation and the declared tools, and calls one. What it puts in
   the call's arguments is recorded and never used as a value. If it answers in words, the gate does not
   run and nothing executes.
 - **The gate** reads the called tool's definition, settles what it can, measures with the values it
@@ -198,8 +198,8 @@ ajv-formats 3.0.1, @langchain/langgraph 1.5.2, @langchain/core 1.2.20, zod 4.6.7
 - **No real model for the forms, the readings or the replies.** The forms a model writes for each line
   and condition, its reading of time words, and where a reply says yes come from the stand-in
   (`stub.js`). What the gate does with them is the real skeleton.
-- **No real MCP server.** `tool.json` stands in for what a server serves; the client's handling of a
-  changed tool list is not exercised here.
+- **No real MCP server.** The MCP connection in `adopt-example/connect.js` is kept as comments and is
+  checked only for syntax here.
 - **Model judgments the gate does not check.** Two remain, as the specification states. Whether to
   run now or later (C1) is the model's classification, taken as returned. Whether this act is this
   tool is the model's judgment, recorded as such (spec 8.1, 8.2); the stand-in always says yes.

@@ -75,10 +75,7 @@ const run = async (id, condition, over = {}, replies = []) => {
   console.log("--- 1. the folder holds only what an adopter keeps ---");
   const files = fs.readdirSync(ADOPT).filter(f => f !== "node_modules").sort();
   check("adopt-example files", files, ["README.md", "agent.js", "connect.js", "gate.js", "package-lock.json", "package.json", "principles.md", "tool.md"]);
-  // tool.md is a declaration of the tool. The code reads a declaration only where TOOLS_FILE points, and
-  //   the example must be the tool the tests run.
-  const code = ["agent.js", "connect.js", "gate.js"].map(f => fs.readFileSync(path.join(ADOPT, f), "utf8").replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, "")).join("\n");
-  check("  no file name in the code: a declaration is read only where TOOLS_FILE points", /tool\.md|tool\.json/.test(code), false);
+  // tool.md is the declaration the agent reads by default: it must be the tool the tests run.
   const md = fs.readFileSync(path.join(ADOPT, "tool.md"), "utf8");
   const blocks = [...md.matchAll(/```(\w+)\n([\s\S]*?)\n```/g)].map(m => [m[1], m[2]]);
   const texts = blocks.filter(([k]) => k === "text").map(([, b]) => b), json = blocks.find(([k]) => k === "json")?.[1];
@@ -90,36 +87,52 @@ const run = async (id, condition, over = {}, replies = []) => {
   check("principles.md: ten bullets, each word for word in spec 6.2", [bullets.length, bullets.filter(b => !spec.includes(b))], [10, []]);
   check("  and they are in the agent's system prompt", bullets.every(b => systemPrompt().includes(b)), true);
 
-  console.log("\n--- 2. connect.js as shipped fails closed ---");
-  const unread = await run("g4-01", "clean", { readToolDefinition: realConnect.readToolDefinition });
-  check("no MCP server set: the definition is not read, nothing runs", [unread.first.status, /tool definition not read/.test(unread.first.verdict?.reason ?? "")],
-    ["definition_repair", true]);
-  const unconnected = await run("g4-01", "clean", { measure: realConnect.measure });
-  check("no measurement connected: the [Required] lines unverified", unconnected.first.verdict.decision, "definition_repair");
-  check("  and nothing runs", unconnected.calls.length, 0);
-  check("an unconnected measurement reads as not measured", await realConnect.measure("order_status", { values: { item_id: "LST-2291" } }), { valid: false });
-
-  console.log("\n--- 2-b. building the tool too: the declaration file is the definition ---");
+  console.log("\n--- 2. connect.js as shipped: the tools from tool.md, and it fails closed ---");
   {
-    const os = require("os");
     const prior = process.env.TOOLS_FILE;
-    process.env.TOOLS_FILE = path.join(ADOPT, "tool.md");
+    delete process.env.TOOLS_FILE;
     const listed = await realConnect.listTools();
-    check("TOOLS_FILE: the tools are read from the declaration", [listed.length, JSON.stringify(listed[0]) === JSON.stringify(TOOL)], [1, true]);
+    check("by default the tools are read from tool.md, beside connect.js", [listed.length, JSON.stringify(listed[0]) === JSON.stringify(TOOL)], [1, true]);
+    const shipped = await run("g4-01", "clean", { readToolDefinition: realConnect.readToolDefinition, measure: realConnect.measure });
+    const measuredLines = shipped.first.verdict.provider_checklist.filter(c => /holds only when the system measurement/.test(c.form ?? ""));
+    check("as shipped: the definition is read, no measurement is connected, so nothing runs",
+      [shipped.first.verdict.decision, measuredLines.length, measuredLines.every(c => c.status === "unverified"), shipped.calls.length],
+      ["definition_repair", 2, true, 0]);
+    check("an unconnected measurement reads as not measured", await realConnect.measure("order_status", { values: { item_id: "LST-2291" } }), { valid: false });
+    let refused = null;
+    try { await realConnect.callTool("schedule_pickup", {}); } catch (e) { refused = e.message; }
+    check("an unconnected tool is not called", /not connected/.test(refused ?? ""), true);
+    const other = await run("g4-01", "clean", { readToolDefinition: async () => realConnect.readToolDefinition("cancel_pickup") });
+    check("a tool that is not declared: its definition is not read, nothing runs", [other.first.status, /tool definition not read/.test(other.first.verdict?.reason ?? "")],
+      ["definition_repair", true]);
+
+    console.log("\n--- 2-b. the declaration is the definition, read on every run ---");
+    const os = require("os");
     const fromFile = await run("g1-01", "clean", { readToolDefinition: realConnect.readToolDefinition }, ["yes"]);
-    check("  the gate reads it as it reads a server's list: executes the same", [fromFile.first.status, fromFile.last.status, fromFile.calls[0]?.args.time],
+    check("the gate reads tool.md: asks, the seller says yes, executes", [fromFile.first.status, fromFile.last.status, fromFile.calls[0]?.args.time],
       ["waiting", "executed", SAT_2PM]);
     const edited = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tools-")), "tool.md");
-    fs.writeFileSync(edited, fs.readFileSync(process.env.TOOLS_FILE, "utf8").replace("It is one moment.", "It is one moment, in the seller's time zone."));
+    fs.writeFileSync(edited, fs.readFileSync(path.join(ADOPT, "tool.md"), "utf8").replace("It is one moment.", "It is one moment, in the seller's time zone."));
     process.env.TOOLS_FILE = edited;
     const changed = await run("g1-01", "clean", { readToolDefinition: realConnect.readToolDefinition });
     const hashOf = async r => (await r.store.list(`user:schedule_pickup:t${thread}`)).find(x => x.tool_definition)?.tool_definition?.hash;
     const hChanged = await hashOf(changed);
-    process.env.TOOLS_FILE = path.join(ADOPT, "tool.md");
+    delete process.env.TOOLS_FILE;
     const same = await run("g1-01", "clean", { readToolDefinition: realConnect.readToolDefinition });
-    check("  a changed declaration is read on the next run, and the record shows it", hChanged !== await hashOf(same), true);
-    check("  a file that is not a declaration is not read", (() => { try { realConnect.readToolFile("# nothing"); return "read"; } catch { return "refused"; } })(), "refused");
-    if (prior === undefined) delete process.env.TOOLS_FILE; else process.env.TOOLS_FILE = prior;
+    check("TOOLS_FILE points elsewhere: that declaration is read, and the record shows the change", hChanged !== await hashOf(same), true);
+    check("a file that is not a declaration is not read", (() => { try { realConnect.readToolFile("# nothing"); return "read"; } catch { return "refused"; } })(), "refused");
+    if (prior !== undefined) process.env.TOOLS_FILE = prior;
+
+    // The MCP connection is kept in connect.js as comments, for tools on someone else's server. Uncommented,
+    //   it must still be code: checked here for syntax, not run.
+    const src = fs.readFileSync(path.join(ADOPT, "connect.js"), "utf8");
+    const start = src.indexOf("// let toolList = null;");
+    const end = src.indexOf("\n\n", src.indexOf("// async function mcpCallTool"));
+    const uncommented = src.slice(start, end).split("\n").map(l => l.replace(/^\/\/ ?/, "")).join("\n");
+    let syntax = "ok";
+    try { new Function("require", "process", `${uncommented}\nreturn { mcpListTools, mcpReadToolDefinition, mcpCallTool, CLIENT_OPTIONS };`); } catch (e) { syntax = e.message; }
+    check("the MCP connection kept as comments is code once uncommented", [start > 0, syntax], [true, "ok"]);
+    check("  it still keeps the server's requests for input behind the gate", /autoFulfill: false/.test(uncommented) && /listChanged/.test(uncommented), true);
   }
 
   console.log("\n--- 3. labelInput as shipped: only what the user typed is the user's ---");
@@ -164,15 +177,9 @@ const run = async (id, condition, over = {}, replies = []) => {
   const cancelled = await run("g1-01", "clean", {}, ["CANCEL"]);
   check("the seller stops: nothing runs", [cancelled.last.status, cancelled.calls.length], ["cancelled", 0]);
 
-  console.log("\n--- 4-b. a server that asks for more input does not get it behind the gate ---");
-  check("the MCP client is set not to answer input_required itself", realConnect.CLIENT_OPTIONS.inputRequired?.autoFulfill, false);
-  check("  and declares elicitation, so the request comes back as data", JSON.stringify(realConnect.CLIENT_OPTIONS.capabilities?.elicitation), "{}");
-  check("  and to speak 2026-07-28 when the server offers it", realConnect.CLIENT_OPTIONS.versionNegotiation?.mode, "auto");
-  check("  and follows the server's notices that its tool list changed", typeof realConnect.CLIENT_OPTIONS.listChanged?.tools?.onChanged, "function");
+  console.log("\n--- 4-b. a call that does not complete is not counted as executed ---");
+  // A server's request for input (MCP input_required), as the MCP connection hands it back.
   const ask = { method: "elicitation/create", params: { mode: "form", message: "Card PIN?", requestedSchema: { type: "object", properties: { pin: { type: "string" } } } } };
-  check("an input_required result is handed back as such", realConnect.toToolResult({ resultType: "input_required", inputRequests: { pin: ask } }), { inputRequired: { pin: ask } });
-  const done = { resultType: "complete", content: [{ type: "text", text: "scheduled" }] };
-  check("  a complete result passes through", realConnect.toToolResult(done), done);
   for (const [label, result, want] of [
     ["the server asked during the call: stopped, not executed", async () => ({ inputRequired: { pin: ask } }), "input_required"],
     ["the tool reports an error: not counted as executed", async () => ({ isError: true, content: [{ type: "text", text: "slot taken" }] }), "tool_error"],
