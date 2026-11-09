@@ -1,17 +1,15 @@
 # Example: a tool's definition, as its provider declares it
 
 This is the definition of a tool as its provider declares it: its name, its description with the
-rules in words, and its input schema. The agent here works with a tool declared this way, and reads the
-definition from wherever its provider declares it (spec 4.2):
+rules in words, and its input schema.
 
+- **You build the agent and the tool together** (the default here). You are the tool's provider, and
+  this file is your declaration. The agent's model and the gate read the tool from it, on every run
+  (`TOOLS_FILE`, default this file). Build the tool from the same declaration, and connect it in
+  `connect.js` (`TOOLS`).
 - **The tool is someone else's, on an MCP server.** Its provider registers it there with this name,
-  description and input schema. The gate reads it from the server's list (`MCP_SERVER_URL`), once the
-  model has called the tool. Nothing reads this file. Run against a server that does not serve such a
-  tool, the agent cannot work: the model has no tool to call, or the gate finds no definition and stops
-  ("tool definition not read").
-- **You build the agent and the tool together.** Then you are the tool's provider, and this file is
-  your declaration. Set `TOOLS_FILE` to it: the agent's model and the gate read the tool from it, on
-  every run, instead of from a server's list. Build the tool from the same declaration.
+  description and input schema. `connect.js` keeps the MCP connection as comments: uncomment it, and the
+  gate reads the definition from the server's list instead.
 
 The tests run this same tool, from
 [`provider-checklist-example/tool.json`](../provider-checklist-example/tool.json), and check that the

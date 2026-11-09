@@ -5,13 +5,12 @@
  *
  *   ask                 the model, for the gate's questions to it: told where to look, it reports where
  *                       the user's words are, and writes what it is asked to write as JSON
- *   chat                the agent's model: reads the conversation and the server's tools, and calls a tool
- *   listTools           the tools your MCP server serves, as the client lists them, or your own
- *                       declaration of them (TOOLS_FILE) when you build them too
+ *   chat                the agent's model: reads the conversation and the tools, and calls a tool
+ *   listTools           the tools, as you declare them (tool.md); or as an MCP server lists them
  *   readToolDefinition  one tool's definition, from that list: the gate reads it itself
  *   measure             your system's values, read when the gate asks, with the values it has settled
  *   labelInput          who wrote each part of an incoming message
- *   callTool            the real tool call
+ *   callTool            the real tool call: your own tool; or the MCP server's
  *   store               where decision records and kept translations go
  *   checkpointer        where a conversation waits while the user answers
  *
@@ -20,9 +19,9 @@
  *                    Install that provider's package too (e.g. npm install @langchain/anthropic).
  *                    The provider package reads its own key from the environment
  *                    (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY).
- *   MCP_SERVER_URL   the MCP server that serves the tools
- *   TOOLS_FILE       instead of the server's list: your own declaration of the tools, when you build
- *                    them too (files in the format of tool.md, separated by commas)
+ *   TOOLS_FILE       your declaration of the tools: files in the format of tool.md, separated by
+ *                    commas (default ./tool.md, beside this file)
+ *   MCP_SERVER_URL   only with the MCP connection below, uncommented: the server that serves the tools
  *   RECORD_PATH      where the records file goes (default ./records.jsonl)
  *
  * A function left unconnected fails closed: a measurement that is not connected is "not measured", so
@@ -30,6 +29,7 @@
  */
 
 const fs = require("fs");
+const path = require("path");
 const { MemorySaver } = require("@langchain/langgraph");
 
 // ── the model ──────────────────────────────────────────────────────────────────────────────────
@@ -70,7 +70,57 @@ async function chat({ system, messages, tools }) {
   return call ? { toolCall: { name: call.name, arguments: call.args ?? null } } : { text: textOf(res) };
 }
 
-// ── the MCP client: the tools, and the call ────────────────────────────────────────────────────
+// ── the tools: your declaration, and your call ─────────────────────────────────────────────────
+// You build the agent and the tools together, so you are the tools' provider (spec 4.2), and a file in
+//   the format of tool.md is your declaration of them: name, description with the rules in words, input
+//   schema. The agent's model and the gate read the tools from it, on every run. Build the tools from
+//   the same declaration: a tool that does something its declaration does not say is the provider's
+//   gap, here as anywhere.
+function readToolFile(text) {
+  const block = (heading, kind) => {
+    const at = text.search(new RegExp(`^## ${heading}\\s*$`, "m"));
+    if (at < 0) throw new Error(`tool file: no "## ${heading}" section`);
+    const m = new RegExp("```" + kind + "\\n([\\s\\S]*?)\\n```").exec(text.slice(at));
+    if (!m) throw new Error(`tool file: no ${kind} block under "## ${heading}"`);
+    return m[1];
+  };
+  return { name: block("Name", "text").trim(), description: block("Description", "text"),
+           inputSchema: JSON.parse(block("Input schema", "json")) };
+}
+const toolFiles = () => (process.env.TOOLS_FILE ?? path.join(__dirname, "tool.md"))
+  .split(",").map(f => f.trim()).filter(Boolean);
+
+async function listTools() {
+  return toolFiles().map(f => readToolFile(fs.readFileSync(f, "utf8")));
+}
+
+async function readToolDefinition(name) {
+  const tool = (await listTools()).find(t => t.name === name);
+  if (!tool) throw new Error(`no tool named ${JSON.stringify(name)} is declared`);
+  return tool;
+}
+
+// Your tools, by name: each takes the gate's arguments and does the thing. Called only with the gate's
+//   arguments, after it decided to execute. A tool not connected here is not called: the run ends as
+//   call_failed, and nothing happened.
+const TOOLS = {
+  // schedule_pickup: async args => pickups.create(args),
+};
+
+async function callTool(name, args) {
+  const run = TOOLS[name];
+  if (!run) throw new Error(`the tool ${JSON.stringify(name)} is not connected in connect.js`);
+  return run(args);
+}
+
+// ── or: the tools on an MCP server ─────────────────────────────────────────────────────────────
+// When the tools are someone else's, served by an MCP server, read them from the server instead: set
+//   MCP_SERVER_URL, uncomment this block, and use mcpListTools, mcpReadToolDefinition and mcpCallTool
+//   as listTools, readToolDefinition and callTool (module.exports, at the end of this file).
+//   The provider writes the rules in the tool's description on the server; the gate reads them from
+//   the server's list. Note that a [Required] line can only be checked if your system can measure what
+//   it names — often data on the provider's side.
+//
 // MCP 2026-07-28 lets a server answer tools/call with input_required: it asks the user for more input
 //   (an elicitation) before it completes the call. The client would normally answer that itself and
 //   retry. Here it must not: input gathered that way reaches the tool without going through the
@@ -84,72 +134,51 @@ async function chat({ system, messages, tools }) {
 //   the list on each notice and the gate reads that list; otherwise the list is read again for each
 //   definition the gate reads. Either way the gate reads what the server serves, and the record keeps
 //   a hash of the definition it read.
-// TOOLS_FILE: when you build the agent and the tools together, you are the tools' provider (spec 4.2),
-//   and a file in the format of tool.md is your declaration. The agent's model and the gate then read
-//   the tools from it, every time, instead of from a server's list. Build the tools themselves from the
-//   same declaration: a tool that does something its declaration does not say is the provider's gap,
-//   here as anywhere.
-function readToolFile(text) {
-  const block = (heading, kind) => {
-    const at = text.search(new RegExp(`^## ${heading}\\s*$`, "m"));
-    if (at < 0) throw new Error(`tool file: no "## ${heading}" section`);
-    const m = new RegExp("```" + kind + "\\n([\\s\\S]*?)\\n```").exec(text.slice(at));
-    if (!m) throw new Error(`tool file: no ${kind} block under "## ${heading}"`);
-    return m[1];
-  };
-  return { name: block("Name", "text").trim(), description: block("Description", "text"),
-           inputSchema: JSON.parse(block("Input schema", "json")) };
-}
-function toolsFromFiles(list) {
-  return list.split(",").map(f => f.trim()).filter(Boolean).map(f => readToolFile(fs.readFileSync(f, "utf8")));
-}
-
-let toolList = null;
-const CLIENT_OPTIONS = {
-  versionNegotiation: { mode: "auto" },     // 2026-07-28 with a server that offers it, 2025 otherwise
-  inputRequired: { autoFulfill: false },    // never answer a server's request for input behind the gate
-  capabilities: { elicitation: {} },        // so the request is handed back, not refused
-  listChanged: { tools: { onChanged: (error, tools) => { toolList = error ? null : tools; } } },
-};
-
-// { inputRequired } when the server asked for input instead of completing; the result otherwise.
-function toToolResult(result) {
-  const { isInputRequiredResult } = require("@modelcontextprotocol/client");
-  return isInputRequiredResult(result) ? { inputRequired: result.inputRequests ?? {} } : result;
-}
-
-let mcpClient = null;
-async function client() {
-  if (!mcpClient) {
-    if (!process.env.MCP_SERVER_URL) throw new Error("set MCP_SERVER_URL");
-    const { Client, StreamableHTTPClientTransport } = require("@modelcontextprotocol/client");
-    const c = new Client({ name: "adopt-example", version: "1.0.0" }, CLIENT_OPTIONS);
-    await c.connect(new StreamableHTTPClientTransport(new URL(process.env.MCP_SERVER_URL)));
-    mcpClient = c;
-  }
-  return mcpClient;
-}
-
-async function listTools() {
-  if (process.env.TOOLS_FILE) return toolsFromFiles(process.env.TOOLS_FILE);
-  const c = await client();
-  const announces = c.getServerCapabilities()?.tools?.listChanged === true;
-  if (!toolList || !announces) toolList = (await c.listTools(undefined, { cacheMode: "refresh" })).tools;
-  return toolList;
-}
-
-async function readToolDefinition(name) {
-  const tool = (await listTools()).find(t => t.name === name);
-  if (!tool) throw new Error(`the server lists no tool named ${JSON.stringify(name)}`);
-  return tool;
-}
-
-// Called only with the gate's own arguments, after it decided to execute. With TOOLS_FILE and no MCP
-//   server, put your own call to the tool here.
-async function callTool(name, args) {
-  const c = await client();
-  return toToolResult(await c.callTool({ name, arguments: args }, { allowInputRequired: true }));
-}
+//
+// let toolList = null;
+// const CLIENT_OPTIONS = {
+//   versionNegotiation: { mode: "auto" },     // 2026-07-28 with a server that offers it, 2025 otherwise
+//   inputRequired: { autoFulfill: false },    // never answer a server's request for input behind the gate
+//   capabilities: { elicitation: {} },        // so the request is handed back, not refused
+//   listChanged: { tools: { onChanged: (error, tools) => { toolList = error ? null : tools; } } },
+// };
+//
+// // { inputRequired } when the server asked for input instead of completing; the result otherwise.
+// function toToolResult(result) {
+//   const { isInputRequiredResult } = require("@modelcontextprotocol/client");
+//   return isInputRequiredResult(result) ? { inputRequired: result.inputRequests ?? {} } : result;
+// }
+//
+// let mcpClient = null;
+// async function client() {
+//   if (!mcpClient) {
+//     if (!process.env.MCP_SERVER_URL) throw new Error("set MCP_SERVER_URL");
+//     const { Client, StreamableHTTPClientTransport } = require("@modelcontextprotocol/client");
+//     const c = new Client({ name: "adopt-example", version: "1.0.0" }, CLIENT_OPTIONS);
+//     await c.connect(new StreamableHTTPClientTransport(new URL(process.env.MCP_SERVER_URL)));
+//     mcpClient = c;
+//   }
+//   return mcpClient;
+// }
+//
+// async function mcpListTools() {
+//   const c = await client();
+//   const announces = c.getServerCapabilities()?.tools?.listChanged === true;
+//   if (!toolList || !announces) toolList = (await c.listTools(undefined, { cacheMode: "refresh" })).tools;
+//   return toolList;
+// }
+//
+// async function mcpReadToolDefinition(name) {
+//   const tool = (await mcpListTools()).find(t => t.name === name);
+//   if (!tool) throw new Error(`the server lists no tool named ${JSON.stringify(name)}`);
+//   return tool;
+// }
+//
+// // Called only with the gate's own arguments, after it decided to execute.
+// async function mcpCallTool(name, args) {
+//   const c = await client();
+//   return toToolResult(await c.callTool({ name, arguments: args }, { allowInputRequired: true }));
+// }
 
 // ── measure: your system's values ──────────────────────────────────────────────────────────────
 // One entry per measurement this system can read. The names are what a comparable form may name. The
@@ -213,4 +242,6 @@ const store = {
 const checkpointer = new MemorySaver();
 
 module.exports = { ask, chat, listTools, readToolDefinition, measure, labelInput, callTool, store, checkpointer,
-                   MEASUREMENTS, MODEL_NAME, CLIENT_OPTIONS, toToolResult, readToolFile };
+                   MEASUREMENTS, TOOLS, MODEL_NAME, readToolFile };
+// With the MCP connection above uncommented:
+//   listTools: mcpListTools, readToolDefinition: mcpReadToolDefinition, callTool: mcpCallTool

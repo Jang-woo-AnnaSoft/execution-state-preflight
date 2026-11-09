@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * The agent: your model and your MCP server's tools (connect.js), the gate (gate.js), your principles
+ * The agent: your model and your tools (connect.js, tool.md), the gate (gate.js), your principles
  * (principles.md) in the system prompt. You should not need to edit this file.
  *
  *   const { createAgent } = require("./agent");
