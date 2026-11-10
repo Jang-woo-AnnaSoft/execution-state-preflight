@@ -33,6 +33,16 @@ The model's output is not grounds for execution. It is input for preparing execu
 
 Two decision authorities move out of the model. Definition authority, the authority to decide what gets checked, goes to whoever declares the checklist. Verdict authority, the authority to judge whether every checklist item has been checked, goes to the counting code. The verdict ends in a record, and execution is left to an external party that reads that record.
 
+For a verdict to serve as grounds for execution, each of these questions needs an answer.
+
+| Question | Where it is covered |
+| --- | --- |
+| Who decided what gets checked? | 3.3, 4 |
+| Where did the value come from? | 2.4, 5 |
+| Was everything checked? | 3.4, 6.3 |
+| Is there a record of the grounds? | 6.4 |
+| Is there a path to execution without it? | 3.5; limits in 8.2 |
+
 ### 0.1 Relationship to existing assets
 
 - This is not a new architecture. It extends two assets that already exist: the tool list and the input schema.
