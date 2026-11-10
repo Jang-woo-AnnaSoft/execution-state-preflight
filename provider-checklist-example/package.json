@@ -1,12 +1,13 @@
 {
   "name": "provider-checklist-example",
   "private": true,
-  "description": "Verifies adopt-example/gate.js: the pickup tool with every rule declared, compared with hooks-example (v1) on the same inputs",
+  "description": "Verifies adopt-example/judge-only.js and gate.js: the pickup tool with every rule declared, compared with hooks-example (v1) on the same inputs",
   "scripts": {
     "setup": "npm ci --prefix ../adopt-example",
-    "check": "npm ci --prefix ../adopt-example --silent && node test.js && node compare.js > /dev/null && node graph-test.js && node adopt-test.js",
+    "check": "npm ci --prefix ../adopt-example --silent && node test.js && node compare.js > /dev/null && node graph-test.js && node adopt-test.js && node judge-only-test.js",
     "compare": "node compare.js",
     "graph": "node graph-test.js",
-    "adopt": "node adopt-test.js"
+    "adopt": "node adopt-test.js",
+    "judge-only": "node judge-only-test.js"
   }
 }

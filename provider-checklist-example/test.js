@@ -188,18 +188,21 @@ async function run(id, condition, over = {}) {
   check("every v2 run checked the provider's sale line", all.every(r => r.v2.checks.includes(`${saleName}:checked`)), true);
 
   console.log("\n--- 7. the gate holds no rule of its own ---");
-  // The code lives in adopt-example/gate.js, the file an adopter copies unchanged.
-  const src = fs.readFileSync(path.join(__dirname, "..", "adopt-example", "gate.js"), "utf8").replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, "");
+  // The code lives in adopt-example/: judge-only.js judges and gate.js is the flow around it. An adopter
+  //   copies both unchanged.
+  const strip = f => fs.readFileSync(path.join(__dirname, "..", "adopt-example", f), "utf8").replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, "");
+  const judgeSrc = strip("judge-only.js"), gateSrc = strip("gate.js"), src = judgeSrc + "\n" + gateSrc;
   const named = Object.keys(TOOL.inputSchema.properties).filter(n => new RegExp(`["'\`]${n}["'\`]`).test(src));
-  check("no slot name appears in gate.js code", named, []);
+  check("no slot name appears in judge-only.js or gate.js code", named, []);
   const ids = S.instructions.flatMap(i => (i.user_checklist ?? []).map(x => x.id));
-  check("no item id appears in gate.js code", [...new Set(ids)].filter(id => src.includes(id)), []);
-  check("no measurement name appears in gate.js code", ["order_status", "listing_owned_by_seller"].filter(n => src.includes(n)), []);
-  const required = [...src.matchAll(/require\("([^"]+)"\)/g)].map(m => m[1]);
-  check("gate.js loads LangGraph, the skeleton and a validator, nothing else", required,
-    ["@langchain/langgraph", "./execution-state-preflight", "../execution-state-preflight", "ajv", "ajv-formats"]);
+  check("no item id appears in judge-only.js or gate.js code", [...new Set(ids)].filter(id => src.includes(id)), []);
+  check("no measurement name appears in judge-only.js or gate.js code", ["order_status", "listing_owned_by_seller"].filter(n => src.includes(n)), []);
+  const requires = text => [...text.matchAll(/require\("([^"]+)"\)/g)].map(m => m[1]);
+  check("judge-only.js loads the skeleton and a validator, nothing else", requires(judgeSrc),
+    ["./execution-state-preflight", "../execution-state-preflight", "ajv", "ajv-formats"]);
+  check("gate.js loads LangGraph and judge-only.js, nothing else", requires(gateSrc), ["@langchain/langgraph", "./judge-only"]);
   // pattern and format appear only as keys passed through from the schema to the question form.
-  check("no comparison of its own: no comparison keyword appears in gate.js code",
+  check("no comparison of its own: no comparison keyword appears in judge-only.js or gate.js code",
     ["formatMinimum", "formatMaximum", "const:", "maximum", "not_after", "not_before"].filter(k => src.includes(k)), []);
 
   console.log(failed ? `\n${failed} FAILED` : "\nall ok");

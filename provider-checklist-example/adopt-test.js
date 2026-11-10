@@ -74,7 +74,7 @@ const run = async (id, condition, over = {}, replies = []) => {
 (async () => {
   console.log("--- 1. the folder holds only what an adopter keeps ---");
   const files = fs.readdirSync(ADOPT).filter(f => f !== "node_modules").sort();
-  check("adopt-example files", files, ["README.md", "agent.js", "connect.js", "gate.js", "package-lock.json", "package.json", "principles.md", "tool.md"]);
+  check("adopt-example files", files, ["README.md", "agent.js", "connect.js", "gate.js", "judge-only-example.js", "judge-only.js", "package-lock.json", "package.json", "principles.md", "tool.md"]);
   // tool.md is the declaration the agent reads by default: it must be the tool the tests run.
   const md = fs.readFileSync(path.join(ADOPT, "tool.md"), "utf8");
   const blocks = [...md.matchAll(/```(\w+)\n([\s\S]*?)\n```/g)].map(m => [m[1], m[2]]);
@@ -157,7 +157,7 @@ const run = async (id, condition, over = {}, replies = []) => {
     check("  an unknown key lists nothing", out.none, []);
     const mem = gate.createStorage();
     await mem.persist("k", { n: 1 }); await mem.persist("k", { n: 2 });
-    check("gate.js createStorage: list too", (await mem.list("k")).map(r => r.n), [1, 2]);
+    check("judge-only.js createStorage (gate.js hands it on): list too", (await mem.list("k")).map(r => r.n), [1, 2]);
   }
 
   console.log("\n--- 4. start, ask, reply, execute ---");

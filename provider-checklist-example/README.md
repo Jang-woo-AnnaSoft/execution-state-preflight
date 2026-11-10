@@ -5,7 +5,7 @@ and into a declaration. This folder shows what changes when the provider declare
 and checks it.
 
 **To use it, see [`adopt-example/`](../adopt-example/).** That folder holds only the files you keep.
-The gate code lives there (`gate.js`). This folder holds the comparison with v1 and every test.
+The gate code lives there (`judge-only.js` judges, `gate.js` is the flow around it). This folder holds the comparison with v1 and every test.
 `hooks.js` and `graph.js` here only load `adopt-example/gate.js`. [`tool.json`](./tool.json) stands in
 for the tool's declaration (`adopt-example/tool.md`, which the tests check it matches): the gate reads it through its port.
 
@@ -117,7 +117,7 @@ seller is asked. They still matter, for two reasons.
 
 ```
 npm run compare      # the table: every instruction, every condition, two stand-in extractors
-npm run check        # installs adopt-example's packages, then test.js, the table, graph-test.js and adopt-test.js
+npm run check        # installs adopt-example's packages, then test.js, the table, graph-test.js, adopt-test.js and judge-only-test.js
 ```
 
 Both arms get the same user turn, the same measurements and the same stand-in model
@@ -145,8 +145,8 @@ over-eager one also quotes the seller's limits.
 - each behaviour above;
 - that the outcome changes are exactly these;
 - that a schema the validator cannot run leaves the check unverified;
-- that the gate's code (`adopt-example/gate.js`) names no slot, condition or item, holds no
-  comparison keyword of its own, and loads nothing but LangGraph, the skeleton and the validator.
+- that the gate's code (`adopt-example/judge-only.js` and `gate.js`) names no slot, condition or item,
+  holds no comparison keyword of its own, and loads nothing but LangGraph, the skeleton and the validator.
 
 `adopt-test.js` checks `adopt-example/` itself, from here, so that folder holds no test files:
 
@@ -155,6 +155,16 @@ over-eager one also quotes the seller's limits.
 - that the definition is read from `tool.md` by default, or from the files in `TOOLS_FILE`, run after run; and that the MCP connection kept as comments is still code;
 - that start, ask, reply and execute run end to end;
 - that its first decision equals this folder's in all 35 runs.
+
+`judge-only-test.js` checks the path for an agent that already exists (`adopt-example/judge-only.js`,
+run through `judge-only-example.js` itself):
+
+- that ask, reply and execute run end to end, with the arguments read from the record;
+- that what judging returns carries no arguments and no decision, and that judging executes nothing;
+- that a record that is not ready is not executed, for each thing the agent's side reads;
+- that a call that does not complete is recorded as failed;
+- that its first decision equals this folder's in all 35 runs, and that the agent's side reads every
+  verdict record the same way the gate decided.
 
 ## In a LangGraph graph
 
