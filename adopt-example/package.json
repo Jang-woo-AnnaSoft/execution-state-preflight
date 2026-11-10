@@ -3,7 +3,8 @@
   "private": true,
   "description": "The files an adopter keeps: the rules written down, the connections to their own system, and the gate",
   "scripts": {
-    "start": "node agent.js"
+    "start": "node agent.js",
+    "start:judge-only": "node judge-only-example.js"
   },
   "dependencies": {
     "@langchain/core": "1.2.20",
