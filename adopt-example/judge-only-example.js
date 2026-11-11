@@ -124,11 +124,17 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
       conversation.push({ trust: "assistant", text: question.message });
       return { status: "waiting", question, notices: r.notices };
     }
+    // The gate could not tell what is wanted, or which tool it maps to. Its own words are shown as they
+    //   are; the user says it again, and the next turn judges again.
+    if (r.ask && r.message) {
+      conversation.push({ trust: "assistant", text: r.message });
+      return { status: "waiting", question: { text: r.message, block: [], message: r.message, options: r.options }, notices: r.notices };
+    }
 
     // 4. Nothing to ask. Read the record this round wrote, and decide from it.
     const record = r.key ? (await connect.store.list(r.key)).filter(x => x && "execution_decision" in x).at(-1) : null;
     if (!readyToExecute(record, toolCall.name)) {
-      return { status: "not_executed", reason: record?.reason ?? r.reason, notices: r.notices };
+      return { status: "not_executed", reason: record?.reason ?? r.reason, message: r.message, notices: r.notices };
     }
     const name = record.tool_call.name, args = record.call_arguments;
     let result;
@@ -171,6 +177,7 @@ if (require.main === module) {
     }
     rl.close();
     if (r.reply) console.log(`\n${r.reply}`);
+    if (r.message) console.log(`\n${r.message}`);
     for (const n of r.notices ?? []) console.log(`Note: ${n}`);
     console.log(`\n${r.status}`, r.executedWith ? JSON.stringify(r.executedWith) : (r.reason ?? r.callError ?? ""));
   })().catch(e => { console.error(e.message); process.exit(1); });

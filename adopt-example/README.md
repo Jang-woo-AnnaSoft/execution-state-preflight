@@ -138,6 +138,8 @@ const judge = createJudge({ ask, measure, readToolDefinition, measurements, stor
 const r = await judge.run({ unitKey, conversation, toolCall, userChecklist });
 if (r.questions.length > 0) {
   // show your model's words, then r.block exactly as it is; add the reply to the conversation; run again
+} else if (r.ask && r.message) {
+  // the gate could not tell what is wanted: show r.message as it is; the user says it again; run again
 } else {
   const record = (await storage.list(r.key)).at(-1);       // the record this round wrote
   if (readyToExecute(record, toolCall.name)) {              // your own reading of it

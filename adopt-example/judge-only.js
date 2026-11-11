@@ -12,7 +12,9 @@
  *   const judge = createJudge({ ask, measure, readToolDefinition, measurements, storage, userId });
  *   const r = await judge.run({ unitKey, conversation, toolCall, userChecklist });
  *   // r.key        the record's key: read the record from your storage under it
- *   // r.questions  what is still to ask the user (empty: nothing to ask)
+ *   // r.ask        the gate is waiting on the user
+ *   // r.questions  what is still to ask the user about values and conditions
+ *   // r.message    the gate's own words, when it could not tell what is wanted: show them as they are
  *   // r.block      the values as code wrote them, and the provider's notices: show them unchanged
  *   // r.notices    the provider's notices on their own, for a round that asks nothing
  *   // r.reason     why, in words
@@ -388,13 +390,16 @@ function createStorage() {
 
 // One round: judge the tool call against the conversation so far, and write the record. Returns the
 //   skeleton's state. gate.js reads it; createJudge hands on only what there is to ask.
+//   intentAttempt: how many times this conversation was already asked to restate what it wants done.
+//   The caller carries it (the skeleton's contract): those records have no key to count them under.
+//   How often the tool was asked about, the skeleton counts itself, from the unit's records.
 async function judgeRound({ ask, model = "model", runId = "run", unitKey = null, measure, readToolDefinition, measurements = [],
-                            storage, userId = "user", conversation, toolCall, userChecklist }) {
+                            storage, userId = "user", conversation, toolCall, userChecklist, intentAttempt = 0 }) {
   const hooks = createHooks({ ask, model, runId, unitKey, measure, readToolDefinition, measurements });
   const preflight = createPreflight({ hooks, storage });
   const st = await preflight.runPreflight({
     userId, instruction: conversation, toolCall, preSetData: {},
-    userChecklist, intent_attempt: 0, tool_attempt: 0,
+    userChecklist, intent_attempt: intentAttempt, tool_attempt: 0,
   });
   await preflight.recordExecutionState(st);
   return st;
@@ -427,18 +432,30 @@ function createJudge({ ask, measure, readToolDefinition, measurements = [], stor
     throw new Error("createJudge: storage with persist, load and list is required");
   }
   let round = 0;
+  // How often each conversation was asked to restate what it wants done (see judgeRound).
+  const intentAttempts = new Map();
 
   // unitKey: the same for every turn of one conversation. A reply counts only for a question asked in it.
   // conversation: every segment so far, each with who wrote it ("user" only for what the user typed).
   async function run({ unitKey, conversation, toolCall, userChecklist = [] }) {
     round += 1;
     const st = await judgeRound({ ask, model, runId: `${runId}-${round}`, unitKey, measure, readToolDefinition, measurements,
-                                  storage, userId, conversation, toolCall, userChecklist });
+                                  storage, userId, conversation, toolCall, userChecklist,
+                                  intentAttempt: intentAttempts.get(unitKey) ?? 0 });
+    // Raised only while the gate keeps asking for a restatement; anything else starts the count again.
+    const next = st.gate?.next_intent_attempt;
+    if (Number.isInteger(next)) intentAttempts.set(unitKey, next); else intentAttempts.delete(unitKey);
     const asking = st.execution_decision === "ask_user";
     return {
       key: st.action_key ?? null,
+      // The gate is waiting on the user: show the question, add the reply, run again.
+      ask: asking,
       questions: asking ? (st.gate?.questions ?? []) : [],
       block: asking ? [...(st.gate?.question_block ?? []), ...(st.gate?.disclosures ?? []).map(d => `Note: ${d.description}`)] : [],
+      // The gate's own words, when it could not tell what is wanted, or which tool it maps to. Shown as
+      //   they are: there is nothing yet for a model to ask about. options: what to choose between, if any.
+      message: typeof st.gate?.user_message === "string" ? st.gate.user_message : null,
+      options: st.gate?.branch_options ?? null,
       notices: (st.gate?.disclosures ?? []).map(d => d.description),
       reason: st.reason,
     };

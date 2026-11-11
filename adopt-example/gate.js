@@ -42,6 +42,8 @@ const State = Annotation.Root({
   verdict: Annotation({ reducer: last, default: () => null }),
   // What the assistant asked: its words, and the values as code wrote them.
   question: Annotation({ reducer: last, default: () => null }),
+  // How often this conversation was asked to restate what it wants done (the caller carries it).
+  intentAttempt: Annotation({ reducer: last, default: () => 0 }),
   // The model answered in words without calling a tool.
   reply: Annotation({ reducer: last, default: () => null }),
   ended: Annotation({ reducer: last, default: () => null }),
@@ -113,10 +115,14 @@ function buildGraph({ ask, chat, listTools, readToolDefinition, measure, callToo
     const unitKey = config?.configurable?.thread_id ?? runId;
     const st = await judgeRound({ ask, model, runId: `${runId}-${round}`, unitKey, measure, readToolDefinition, measurements,
                                   storage, userId, conversation: state.conversation, toolCall: state.toolCall,
-                                  userChecklist: state.userChecklist });
-    return { verdict: {
+                                  userChecklist: state.userChecklist, intentAttempt: state.intentAttempt ?? 0 });
+    const next = st.gate?.next_intent_attempt;
+    return { intentAttempt: Number.isInteger(next) ? next : 0, verdict: {
       decision: st.execution_decision,
       reason: st.reason,
+      // The gate's own words, when it could not tell what is wanted or which tool it maps to.
+      user_message: typeof st.gate?.user_message === "string" ? st.gate.user_message : null,
+      options: st.gate?.branch_options ?? null,
       key: st.action_key ?? null,
       tool: st.tool_call?.name ?? null,
       questions: st.gate?.questions ?? [],
@@ -134,6 +140,11 @@ function buildGraph({ ask, chat, listTools, readToolDefinition, measure, callToo
   //   ([RENDERED VALUES]), and a yes approves exactly those. The provider's notices go with it.
   async function question(state) {
     const v = state.verdict;
+    // Nothing listed to ask about: the gate could not tell what is wanted. Its own words, as they are.
+    if (v.questions.length === 0) {
+      return { question: { text: v.user_message, block: [], message: v.user_message, options: v.options },
+               conversation: [{ trust: "assistant", text: v.user_message }] };
+    }
     let text;
     try {
       const out = await ask(model,
@@ -212,8 +223,8 @@ function buildGraph({ ask, chat, listTools, readToolDefinition, measure, callToo
     .addConditionalEdges("agent", s => (s.toolCall && !s.ended ? "gate" : END), ["gate", END])
     // Asking is routed on what the gate returned. Execution is not: every round that asks nothing goes
     //   on to the executing step, which reads the record.
-    .addConditionalEdges("gate", s => (s.verdict.decision === "ask_user" && s.verdict.questions.length > 0 ? "ask_user" : "execute"),
-      ["ask_user", "execute"])
+    .addConditionalEdges("gate", s => (s.verdict.decision === "ask_user" && (s.verdict.questions.length > 0 || s.verdict.user_message)
+      ? "ask_user" : "execute"), ["ask_user", "execute"])
     .addEdge("ask_user", "wait")
     // After the reply the model reads the conversation again and calls a tool: the same one continues the
     //   unit; another one is another unit, and the first unit's records stay as they are.
