@@ -17,6 +17,7 @@
  *   // r.notices    the provider's notices on their own, for a round that asks nothing
  *   // r.reason     why, in words
  *   await judge.recordResult(record, { ok, error });   // after YOUR agent executed, or failed to
+ *   judge.toolsForModel(tools)   // the skeleton's: the tools as your model is given them, without the labelled lines
  *
  * What run returns carries no arguments for the call and no decision to execute. Both are in the record,
  * and the executing side reads them there (spec 3.5). judge-only-example.js shows the whole of it.
@@ -34,7 +35,7 @@
  */
 
 // The skeleton: one file, copied beside this folder (the repository layout) or into it.
-const { createPreflight, labelledLines, readTranslatedForms, renderValue } = (() => {
+const { createPreflight, labelledLines, toolsForModel, readTranslatedForms, renderValue } = (() => {
   try { return require("./execution-state-preflight"); }
   catch (e) { if (e.code !== "MODULE_NOT_FOUND") throw e; return require("../execution-state-preflight"); }
 })();
@@ -446,10 +447,10 @@ function createJudge({ ask, measure, readToolDefinition, measurements = [], stor
   const recordResult = (record, outcome) =>
     writeResult({ ask, model, runId: `${runId}-result`, measure, readToolDefinition, measurements, storage }, record, outcome);
 
-  return { run, recordResult };
+  return { run, recordResult, toolsForModel };
 }
 
 module.exports = {
-  createJudge, judgeRound, writeResult, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
+  createJudge, judgeRound, writeResult, toolsForModel, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
   createPreflight, labelledLines, readTranslatedForms, renderValue,
 };

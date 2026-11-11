@@ -5,7 +5,7 @@
  * this file is to be read and adapted, unlike judge-only.js, which you leave as it is.
  *
  * Your agent keeps its loop and executes the tool itself. judge-only.js judges and writes the record, and
- * nothing else. Five things are yours to keep, and nothing checks them for you:
+ * nothing else. Six things are yours to keep, and nothing checks them for you:
  *
  *   1. Label who wrote each part of a message when it arrives, before the model sees it (labelInput).
  *      Only what the user typed is the user's.
@@ -17,6 +17,9 @@
  *      Read the record from storage, decide for yourself (readyToExecute), and send its call_arguments.
  *   5. Keep the record where the agent cannot rewrite it, and write what happened back onto it
  *      (judge.recordResult).
+ *   6. Give your model the tools through judge.toolsForModel, which takes the provider's labelled lines
+ *      out of each description. A model that sees those lines judges them itself, and holds back the
+ *      call the gate was to judge.
  *
  *   const { createMain } = require("./judge-only-example");
  *   const main = createMain();
@@ -106,7 +109,8 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
     conversations.set(threadId, conversation);
     conversation.push(...connect.labelInput(message));                                      // 1
 
-    const out = await connect.chat({ system, messages: messagesFor(conversation), tools: await connect.listTools() });
+    const tools = judge.toolsForModel(await connect.listTools());                           // 6
+    const out = await connect.chat({ system, messages: messagesFor(conversation), tools });
     if (!out?.toolCall || typeof out.toolCall.name !== "string") {
       const text = typeof out?.text === "string" ? out.text : "";
       if (text) conversation.push({ trust: "assistant", text });

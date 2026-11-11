@@ -25,7 +25,7 @@
 
 const { StateGraph, Annotation, interrupt, Command, MemorySaver, START, END } = require("@langchain/langgraph");
 
-const { judgeRound, writeResult, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
+const { judgeRound, writeResult, toolsForModel, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
         createPreflight, labelledLines, readTranslatedForms, renderValue } = require("./judge-only");
 
 const last = (a, b) => (b === undefined ? a : b);
@@ -92,9 +92,10 @@ function buildGraph({ ask, chat, listTools, readToolDefinition, measure, callToo
   let round = 0;
 
   // The agent's model: it reads the conversation and the server's tools, and calls one or answers in
-  //   words. What it puts in the call's arguments is recorded, never used as a value.
+  //   words. What it puts in the call's arguments is recorded, never used as a value. It is given the
+  //   tools without the provider's labelled lines: those are the gate's to read, not the model's to judge.
   async function agent(state) {
-    const tools = await listTools();
+    const tools = toolsForModel(await listTools());
     const out = await chat({ system, messages: messagesFor(state.conversation), tools });
     if (out?.toolCall && typeof out.toolCall.name === "string") {
       // A new turn of the conversation: what an earlier turn ended with does not carry over.

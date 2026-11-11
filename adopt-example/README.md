@@ -18,7 +18,7 @@ graph. What you write (`tool.md`) and what you connect (`connect.js`) are the sa
 | Who runs the flow (ask, wait, call again) | Your agent's own loop | `gate.js`, a LangGraph graph |
 | Who executes the tool | Your agent, after reading the record | The graph's executing step, after reading the record |
 | The gate and the executing side | Two parties: the gate ends with the record | **Departs from spec 3.5**: the gate and the executing step are in one graph |
-| What you must keep yourself | Five things, listed in [section 4](#4-use-it-your-agent-executes-judge-onlyjs) | Nothing in the flow |
+| What you must keep yourself | Six things, listed in [section 4](#4-use-it-your-agent-executes-judge-onlyjs) | Nothing in the flow |
 
 Sections 1 to 3 are for both. Section 4 is `judge-only.js`. Section 5 is the demonstration.
 
@@ -157,7 +157,7 @@ MODEL=anthropic:<model-name> node judge-only-example.js "Set up the pickup for L
 
 `judge-only.js` needs only the skeleton and the validator (Ajv). It does not load LangGraph.
 
-**Five things are yours to keep.** Nothing checks them for you, and
+**Six things are yours to keep.** Nothing checks them for you, and
 breaking one leaves a record that is right about an execution that was not.
 
 1. **Label who wrote each part of a message on arrival**, before the model sees it (spec 5.2). Only
@@ -173,6 +173,11 @@ breaking one leaves a record that is right about an execution that was not.
    values known so far: arguments alone are not a sign of readiness.
 5. **Keep the record where the agent cannot rewrite it** (spec 8.2), **and write what happened back**
    with `judge.recordResult`. Only an executed record is what a later run may carry values from.
+6. **Give your model the tools through `judge.toolsForModel`** (the skeleton's function, handed on). It
+   takes the provider's labelled lines out of each description; the gate reads the full definition itself. A model that sees the lines
+   judges them: with a real model, it held back the call over a `[Required]` line only the system
+   could check, and asked the user for the fact instead. This holds for a tool on someone else's MCP
+   server too: what your model is shown is yours to decide.
 
 **Try it without blocking.** Because judging only records, you can call `judge.run` beside your
 agent as it is and read the records, before anything depends on them. Most first records will ask:
@@ -182,7 +187,7 @@ whether a run reaches execution shows only once the asking is wired in. Each rou
 
 The same gate, with the flow written for you as a LangGraph graph. The graph does the flow's part of
 section 4 itself: it shows the values unchanged, judges again after a reply, executes from the record
-and writes the result back.
+and writes the result back. It also gives its model the tools without the labelled lines.
 
 **This departs from spec 3.5.** The one difference left is that the gate and the executing step are in
 one graph; the specification has the executing party outside the gate. It shows the behaviour, end to
