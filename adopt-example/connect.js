@@ -41,7 +41,10 @@ function model() {
   if (!modelPromise) {
     if (!process.env.MODEL) throw new Error("set MODEL, e.g. MODEL=anthropic:<model-name>");
     const { initChatModel } = require("langchain/chat_models/universal");
-    modelPromise = initChatModel(process.env.MODEL, { temperature: 0 });
+    // No sampling setting is sent unless you set one: some models refuse a temperature other than their
+    //   default. TEMPERATURE=0 sends it, for a model that takes it.
+    const temperature = process.env.TEMPERATURE;
+    modelPromise = initChatModel(process.env.MODEL, temperature === undefined || temperature === "" ? {} : { temperature: Number(temperature) });
   }
   return modelPromise;
 }
