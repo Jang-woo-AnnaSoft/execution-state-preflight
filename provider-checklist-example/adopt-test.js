@@ -191,6 +191,22 @@ const run = async (id, condition, over = {}, replies = []) => {
       [given.length > 0, given.flat().some(t => /\[(Required|Verify|Notice)\]/.test(t?.description ?? "")), rm.status], [true, false, "executed"]);
   }
 
+  {
+    // The gate could not match the tool: the graph shows the gate's own words and waits.
+    const su = standIn("g1-01", "clean");
+    const stubAsk = su.connect.ask;
+    let n = 0;
+    su.connect.ask = (m, s, u, h) => (h === "tool_match" ? { approved: n++ >= 1, reason: "stand-in" } : stubAsk(m, s, u, h));
+    const au = createAgent({ connect: su.connect });
+    const idU = `u${++thread}`;
+    const r1 = await au.start({ threadId: idU, message: { typed: "x" } });
+    check("the tool is not matched: waiting, with the gate's own words", [r1.status, r1.question?.message],
+      ["waiting", "I could not tell which action this maps to. Please describe what you want done, in your own words."]);
+    await au.reply({ threadId: idU, message: { typed: "Schedule the pickup, as I said." } });
+    const r3 = await au.reply({ threadId: idU, message: { typed: "yes" } });
+    check("  the user says it again: the run goes on, and executes on yes", [r3.status, su.calls.length], ["executed", 1]);
+  }
+
   console.log("\n--- 4-a. the executing step starts from the record ---");
   const verdictRec = kept.filter(r => r.execution_decision === "execute").at(-1);
   check("the arguments sent are the record's", g1.calls[0]?.args, verdictRec?.call_arguments);

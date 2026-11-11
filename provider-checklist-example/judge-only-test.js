@@ -35,15 +35,17 @@ let thread = 0;
 
 function standIn(id, condition, over = {}) {
   const ctx = S.conditions[condition].context, date = S.date_modes.said;
-  const calls = [], shown = [];
+  const calls = [], shown = [], prompts = [];
   const chatInner = makeChat();
+  const askInner = over.ask ?? makeAsk(id);
   const text = S.instructions.find(i => i.id === id).text;
   let first = true;
   const store = createStorage();
   return {
-    calls, store, shown,
+    calls, store, shown, prompts,
     connect: {
-      ask: makeAsk(id),
+      // Every prompt the gate's model calls were sent, kept for the checks.
+      ask: async (m, system, user, hook) => { prompts.push({ hook, system, user }); return askInner(m, system, user, hook); },
       // What the agent's model is given, kept for the checks.
       chat: async a => { shown.push(a?.tools ?? null); return chatInner(a); },
       listTools: async () => [TOOL],
@@ -70,7 +72,7 @@ async function run(id, condition, replies = [], over = {}) {
   let last = first;
   for (const r of replies) last = await main.turn({ threadId, message: { typed: r }, userChecklist });
   const records = await s.store.list(`user:${TOOL.name}:${threadId}`);
-  return { first, last, calls: s.calls, shown: s.shown, store: s.store, key: `user:${TOOL.name}:${threadId}`, records };
+  return { first, last, calls: s.calls, shown: s.shown, prompts: s.prompts, store: s.store, key: `user:${TOOL.name}:${threadId}`, records };
 }
 
 (async () => {
@@ -102,6 +104,34 @@ async function run(id, condition, replies = [], over = {}) {
     check("a tool with no description is left as it is", toolsForModel([{ name: "t" }]), [{ name: "t", description: "" }]);
     const seen = g1.shown.flat().map(t => t?.description ?? "");
     check("in the run, every list the model was given had no labelled line", [g1.shown.length > 0, seen.some(d => /\[(Required|Verify|Notice)\]/.test(d))], [true, false]);
+    // Whether the act the user named is what the tool does is asked without the lines too: a real model
+    //   handed them judged them there, and refused the match.
+    const match = g1.prompts.filter(p => p.hook === "tool_match");
+    check("the tool-match question is asked with the tool's prose and without its labelled lines",
+      [match.length > 0, match.every(p => p.user.includes("Schedule an in-person pickup")), match.some(p => /\[(Required|Verify|Notice)\]/.test(p.user))], [true, true, false]);
+  }
+
+  console.log("\n--- 1-b. the gate could not tell what is wanted: its own words are shown, and the user says it again ---");
+  {
+    const stub = makeAsk("g1-01");
+    // The tool is not matched the first time, then it is.
+    let n = 0;
+    const once = await run("g1-01", "clean", ["Schedule the pickup, as I said.", "yes"],
+      { ask: (m, s, u, h) => (h === "tool_match" ? { approved: n++ >= 1, reason: "stand-in" } : stub(m, s, u, h)) });
+    check("the tool is not matched: waiting, with the gate's own words and no values",
+      [once.first.status, once.first.question?.message, once.first.question?.block], ["waiting", "I could not tell which action this maps to. Please describe what you want done, in your own words.", []]);
+    check("  the user says it again: the run goes on to the values, and executes on yes", [once.last.status, once.calls.length, once.calls[0]?.args.time], ["executed", 1, SAT_2PM]);
+    // Never matched: the skeleton counts the asks from the unit's records and stops.
+    const never = await run("g1-01", "clean", ["again", "again", "again"],
+      { ask: (m, s, u, h) => (h === "tool_match" ? { approved: false, reason: "stand-in" } : stub(m, s, u, h)) });
+    check("  never matched: it stops asking, nothing runs, and the gate's last words are passed on",
+      [never.last.status, never.calls.length, never.last.message], ["not_executed", 0, "I still could not match this to an action I can perform. Let us sort it out in conversation."]);
+    // What is wanted is never named: the caller carries that count (those records have no key).
+    const s = standIn("g1-01", "clean", { ask: (m, sy, u, h) => (h === "action_name" ? { action_name: null } : stub(m, sy, u, h)) });
+    const main = createMain({ connect: s.connect });
+    const statuses = [];
+    for (const typed of ["x", "again", "again", "again"]) statuses.push((await main.turn({ threadId: "intent-1", message: { typed } })).status);
+    check("what is wanted is never named: asked to restate twice, then it stops", [statuses.slice(0, 3), s.calls.length], [["waiting", "waiting", "not_executed"], 0]);
   }
 
   console.log("\n--- 2. what judge.run returns cannot be executed from ---");
@@ -112,7 +142,8 @@ async function run(id, condition, replies = [], over = {}) {
     const conversation = s.connect.labelInput({ typed: "x" });
     const toolCall = (await s.connect.chat()).toolCall;
     const r1 = await judge.run({ unitKey: "u1", conversation, toolCall });
-    check("it returns the key, what to ask, the block, the notices and the reason", Object.keys(r1), ["key", "questions", "block", "notices", "reason"]);
+    check("it returns the key, what to ask, the gate's own words, the notices and the reason", Object.keys(r1),
+      ["key", "ask", "questions", "block", "message", "options", "notices", "reason"]);
     conversation.push({ trust: "assistant", text: ["q", ...r1.block.map(l => `- ${l}`)].join("\n") }, ...realConnect.labelInput({ typed: "yes" }));
     const r2 = await judge.run({ unitKey: "u1", conversation, toolCall });
     const rec = (await s.store.list(r2.key)).at(-1);
