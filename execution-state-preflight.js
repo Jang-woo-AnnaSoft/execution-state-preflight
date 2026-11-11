@@ -340,6 +340,21 @@ function labelledLines(description) {
     .map(m => ({ label: m[1].trim(), text: m[2] }));
 }
 
+// The tools as the agent's model is given them: the provider's labelled lines taken out of each
+//   description. Those lines are the gate's to read, from the full definition (readToolDefinition). A
+//   model that sees them judges them: with a real model, it held back the call over a [Required] line
+//   only the system can check, and asked the user for a fact the user's word cannot settle, so the gate
+//   never ran. The same matcher as labelledLines, so what the gate reads as a line is exactly what the
+//   model is not shown. The name, the prose and the input schema are passed on unchanged.
+//   NOTE: the gate cannot see what the adopting system shows its model. Passing the list through here
+//     is the adopter's to do (8.2), for a tool on someone else's server as for its own.
+function toolsForModel(tools) {
+  return (tools ?? []).map(t => ({
+    ...t,
+    description: String(t?.description ?? "").split("\n").filter(l => !LABEL_LINE.test(l)).join("\n").trim(),
+  }));
+}
+
 async function safeHook(fn, args, onFail) {
   try {
     return await fn(...args);
@@ -3742,7 +3757,7 @@ function createPreflight({ hooks = {}, storage, clock, strict = false, limits = 
   };
 }
 
-module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, labelledLines, describeForm,
+module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, labelledLines, toolsForModel, describeForm,
                    readTranslatedForms, renderValue };
 
 
