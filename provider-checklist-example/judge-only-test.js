@@ -14,7 +14,7 @@
 const path = require("path");
 const ADOPT = path.join(__dirname, "..", "adopt-example");
 const { createMain, readyToExecute } = require(path.join(ADOPT, "judge-only-example"));
-const { createJudge, createStorage } = require(path.join(ADOPT, "judge-only"));
+const { createJudge, createStorage, toolsForModel } = require(path.join(ADOPT, "judge-only"));
 const graphSide = require(path.join(ADOPT, "gate"));
 const realConnect = require(path.join(ADOPT, "connect"));
 const { runArm, measuredFor, measurePort, MEASUREMENTS } = require("./arm");
@@ -35,15 +35,17 @@ let thread = 0;
 
 function standIn(id, condition, over = {}) {
   const ctx = S.conditions[condition].context, date = S.date_modes.said;
-  const calls = [];
+  const calls = [], shown = [];
+  const chatInner = makeChat();
   const text = S.instructions.find(i => i.id === id).text;
   let first = true;
   const store = createStorage();
   return {
-    calls, store,
+    calls, store, shown,
     connect: {
       ask: makeAsk(id),
-      chat: makeChat(),
+      // What the agent's model is given, kept for the checks.
+      chat: async a => { shown.push(a?.tools ?? null); return chatInner(a); },
       listTools: async () => [TOOL],
       readToolDefinition: async name => [TOOL].find(t => t.name === name),
       measure: measurePort(measuredFor(ctx, date)),
@@ -68,7 +70,7 @@ async function run(id, condition, replies = [], over = {}) {
   let last = first;
   for (const r of replies) last = await main.turn({ threadId, message: { typed: r }, userChecklist });
   const records = await s.store.list(`user:${TOOL.name}:${threadId}`);
-  return { first, last, calls: s.calls, store: s.store, key: `user:${TOOL.name}:${threadId}`, records };
+  return { first, last, calls: s.calls, shown: s.shown, store: s.store, key: `user:${TOOL.name}:${threadId}`, records };
 }
 
 (async () => {
@@ -84,6 +86,23 @@ async function run(id, condition, replies = [], over = {}) {
   check("  not the ones the model put in its call", [verdict?.tool_call?.arguments?.buyer_contact, g1.calls[0]?.args.buyer_contact !== "made up"], ["made up", true]);
   check("  what happened is written back: the unit's last record is executed", g1.records.at(-1)?.execution_decision, "executed");
   check("  and it is what a later run may carry values from", (await g1.store.load(g1.key))?.execution_decision, "executed");
+
+  console.log("\n--- 1-a. the agent's model is not shown the provider's labelled lines ---");
+  {
+    const lines = TOOL.description.split("\n");
+    const forModel = toolsForModel([TOOL])[0];
+    check("it is the skeleton's function: judge-only.js only hands it on",
+      [toolsForModel === require("../execution-state-preflight").toolsForModel, createJudge({ ask() {}, readToolDefinition() {}, storage: createStorage() }).toolsForModel === toolsForModel], [true, true]);
+    check("the tool has labelled lines, and the gate read all of them", [lines.filter(l => /^\[/.test(l)).length, verdict?.provider_checklist?.length], [7, 7]);
+    check("what the model is given keeps the prose and the input schema", [forModel.description, forModel.inputSchema, forModel.name],
+      [lines.filter(l => !/^\s*\[/.test(l)).join("\n").trim(), TOOL.inputSchema, TOOL.name]);
+    check("  and none of the labels", ["[Required]", "[Verify]", "[Notice]"].filter(l => forModel.description.includes(l)), []);
+    check("a label the gate does not know is taken out too: the gate holds it, the model does not judge it",
+      toolsForModel([{ name: "t", description: "Does a thing.\n[Requried] Must be agreed.\n  [Beta] Indented." }])[0].description, "Does a thing.");
+    check("a tool with no description is left as it is", toolsForModel([{ name: "t" }]), [{ name: "t", description: "" }]);
+    const seen = g1.shown.flat().map(t => t?.description ?? "");
+    check("in the run, every list the model was given had no labelled line", [g1.shown.length > 0, seen.some(d => /\[(Required|Verify|Notice)\]/.test(d))], [true, false]);
+  }
 
   console.log("\n--- 2. what judge.run returns cannot be executed from ---");
   {

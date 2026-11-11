@@ -177,12 +177,26 @@ const run = async (id, condition, over = {}, replies = []) => {
   const cancelled = await run("g1-01", "clean", {}, ["CANCEL"]);
   check("the seller stops: nothing runs", [cancelled.last.status, cancelled.calls.length], ["cancelled", 0]);
 
+  console.log("\n--- 4-0. the graph's model is not shown the provider's labelled lines ---");
+  {
+    const sm = standIn("g1-01", "clean");
+    const given = [];
+    const inner = sm.connect.chat;
+    sm.connect.chat = async a => { given.push(a?.tools ?? null); return inner(a); };
+    const am = createAgent({ connect: sm.connect });
+    const idM = `m${++thread}`;
+    await am.start({ threadId: idM, message: { typed: "x" } });
+    const rm = await am.reply({ threadId: idM, message: { typed: "yes" } });
+    check("every list the model was given had no labelled line, and the run still executes",
+      [given.length > 0, given.flat().some(t => /\[(Required|Verify|Notice)\]/.test(t?.description ?? "")), rm.status], [true, false, "executed"]);
+  }
+
   console.log("\n--- 4-a. the executing step starts from the record ---");
   const verdictRec = kept.filter(r => r.execution_decision === "execute").at(-1);
   check("the arguments sent are the record's", g1.calls[0]?.args, verdictRec?.call_arguments);
   check("  what the gate handed the graph carries no arguments", ["call_arguments" in g1.last.verdict, JSON.stringify(g1.last.verdict).includes(SAT_2PM)], [false, false]);
   check("  what happened is written back, and a later run may carry values from it",
-    [kept.at(-1)?.execution_decision, (await g1.store.load("user:schedule_pickup:" + `t${thread - 1}`))?.execution_decision], ["executed", "executed"]);
+    [kept.at(-1)?.execution_decision, (await g1.store.load(kept.at(-1)?.action_key))?.execution_decision], ["executed", "executed"]);
   {
     // The gate decides execute, but the executing step cannot read that record: nothing runs.
     const sh = standIn("g1-01", "clean");
