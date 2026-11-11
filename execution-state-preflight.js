@@ -2382,8 +2382,13 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
   //   gate checks the selection against C2, the act the user named; it never learns how it was chosen.
   // The record decides when it names this C2 (4.1.1); otherwise the hook judges. C2 itself never comes
   //   from the record — it was settled from the user's words above, or this line is not reached.
+  // The hook is handed the tool as a model is given it (toolsForModel): its name, its prose, its input
+  //   schema, and none of the provider's labelled lines. This question is whether the act the user named
+  //   is what the tool does; the lines are judged below, by the gate. A real model handed the lines
+  //   answered them here instead ("the request names no time or location"), and refused the match.
   const fromRecord = matchFromUserActionName(fixed.c2_user_action_name, mcpTool?.name ?? null, user_action_name);
-  const matchResult = fromRecord.result ?? await safeHook(h.confirmToolNameMatchesIntent, [fixed.c2_user_action_name, mcpTool],
+  const toolAsShown = mcpTool && typeof mcpTool === "object" ? toolsForModel([mcpTool])[0] : mcpTool;
+  const matchResult = fromRecord.result ?? await safeHook(h.confirmToolNameMatchesIntent, [fixed.c2_user_action_name, toolAsShown],
     e => ({ approved: false, reason: `hook_error: ${e?.message ?? String(e)}` }));
   const matchedBy = fromRecord.result ? "record" : "judgment";
   // Shape is checked too. undefined and missing fields are also not approved — a hook's silence is not approval.
