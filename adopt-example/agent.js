@@ -1,8 +1,13 @@
 "use strict";
 
 /**
- * The agent: your model and your tools (connect.js, tool.md), the gate (gate.js, judge-only.js), your principles
- * (principles.md) in the system prompt. You should not need to edit this file.
+ * A demonstration: a whole agent to run and watch. Your model and your tools (connect.js, tool.md), the
+ * gate (judge-only.js) with the flow around it (gate.js), your principles (principles.md) in the system
+ * prompt. You should not need to edit this file.
+ *
+ * This departs from spec 3.5. The one difference left is that the gate and the executing step are in one
+ * graph: the step reads the record and decides from it, but the specification has the executing party
+ * outside the gate. To use the gate in your own agent, start from judge-only-example.js instead.
  *
  *   const { createAgent } = require("./agent");
  *   const agent = createAgent();

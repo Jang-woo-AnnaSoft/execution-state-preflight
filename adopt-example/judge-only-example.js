@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * An example of YOUR agent's side, for an agent you already have. Copy what it does into your own loop:
+ * An example of YOUR agent's side. Copy what it does into your own loop:
  * this file is to be read and adapted, unlike judge-only.js, which you leave as it is.
  *
  * Your agent keeps its loop and executes the tool itself. judge-only.js judges and writes the record, and

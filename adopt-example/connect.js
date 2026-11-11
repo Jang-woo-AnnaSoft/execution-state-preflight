@@ -100,8 +100,8 @@ async function readToolDefinition(name) {
   return tool;
 }
 
-// Your tools, by name: each takes the gate's arguments and does the thing. Called only with the gate's
-//   arguments, after it decided to execute. A tool not connected here is not called: the run ends as
+// Your tools, by name: each takes the arguments in the gate's record and does the thing. Called only
+//   with those, once the record reads as ready. A tool not connected here is not called: the run ends as
 //   call_failed, and nothing happened.
 const TOOLS = {
   // schedule_pickup: async args => pickups.create(args),
@@ -174,7 +174,7 @@ async function callTool(name, args) {
 //   return tool;
 // }
 //
-// // Called only with the gate's own arguments, after it decided to execute.
+// // Called only with the arguments in the gate's record, once the record reads as ready.
 // async function mcpCallTool(name, args) {
 //   const c = await client();
 //   return toToolResult(await c.callTool({ name, arguments: args }, { allowInputRequired: true }));
