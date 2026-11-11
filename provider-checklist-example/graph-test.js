@@ -9,7 +9,7 @@
  * The flow as it runs in use: the agent's model reads the conversation and calls the tool; the gate reads
  * the tool's definition and judges; when something is missing, the model asks in conversation and code
  * adds the values as they will be used; the user answers in words; the model calls again; the gate judges
- * again; the tool runs with the gate's arguments only.
+ * again; the executing step reads the record and the tool runs with the record's arguments only.
  */
 
 const { buildGraph, createStorage, Command } = require("./graph");

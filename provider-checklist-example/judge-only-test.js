@@ -1,8 +1,8 @@
 "use strict";
 
 /**
- * Checks adopt-example/judge-only.js and judge-only-example.js: the path for an agent that already
- * exists. The gate judges and records; the agent's side reads the record and executes.
+ * Checks adopt-example/judge-only.js and judge-only-example.js: the structure to adopt (spec 3.5).
+ * The gate judges and records; the agent's side reads the record and executes.
  *
  * The flow under test is judge-only-example.js itself, run with stand-in connections: the stub models,
  * this folder's tool.json, the same measurements and user turns as the other checks, a tool call that
@@ -15,6 +15,7 @@ const path = require("path");
 const ADOPT = path.join(__dirname, "..", "adopt-example");
 const { createMain, readyToExecute } = require(path.join(ADOPT, "judge-only-example"));
 const { createJudge, createStorage } = require(path.join(ADOPT, "judge-only"));
+const graphSide = require(path.join(ADOPT, "gate"));
 const realConnect = require(path.join(ADOPT, "connect"));
 const { runArm, measuredFor, measurePort, MEASUREMENTS } = require("./arm");
 const TOOL = require("./tool.json");
@@ -130,6 +131,9 @@ async function run(id, condition, replies = [], over = {}) {
   };
   check("the ready record is ready as it stands", readyToExecute(verdict, TOOL.name), true);
   check("  and not with any one of these changed", Object.entries(changed).filter(([, c]) => readyToExecute({ ...verdict, ...c }, TOOL.name)).map(([l]) => l), []);
+  // gate.js (the whole agent) reads the record with its own copy of the same reading.
+  check("  gate.js reads each of them the same way", [graphSide.readyToExecute(verdict, TOOL.name),
+    Object.entries(changed).filter(([, c]) => graphSide.readyToExecute({ ...verdict, ...c }, TOOL.name)).map(([l]) => l)], [true, []]);
 
   console.log("\n--- 4. a call that does not complete is recorded as failed ---");
   for (const [label, result, want] of [
@@ -159,6 +163,7 @@ async function run(id, condition, replies = [], over = {}) {
         const mine = readyToExecute(rec, TOOL.name), gates = rec.execution_decision === "execute";
         if (mine) ready++;
         if (mine !== gates) disagree.push(`${ins.id}/${condition}: ${rec.execution_decision} read as ${mine ? "ready" : "not ready"}`);
+        if (graphSide.readyToExecute(rec, TOOL.name) !== mine) disagree.push(`${ins.id}/${condition}: gate.js and the example read ${rec.execution_decision} differently`);
       }
       const executedRecords = r.records.filter(x => x.execution_decision === "executed").length;
       if (executedRecords !== r.calls.length) disagree.push(`${ins.id}/${condition}: ${r.calls.length} calls, ${executedRecords} executed records`);

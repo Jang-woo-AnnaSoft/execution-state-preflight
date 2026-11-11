@@ -165,7 +165,7 @@ const run = async (id, condition, over = {}, replies = []) => {
   check("g1-01: waits on a question, the model's reading of the time shown by code", [g1.first.status, g1.first.question?.block?.[0]],
     ["waiting", "time = 2026-10-31 (Sat) 14:00 +09:00"]);
   check("  the provider's notice goes with it", g1.first.question?.block?.some(l => l.startsWith("Note: The buyer sees")), true);
-  check("  the seller's yes: executed once, with the gate's arguments", [g1.last.status, g1.calls.length, g1.calls[0]?.args.time], ["executed", 1, SAT_2PM]);
+  check("  the seller's yes: executed once, with the record's arguments", [g1.last.status, g1.calls.length, g1.calls[0]?.args.time], ["executed", 1, SAT_2PM]);
   check("  the location is the seller's words", g1.calls[0]?.args.location, "Hongdae station lockers");
   check("  the principles were in the model's system prompt", g1.prompts.every(p => p.includes("Do not generate values")), true);
   const kept = [];
@@ -176,6 +176,37 @@ const run = async (id, condition, over = {}, replies = []) => {
     [typeof rec?.tool_definition?.hash, typeof sale?.rule_hash, sale?.form_translation?.translated_by], ["string", "string", "stub"]);
   const cancelled = await run("g1-01", "clean", {}, ["CANCEL"]);
   check("the seller stops: nothing runs", [cancelled.last.status, cancelled.calls.length], ["cancelled", 0]);
+
+  console.log("\n--- 4-a. the executing step starts from the record ---");
+  const verdictRec = kept.filter(r => r.execution_decision === "execute").at(-1);
+  check("the arguments sent are the record's", g1.calls[0]?.args, verdictRec?.call_arguments);
+  check("  what the gate handed the graph carries no arguments", ["call_arguments" in g1.last.verdict, JSON.stringify(g1.last.verdict).includes(SAT_2PM)], [false, false]);
+  check("  what happened is written back, and a later run may carry values from it",
+    [kept.at(-1)?.execution_decision, (await g1.store.load("user:schedule_pickup:" + `t${thread - 1}`))?.execution_decision], ["executed", "executed"]);
+  {
+    // The gate decides execute, but the executing step cannot read that record: nothing runs.
+    const sh = standIn("g1-01", "clean");
+    const base = sh.connect.store;
+    sh.connect.store = { ...base, list: async k => (await base.list(k)).filter(r => r.execution_decision !== "execute") };
+    const ah = createAgent({ connect: sh.connect });
+    const id = `h${++thread}`;
+    await ah.start({ threadId: id, message: { typed: "x" } });
+    const rh = await ah.reply({ threadId: id, message: { typed: "yes" } });
+    check("the record of the verdict cannot be read back: not executed", [rh.status, rh.verdict?.decision, sh.calls.length], ["not_executed", "execute", 0]);
+    // What is sent is what the record says, not what the graph was handed.
+    const sr = standIn("g1-01", "clean");
+    const baseR = sr.connect.store;
+    sr.connect.store = { ...baseR, list: async k => (await baseR.list(k)).map(r => r.execution_decision === "execute"
+      ? { ...r, call_arguments: { ...r.call_arguments, location: "as the record says" } } : r) };
+    const ar = createAgent({ connect: sr.connect });
+    const idR = `h${++thread}`;
+    await ar.start({ threadId: idR, message: { typed: "x" } });
+    await ar.reply({ threadId: idR, message: { typed: "yes" } });
+    check("the tool receives the record's arguments", sr.calls[0]?.args.location, "as the record says");
+    let refused = null;
+    try { gate.buildGraph({ ...sr.connect, storage: { persist() {}, load() {} } }); } catch (e) { refused = e.message; }
+    check("a storage that cannot list is refused: the record could not be read back", refused, "buildGraph: storage.list is required");
+  }
 
   console.log("\n--- 4-b. a call that does not complete is not counted as executed ---");
   // A server's request for input (MCP input_required), as the MCP connection hands it back.
@@ -192,6 +223,8 @@ const run = async (id, condition, over = {}, replies = []) => {
     await af.start({ threadId: id, message: { typed: "x" } });
     const rf = await af.reply({ threadId: id, message: { typed: "yes" } });
     check(label, [rf.status, rf.executedWith, sf.calls.length], [want, null, 1]);
+    check("  and it is recorded as failed, not as something to carry values from",
+      [(await sf.connect.store.list(`user:schedule_pickup:${id}`)).at(-1)?.execution_decision, await sf.connect.store.load(`user:schedule_pickup:${id}`)], ["failed", null]);
   }
 
   console.log("\n--- 5. the agent's first verdict is the arm's ---");

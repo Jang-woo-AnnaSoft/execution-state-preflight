@@ -154,10 +154,12 @@ over-eager one also quotes the seller's limits.
 - that its `connect.js`, as shipped, fails closed: no server, no definition; no measurement, no run;
 - that the definition is read from `tool.md` by default, or from the files in `TOOLS_FILE`, run after run; and that the MCP connection kept as comments is still code;
 - that start, ask, reply and execute run end to end;
+- that the executing step starts from the record: the arguments are the record's, nothing runs when the
+  record cannot be read back, and the result is written back;
 - that its first decision equals this folder's in all 35 runs.
 
-`judge-only-test.js` checks the path for an agent that already exists (`adopt-example/judge-only.js`,
-run through `judge-only-example.js` itself):
+`judge-only-test.js` checks the structure to adopt (`adopt-example/judge-only.js`, run through
+`judge-only-example.js` itself):
 
 - that ask, reply and execute run end to end, with the arguments read from the record;
 - that what judging returns carries no arguments and no decision, and that judging executes nothing;
@@ -173,9 +175,10 @@ The gate runs in a [LangGraph](https://docs.langchain.com/oss/javascript/langgra
 use: the model calls a tool, and the gate stands between that call and the server.
 
 ```
-START → agent ─ tool call ─→ gate ─ execute ─→ execute → END
-          │                    ├─ ask_user ─→ ask_user → wait ─ the seller's reply ─→ agent
-          └─ words, no call → END        └─ hold, definition_repair, exhausted, … → END
+START → agent ─ tool call ─→ gate ─ something to ask ─→ ask_user → wait ─ the seller's reply ─→ agent
+          │                    └─ nothing to ask ─→ execute: reads the record
+          │                                           ├─ ready ─→ the tool, then the result is recorded → END
+          └─ words, no call → END                     └─ not ready (hold, definition_repair, exhausted, …) → END
 ```
 
 - **The agent's model** reads the conversation and the declared tools, and calls one. What it puts in
@@ -193,7 +196,11 @@ START → agent ─ tool call ─→ gate ─ execute ─→ execute → END
   any other, and is checked against its format.
 - **Where to stop and resume.** A checkpointer and a `thread_id` hold the conversation while the seller
   answers. The gate's own ceiling turns replies that settle nothing into `exhausted`.
-- **The tool is called with the gate's `call_arguments` and nothing else.**
+- **The executing step starts from the record.** The gate ends with the record and hands the graph no
+  arguments. The step reads the record the round wrote, decides for itself whether it is ready, calls
+  the tool with the record's `call_arguments` and nothing else, and writes what happened back. The gate
+  and this step are in one graph, which is where this departs from spec 3.5: `judge-only.js` is the
+  structure to adopt.
 
 `graph-test.js` checks each of these. It also checks that the graph's first verdict equals the arm's
 in all 35 runs. The validator and LangGraph are installed in `adopt-example/` (pinned: ajv 8.20.0,
