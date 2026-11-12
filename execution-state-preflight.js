@@ -1708,7 +1708,7 @@ function checkLocatedQuote(claim, instruction, from) {
 }
 
 async function readUserReplies(h, instruction, history) {
-  const out = { userAnswers: {}, checklistAnswers: {}, valueApprovals: {}, forms: [], checks: [] };
+  const out = { userAnswers: {}, checklistAnswers: {}, valueApprovals: {}, forms: [], withdrawals: {}, checks: [] };
   if (!history.available) {
     // Nothing shows what this unit was asked, so no reply can be matched to a question (fail-closed).
     if (history.unlisted) {
@@ -1784,6 +1784,8 @@ async function readUserReplies(h, instruction, history) {
                                      located_at: c.located_at };
     } else if (q.kind === "confirm_form") {
       out.forms.push({ question: q, answer: c.answer, located_at: c.located_at });
+    } else if (q.kind === "withdraw") {
+      out.withdrawals[q.id] = { answer: c.answer, located_at: c.located_at };
     }
   }
   return out;
@@ -1828,6 +1830,8 @@ async function withConfirmedForm(h, item, { declared_by, tool, userId, mcpTool }
                        text: describeForm(approval.form, keyLabel) },
     };
   }
+  // Being taken back, or taken back ([WITHDRAWN]): nothing to compare it in. Declined, it needs its form.
+  if (declared_by === "user" && item.withdrawal && item.withdrawal.status !== "declined") return { ...item, compare: null };
   // Settled earlier in this unit that no form fits ([READ ONCE] carries it): not proposed again.
   if (declared_by === "user" && item.form_none) return { ...item, compare: null };
   let proposeFailure = null;
@@ -2042,7 +2046,26 @@ async function recordFormDecision(h, request, { form, approved_by, revoked_by },
 //   [LIMIT] A condition the user takes back later ("8pm is fine after all") is new words: it is read, but
 //   nothing removes the condition carried. Kept on purpose: removing one on a reading of the user's words
 //   would be a guess, and a condition only adds reasons not to execute.
-async function userConditionsFromInstruction(h, instruction, mcpTool, existing, carried) {
+//   [WITHDRAWN] A condition the user takes back is not dropped on a model's reading. The extractor reports
+//   it with the words that take it back (withdrawn_by); the gate checks both are the user's words, the
+//   taking back after the condition, and asks the user to confirm (question kind "withdraw"). Confirmed,
+//   the item stays in the record as "withdrawn" and is not compared; declined, it is compared as before.
+//   Until then it counts as unverified. A condition only adds reasons not to execute, so taking one away
+//   is the user's to confirm, as a value read from their words is.
+//   BREAKS: drop a condition the extractor leaves out and a withdrawal and a miss read the same in the
+//     record: the condition is simply not there.
+function locatedWithdrawal(claim, condAt, instruction) {
+  const w = claim?.withdrawn_by;
+  if (!w || typeof w !== "object") return null;
+  const at = checkC2Claim({ value: w.quote, segment_index: w.segment_index, span: w.span }, instruction);
+  if (!at.ok) return { bad: `the words taking it back are not located: ${at.why}` };
+  if (condAt && (at.located_at.segment_index < condAt.segment_index ||
+      (at.located_at.segment_index === condAt.segment_index && at.located_at.span[0] < condAt.span[1]))) {
+    return { bad: "the words taking it back come before the condition" };
+  }
+  return { quote: w.quote, located_at: at.located_at, status: "proposed" };
+}
+async function userConditionsFromInstruction(h, instruction, mcpTool, existing, carried, withdrawAnswers = {}) {
   const FAILED = Symbol("failed");
   const segs = Array.isArray(instruction) ? instruction : null;
   const from = segs && Number.isInteger(carried?.read_through) && carried.read_through <= segs.length ? carried.read_through : 0;
@@ -2062,40 +2085,68 @@ async function userConditionsFromInstruction(h, instruction, mcpTool, existing, 
         constrains: Array.isArray(it.constrains) ? it.constrains : [], compare: null, extracted: true,
         located_at: it.located_at ?? null, ...(it.unlocated ? { unlocated: it.unlocated } : {}),
         ...(it.form_none ? { form_none: it.form_none } : {}),
+        ...(it.withdrawal ? { withdrawal: it.withdrawal } : {}),
       });
     }
     if (!segs.slice(from).some(s => s?.trust === "user")) {
-      return { items: kept, checks: check("checked", `${kept.length} condition(s) carried from words already read; nothing new from the user since segment ${from}`) };
+      return { items: settleWithdrawals(kept, withdrawAnswers),
+               checks: check("checked", `${kept.length} condition(s) carried from words already read; nothing new from the user since segment ${from}`) };
     }
   }
   const out = await safeHook(h.extractUserConditions, [instruction, mcpTool], e => ({ [FAILED]: e?.message ?? String(e) }));
-  if (out === undefined) return { items: kept, checks: [] };   // not wired: nothing extracted, and unsafeDefaults says so
-  if (out?.[FAILED]) return { items: kept, checks: check("unverified", `extractUserConditions failed: ${out[FAILED]}`) };
-  if (out?.none === "absent") return { items: kept, checks: check("checked", kept.length ? `${kept.length} condition(s) carried; none new` : "no condition stated") };
-  if (!Array.isArray(out)) return { items: kept, checks: check("unverified", "extractUserConditions returned neither a list nor { none: \"absent\" }") };
+  if (out === undefined) return { items: settleWithdrawals(kept, withdrawAnswers), checks: [] };   // not wired: nothing extracted, and unsafeDefaults says so
+  if (out?.[FAILED]) return { items: settleWithdrawals(kept, withdrawAnswers), checks: check("unverified", `extractUserConditions failed: ${out[FAILED]}`) };
+  if (out?.none === "absent") return { items: settleWithdrawals(kept, withdrawAnswers), checks: check("checked", kept.length ? `${kept.length} condition(s) carried; none new` : "no condition stated") };
+  if (!Array.isArray(out)) return { items: settleWithdrawals(kept, withdrawAnswers), checks: check("unverified", "extractUserConditions returned neither a list nor { none: \"absent\" }") };
   const items = [...kept];
   let setAside = 0;
+  const badWithdrawals = [];
   for (const claim of out) {
-    if (from > 0 && Number.isInteger(claim?.segment_index) && claim.segment_index < from) { setAside++; continue; }
+    if (from > 0 && Number.isInteger(claim?.segment_index) && claim.segment_index < from) {
+      // Words already read. Only a taking back in the new words is news: it goes to the carried item.
+      const target = typeof claim?.quote === "string" ? kept.find(i => foldActionText(i.stated_as) === foldActionText(claim.quote)) : null;
+      const w = target && claim?.withdrawn_by?.segment_index >= from ? locatedWithdrawal(claim, target.located_at, instruction) : null;
+      if (w && !w.bad && target.withdrawal?.status !== "confirmed" && target.withdrawal?.status !== "proposed") {
+        target.withdrawal = w;
+      } else {
+        if (w?.bad) badWithdrawals.push(w.bad);
+        setAside++;
+      }
+      continue;
+    }
     const quote = typeof claim?.quote === "string" ? claim.quote : null;
     if (!quote || quote.trim() === "") continue;
     const folded = foldActionText(quote);
     if (seen.has(folded)) continue;
     seen.add(folded);
     const located = checkC2Claim({ value: quote, segment_index: claim.segment_index, span: claim.span }, instruction);
+    const w = located.ok ? locatedWithdrawal(claim, located.located_at, instruction) : null;
+    if (w?.bad) badWithdrawals.push(w.bad);
     items.push({
       id: `uc:${ruleHash(quote)}`, description: quote, stated_as: quote,
       constrains: Array.isArray(claim.constrains) ? claim.constrains.filter(s => typeof s === "string") : [],
       compare: null, extracted: true,
       located_at: located.ok ? located.located_at : null,
       ...(located.ok ? {} : { unlocated: located.why }),
+      ...(w && !w.bad ? { withdrawal: w } : {}),
     });
   }
   const fresh = items.length - kept.length;
-  return { items, checks: check("checked", from > 0
+  const bad = badWithdrawals.length ? `; ${badWithdrawals.length} taking back not kept (${badWithdrawals.join("; ")})` : "";
+  return { items: settleWithdrawals(items, withdrawAnswers), checks: check("checked", (from > 0
     ? `${kept.length} condition(s) carried, ${fresh} taken from the user's new words` +
       (setAside ? ` (${setAside} claim(s) about words already read set aside)` : "")
-    : `${items.length} condition(s) taken from the user's words`) };
+    : `${items.length} condition(s) taken from the user's words`) + bad) };
+}
+// The user's answer to a withdraw question settles it: yes confirms, no declines. Kept with the item, so
+//   a later round of the unit carries the answer and does not ask again.
+function settleWithdrawals(items, withdrawAnswers) {
+  return items.map(it => {
+    if (it.withdrawal?.status !== "proposed") return it;
+    const a = withdrawAnswers?.[it.id];
+    if (!a || typeof a.answer !== "boolean") return it;
+    return { ...it, withdrawal: { ...it.withdrawal, status: a.answer ? "confirmed" : "declined", answered_at: a.located_at ?? null } };
+  });
 }
 
 // [APPROVAL BINDING] 6.3: an approval is bound to {slot_id, value}, is void when the value changes, and
@@ -2165,6 +2216,8 @@ function proposeComparableForm() {
 //   located claims. CONTRACT: [{ quote, segment_index, span, constrains? }] — quote copied from one
 //   trust:"user" segment, span its half-open range there — or { none: "absent" } (looked, none), or
 //   undefined (no report). Do not throw for "none".
+//   A condition the user later took back is still reported, with withdrawn_by: { quote, segment_index,
+//   span } — the words that take it back, located like the condition ([WITHDRAWN]). Never left out.
 //   Unwired, a limit the user typed becomes an item only if the caller builds it: "nothing after 8pm"
 //   in the instruction and no item means the gate does not know it was said.
 function extractUserConditions() {
@@ -2535,7 +2588,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
 
   // [USER CONDITIONS] The conditions the user stated in this instruction join the user checklist
   //   (4.4: made at instruction time, from the trusted part of the instruction). See extractUserConditions.
-  const extraction = await userConditionsFromInstruction(h, instruction, mcpTool, checklist, history.conditions);
+  const extraction = await userConditionsFromInstruction(h, instruction, mcpTool, checklist, history.conditions, replies.withdrawals);
   const extractionChecks = extraction.checks;
   const extractedItems = [];
   for (const it of extraction.items) {
@@ -2617,7 +2670,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
   //     confirm_form  a condition the user stated, shown with what it would check, for the user to confirm
   //   question_block is what code writes for the user to see with the model's question: each value as it
   //   will be used, rendered by code ([RENDERED VALUES]). A yes approves exactly what was shown there.
-  async function buildQuestions({ askFields, approveItems, formItems, values = [] }) {
+  async function buildQuestions({ askFields, approveItems, formItems, withdrawItems = [], values = [] }) {
     const questions = [], block = [], checks = [];
     // The values a form is tried on: those settled, and the candidates shown in this same block.
     const tryOn = new Map(values.filter(f => f?.status === "known").map(f => [f.name, { value: f.value, shown: "" }]));
@@ -2670,6 +2723,12 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
       questions.push({ target: `form:${r.item_id}`, kind: "confirm_form", id: r.item_id, wording: r.wording,
                        form: r.proposal, text: r.proposal_text, key: r.key, tried });
       block.push(`"${r.wording}" — will be checked like this: ${r.proposal_text}${tried ? ` — ${tried.text}` : ""}`);
+    }
+    // withdraw  a condition the user's later words take back, shown with those words: yes removes it.
+    for (const it of withdrawItems) {
+      questions.push({ target: `withdraw:${it.id}`, kind: "withdraw", id: it.id, stated_as: it.stated_as,
+                       withdrawn_by: it.withdrawal.quote });
+      block.push(`"${it.stated_as}" — remove this condition? (you said: "${it.withdrawal.quote}")`);
     }
     return { questions, block, checks };
   }
@@ -2859,6 +2918,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
       const asked = decision === "ask_user"
         ? await buildQuestions({ askFields: blocking, approveItems: [],
             formItems: formRequests.filter(r => r.proposal && userFormsNow.some(i => i.id === r.item_id)),
+            withdrawItems: checklist.filter(i => i?.withdrawal?.status === "proposed"),
             values: [...fields, ...extra_fields] })
         : null;
       if (asked) value_checks.push(...asked.checks);
@@ -2999,6 +3059,17 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
   const missingTargets = targets => targets.filter(n => !lookedUpNames.has(n));
   const finalUserChecklist = [];
   for (const item of checklist) {
+    // [WITHDRAWN] Confirmed: kept in the record, not compared. Proposed: asked about, unverified till then.
+    if (item.withdrawal?.status === "confirmed") {
+      finalUserChecklist.push({ ...item, id: item.id, status: "withdrawn", source: "user_answer",
+        note: `the user took it back ("${item.withdrawal.quote}") and confirmed it` });
+      continue;
+    }
+    if (item.withdrawal?.status === "proposed") {
+      finalUserChecklist.push({ ...item, id: item.id, status: "unverified", source: null,
+        note: `the user's words take it back ("${item.withdrawal.quote}"); asked to confirm` });
+      continue;
+    }
     // A condition with no confirmed form is asked about first: confirming the form needs no value, and
     //   until it is confirmed there is nothing to compare.
     if (item.form_pending) {
@@ -3232,7 +3303,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
   // Counted: only what was NOT checked. pending_on_slot waits on a blank that is already
   // counted; unmet was checked and is recorded as unmet, outside the count (spec 6.3).
   const unverifiedItems = finalUserChecklist.filter(
-    i => i.status !== "verified" && i.status !== "pending_on_slot" && i.status !== "unmet");
+    i => i.status !== "verified" && i.status !== "pending_on_slot" && i.status !== "unmet" && i.status !== "withdrawn");
   const unmetItems = finalUserChecklist.filter(i => i.status === "unmet");
   const unverified_checklist_count = unverifiedItems.length;
 
@@ -3442,10 +3513,11 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
     const asked = await buildQuestions({
       askFields: unknownFields,
       approveItems: [
-        ...unverifiedItems.filter(i => !i.form_pending).map(i => ({ id: i.id, description: i.description ?? i.stated_as ?? null, approve: approvalPrompt(i, fieldsByName) })),
+        ...unverifiedItems.filter(i => !i.form_pending && i.withdrawal?.status !== "proposed").map(i => ({ id: i.id, description: i.description ?? i.stated_as ?? null, approve: approvalPrompt(i, fieldsByName) })),
         ...providerAsk.map(c => ({ id: c.id, label: c.label, description: c.description, approve: approvalPrompt(c, fieldsByName) })),
       ],
       formItems: formRequests.filter(r => r.proposal && unverifiedItems.some(i => i.form_pending && i.id === r.item_id)),
+      withdrawItems: unverifiedItems.filter(i => i.withdrawal?.status === "proposed"),
       values: [...fields, ...extra_fields],
     });
     value_checks.push(...asked.checks);
@@ -3558,7 +3630,10 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.20",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.21",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.21: a user condition may carry withdrawal ({ quote, located_at, status: proposed | confirmed |
+    //        declined, answered_at }); confirmed, its status is "withdrawn" and it is not compared
+    //        ([WITHDRAWN]). Questions may be of kind "withdraw" (stated_as, withdrawn_by).
     //   1.20: value_checks entry "user_conditions" carries read_through (how many segments of the
     //        instruction its words were read through). Within a unit, the next round carries the
     //        conditions taken and reads only the user's later words ([READ ONCE]). A user condition no form
