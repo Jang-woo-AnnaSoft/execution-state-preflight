@@ -315,8 +315,10 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
       const out = await call(
         "The assistant asked the user the questions below. Report where the user's words answer each one. " +
         "Quote the user's own words exactly, from segments with \"trust\": \"user\" that come after the " +
-        "question was asked. A yes or no is an answer; a value the user typed instead is not one of these " +
-        "answers, so leave that question out. Return JSON only.",
+        "question was asked. A yes or no is an answer. One yes or no after several questions answers each " +
+        "of them, unless the user says which one they mean. Leave a question out only when, after it was " +
+        "asked, the user typed a value or a change instead of a yes or no for it: what they typed before " +
+        "the question does not count either way. Return JSON only.",
         `Questions:\n${JSON.stringify(shown, null, 2)}\n\nSegments:\n${JSON.stringify(segmentsOf(instruction), null, 2)}\n\n` +
         'For each question answered, one of\n' +
         '  {"target": "<target>", "answer": true|false, "quote": "<exact words>", "segment_index": <int>}\n' +
