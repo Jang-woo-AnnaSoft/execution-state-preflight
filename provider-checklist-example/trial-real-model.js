@@ -75,6 +75,7 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
   const store = createStorage();
   const connect = {
     ask: (model, system, user, hook) => timed(hook ?? "ask", { system, user }, () => askInner(model, system, user, hook)),
+    ...(STUB ? {} : { say: (model, system, user, hook) => timed(hook ?? "say", { system, user }, () => real.say(model, system, user, hook)) }),
     chat: a => timed("agent_chat", { system: a?.system, messages: a?.messages }, () => chatInner(a)),
     listTools: real.listTools,
     readToolDefinition: real.readToolDefinition,
