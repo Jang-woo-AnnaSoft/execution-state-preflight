@@ -1848,7 +1848,11 @@ async function withConfirmedForm(h, item, { declared_by, tool, userId, mcpTool }
   //   pending, for a form to be confirmed another way (approveForm), as before.
   //   BREAKS: leave a null pending and it is asked about nowhere — no form to confirm, no approval — and
   //     the run ends exhausted with the condition never put to the user.
-  if (declared_by === "user" && proposed === null && proposeFailure === null) {
+  // A proposal that the user approves it each time says the same: there is nothing to compute, and
+  //   confirming that form would be a question with no content. A real model proposed it for "public
+  //   places only", and the user was asked to confirm the form, then asked to approve the place.
+  if (declared_by === "user" && proposeFailure === null &&
+      (proposed === null || (proposal?.compare?.kind === "user_approval"))) {
     return {
       ...item,
       compare: null,
@@ -3103,6 +3107,13 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
       finalUserChecklist.push({ ...item, id: item.id, status: approval.answer ? "verified" : "unmet",
         source: "user_answer", approval: approval.approval,
         note: approval.answer ? "the user approved it for the values shown" : "the user said it does not hold for the values shown" });
+      continue;
+    }
+    // A form of kind user_approval (a standing item, or one confirmed earlier) has nothing to compute: it
+    //   waits on the user's approval. Not handed to the comparison, which has no schema to run.
+    if (item.compare?.kind === "user_approval") {
+      finalUserChecklist.push({ ...item, ...voided, id: item.id, status: "unverified", source: null,
+        note: "the user approves it for the values shown" });
       continue;
     }
     const out0 = await safeHook(h.verifyUserChecklistItem, [item, checklistCtx],
