@@ -248,7 +248,11 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
       const out = await call(
         "You put one condition, written in words, into a form a program can compare. You do not decide " +
         "whether it holds. Use only the kinds listed. If none fits, answer {\"form\": null}. Return JSON only.",
-        `Tool: ${mcpTool?.name}\nFields: ${Object.keys(props).join(", ")}\n` +
+        // Each field with its declared form: a schema in a form is run on the field's whole value, as the
+        //   tool receives it. Given only the names, a real model wrote a time-of-day pattern for "Nothing
+        //   after 8pm" that no date-time value could match.
+        `Tool: ${mcpTool?.name}\nFields, each with its declared form (a schema in your form is applied to the ` +
+        `field's whole value, exactly as the tool receives it):\n${fieldsOf(mcpTool)}\n` +
         `Measurements this system can read: ${measurements.length ? measurements.join(", ") : "(none)"}\n\n` +
         `Declared by: ${declared_by}${label ? `\nLabel: [${label}]` : ""}\nCondition: ${wording}\n\n` +
         `Kinds:\n${FORM_KINDS.map(k => `  ${k}`).join("\n")}\n\n` +
@@ -390,6 +394,36 @@ function createStorage() {
   };
 }
 
+// [QUESTION] The words of a question, written by the model from what the gate listed and the provider's
+//   lines on each value. The values are not the model's: code appends them under these words, as they
+//   will be used, and a yes approves exactly those. Both flows ask through this one function.
+//   say(model, system, user, hook) → the model's plain text, when connected: a question is words, and a
+//   real model asked for JSON here answered in plain words whenever its own earlier turn was in the
+//   conversation. Without say, ask() is used with a JSON reply. null when no words came back: the caller
+//   asks with the list alone.
+const QUESTION_SYSTEM =
+  "You ask the user, in conversation, for what is still missing before a tool can run. Write one short " +
+  "message, in the language the user writes in. Ask about every item below, and follow the tool's lines " +
+  "on how to ask. Do not write any value yourself: the values to approve are shown under your message, " +
+  "exactly as they will be used.";
+async function writeQuestion({ ask, say, model = "model" }, { questions, conversation }) {
+  const user =
+    `Items:\n${JSON.stringify((questions ?? []).map(q => ({ kind: q.kind, field: q.slot, item: q.description ?? q.wording ?? null,
+      lines: (q.lines ?? []).map(l => `[${l.label}] ${l.text}`) })), null, 2)}\n\n` +
+    `Conversation:\n${JSON.stringify(segmentsOf(conversation), null, 2)}`;
+  const words = t => (typeof t === "string" && t.trim() ? t.trim() : null);
+  try {
+    if (typeof say === "function") {
+      const t = words(await say(model, `${QUESTION_SYSTEM} Write only the message itself.`, user, "question"));
+      // A model that answers in JSON anyway: its message is the words.
+      if (t && t.startsWith("{")) { try { const o = JSON.parse(t); if (words(o?.message)) return words(o.message); } catch {} }
+      return t;
+    }
+    const out = await ask(model, `${QUESTION_SYSTEM} Return JSON only.`, `${user}\n\nReply as {"message": "..."}`, "question");
+    return words(out?.message);
+  } catch { return null; }
+}
+
 // One round: judge the tool call against the conversation so far, and write the record. Returns the
 //   skeleton's state. gate.js reads it; createJudge hands on only what there is to ask.
 //   intentAttempt: how many times this conversation was already asked to restate what it wants done.
@@ -470,6 +504,6 @@ function createJudge({ ask, measure, readToolDefinition, measurements = [], stor
 }
 
 module.exports = {
-  createJudge, judgeRound, writeResult, toolsForModel, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
+  createJudge, judgeRound, writeResult, writeQuestion, toolsForModel, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
   createPreflight, labelledLines, readTranslatedForms, renderValue,
 };

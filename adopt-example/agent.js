@@ -41,7 +41,7 @@ function systemPrompt() {
  */
 function createAgent({ connect = defaultConnect, userId = "user", system = systemPrompt() } = {}) {
   const graph = gate.buildGraph({
-    ask: connect.ask, chat: connect.chat, listTools: connect.listTools, readToolDefinition: connect.readToolDefinition,
+    ask: connect.ask, say: connect.say, chat: connect.chat, listTools: connect.listTools, readToolDefinition: connect.readToolDefinition,
     measure: connect.measure, callTool: connect.callTool, measurements: Object.keys(connect.MEASUREMENTS ?? {}),
     model: connect.MODEL_NAME ?? "model", system, checkpointer: connect.checkpointer, storage: connect.store, userId,
   });

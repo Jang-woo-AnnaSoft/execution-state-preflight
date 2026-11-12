@@ -25,7 +25,7 @@
 
 const { StateGraph, Annotation, interrupt, Command, MemorySaver, START, END } = require("@langchain/langgraph");
 
-const { judgeRound, writeResult, toolsForModel, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
+const { judgeRound, writeResult, writeQuestion, toolsForModel, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
         createPreflight, labelledLines, readTranslatedForms, renderValue } = require("./judge-only");
 
 const last = (a, b) => (b === undefined ? a : b);
@@ -84,7 +84,7 @@ function readyToExecute(record, toolName) {
  *   example. A real system passes its own: the record append-only, where the agent cannot rewrite it
  *   (spec 8.2), and a checkpointer that survives a restart. Kept translations are in storage too.
  */
-function buildGraph({ ask, chat, listTools, readToolDefinition, measure, callTool, measurements = [], system = "",
+function buildGraph({ ask, say, chat, listTools, readToolDefinition, measure, callTool, measurements = [], system = "",
                       model = "model", checkpointer = new MemorySaver(), storage = createStorage(), userId = "user", runId = "graph" }) {
   for (const [n, f] of Object.entries({ ask, chat, listTools, readToolDefinition, callTool })) {
     if (typeof f !== "function") throw new Error(`buildGraph: ${n} is required`);
@@ -145,19 +145,7 @@ function buildGraph({ ask, chat, listTools, readToolDefinition, measure, callToo
       return { question: { text: v.user_message, block: [], message: v.user_message, options: v.options },
                conversation: [{ trust: "assistant", text: v.user_message }] };
     }
-    let text;
-    try {
-      const out = await ask(model,
-        "You ask the user, in conversation, for what is still missing before a tool can run. Write one short " +
-        "message, in the language the user writes in. Ask about every item below, and follow the tool's lines " +
-        "on how to ask. Do not write any value yourself: the values to approve are shown under your message, " +
-        "exactly as they will be used. Return JSON only.",
-        `Items:\n${JSON.stringify(v.questions.map(q => ({ kind: q.kind, field: q.slot, item: q.description ?? q.wording ?? null,
-          lines: (q.lines ?? []).map(l => `[${l.label}] ${l.text}`) })), null, 2)}\n\n` +
-        `Conversation:\n${JSON.stringify(segmentsOf(state.conversation), null, 2)}\n\nReply as {"message": "..."}`,
-        "question");
-      text = typeof out?.message === "string" && out.message.trim() ? out.message.trim() : null;
-    } catch { text = null; }
+    const text = await writeQuestion({ ask, say, model }, { questions: v.questions, conversation: state.conversation });
     // Without the model's words the question is still asked: the list, as code wrote it.
     const words = text ?? "Before this can run, please answer:";
     const block = [...v.question_block, ...v.disclosures.map(d => `Note: ${d}`)];

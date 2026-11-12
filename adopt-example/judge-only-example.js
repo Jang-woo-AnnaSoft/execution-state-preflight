@@ -34,7 +34,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { createJudge } = require("./judge-only");
+const { createJudge, writeQuestion } = require("./judge-only");
 const defaultConnect = require("./connect");
 
 function systemPrompt() {
@@ -81,24 +81,11 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
   // Your agent's own state: each conversation, in order, with who wrote each part.
   const conversations = new Map();
 
-  // Your model writes the words of the question. The values are not its to write: they go under its
-  //   words as code wrote them.
+  // Your model writes the words of the question (writeQuestion). The values are not its to write: they
+  //   go under its words as code wrote them.
   async function askUser(conversation, r) {
-    let words = null;
-    try {
-      const out = await connect.ask(model,
-        "You ask the user, in conversation, for what is still missing before a tool can run. Write one short " +
-        "message, in the language the user writes in. Ask about every item below, and follow the tool's lines " +
-        "on how to ask. Do not write any value yourself: the values to approve are shown under your message, " +
-        "exactly as they will be used. Return JSON only.",
-        `Items:\n${JSON.stringify(r.questions.map(q => ({ kind: q.kind, field: q.slot, item: q.description ?? q.wording ?? null,
-          lines: (q.lines ?? []).map(l => `[${l.label}] ${l.text}`) })), null, 2)}\n\n` +
-        `Conversation:\n${JSON.stringify(conversation.map((s, i) => ({ index: i, trust: s.trust, text: s.text })), null, 2)}\n\n` +
-        'Reply as {"message": "..."}',
-        "question");
-      words = typeof out?.message === "string" && out.message.trim() ? out.message.trim() : null;
-    } catch { words = null; }
-    words = words ?? "Before this can run, please answer:";
+    const words = (await writeQuestion({ ask: connect.ask, say: connect.say, model }, { questions: r.questions, conversation }))
+      ?? "Before this can run, please answer:";
     return { text: words, block: r.block, message: [words, ...r.block.map(l => `- ${l}`)].join("\n") };
   }
 

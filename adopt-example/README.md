@@ -106,7 +106,7 @@ be compared by code, the same way every time: no model judges at run time whethe
 
 | What | In `connect.js` | What you put there |
 |---|---|---|
-| Model | `ask`, `chat` | Your chat model, chosen by `MODEL="provider:model"`. Install that provider's package |
+| Model | `ask`, `say`, `chat` | Your chat model, chosen by `MODEL="provider:model"`. Install that provider's package. `ask` answers the gate in JSON, `say` writes the words of a question in plain text |
 | The tools' definitions | `listTools`, `readToolDefinition` | Nothing: they read `tool.md` (or the files in `TOOLS_FILE`). For an MCP server, uncomment the MCP connection |
 | Your system's values | `MEASUREMENTS` | Calls to your own APIs. The gate calls one when it needs it, with the values it has settled (`values.item_id`). Never from the conversation |
 | Who wrote what | `labelInput(message)` | Your input path marks what the user typed. Pasted or quoted text, other people's messages and tool output are untrusted |

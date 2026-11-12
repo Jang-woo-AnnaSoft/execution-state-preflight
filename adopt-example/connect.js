@@ -60,6 +60,13 @@ async function ask(_model, system, user) {
   return readJsonReply(textOf(res));
 }
 
+// The model's plain text, for what is words and not data: the words of a question to the user.
+async function say(_model, system, user) {
+  const m = await model();
+  const res = await m.invoke([{ role: "system", content: system }, { role: "user", content: user }]);
+  return textOf(res);
+}
+
 // The JSON object in a model's answer. An answer that is not JSON is an error, with what the model wrote
 //   kept in it: the gate treats the failure as unconfirmed, and the text says why.
 function readJsonReply(text) {
@@ -254,7 +261,7 @@ const store = {
 //   example PostgresSaver from @langchain/langgraph-checkpoint-postgres.
 const checkpointer = new MemorySaver();
 
-module.exports = { ask, chat, listTools, readToolDefinition, measure, labelInput, callTool, store, checkpointer,
+module.exports = { ask, say, chat, listTools, readToolDefinition, measure, labelInput, callTool, store, checkpointer,
                    MEASUREMENTS, TOOLS, MODEL_NAME, readToolFile, readJsonReply };
 // With the MCP connection above uncommented:
 //   listTools: mcpListTools, readToolDefinition: mcpReadToolDefinition, callTool: mcpCallTool
