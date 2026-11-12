@@ -138,6 +138,51 @@ async function run(id, condition, replies = [], over = {}) {
       [Boolean(pub.form_pending), typeof pub.form_none?.why, pub.status], [false, "string", "pending_on_slot"]);
   }
 
+  console.log("\n--- 1-e. the real run replayed: the conditions split differently in a later round, one yes for all ---");
+  {
+    // What the real model did in g2-01: the seller's two conditions taken as two, then as one quote in the
+    //   next round; one "yes" under four questions. The fix: words already read are not read again, and
+    //   the reply reader is told one yes answers every question it follows.
+    const GOOD = { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d:[0-5]\\d:[0-5]\\d|20:00:00)(?:Z|[+-]\\d{2}:\\d{2})$" };
+    const stub = makeAsk("g2-01");
+    let round = 0;
+    const said = "[Seller to you]\nArrange the pickup for LST-2291. Nothing after 8pm, and public places only.";
+    const ask = (m, sys, u, h) => {
+      if (h === "user_conditions") {
+        round++;
+        return round === 1
+          ? { conditions: [{ quote: "Nothing after 8pm", segment_index: 3, constrains: ["time"] }, { quote: "public places only", segment_index: 3, constrains: ["location"] }] }
+          : { conditions: [{ quote: "Nothing after 8pm, and public places only.", segment_index: 3, constrains: ["time", "location"] }] };
+      }
+      if (h === "comparable_form" && /Declared by: user/.test(u)) {
+        if (/Condition: Nothing after 8pm$/m.test(u)) return { form: { compare: GOOD, constrains: ["time"] } };
+        return { form: null };
+      }
+      if (h === "extraction") {
+        const segs = JSON.parse(u.slice(u.indexOf("Segments:\n") + 10, u.indexOf("\n\nFields to locate")));
+        const at = segs.findIndex(x => x.trust === "user" && x.text.includes("This Saturday at 3pm"));
+        return { item_id: { found: true, value: "LST-2291", segment_index: 3 },
+          ...(at >= 0 ? { time: { found: true, value: "This Saturday at 3pm", segment_index: at }, location: { found: true, value: "Hongdae station lockers", segment_index: at } }
+                      : { time: { found: false }, location: { found: false } }),
+          buyer_contact: { found: false } };
+      }
+      if (h === "propose_value") return { value: /^Field: time:/m.test(u) && /This Saturday at 3pm/.test(u) ? "2026-10-31T15:00:00+09:00" : null };
+      if (h === "replies") {
+        const targets = [...u.matchAll(/"target": "((?:value|approve|form):[^"]+)"/g)].map(x => x[1]);
+        const segs = JSON.parse(u.slice(u.indexOf("Segments:\n") + 10, u.indexOf("\n\nFor each question")));
+        const at = segs.length - 1;
+        return { replies: segs[at]?.text === "yes" ? targets.map(t => ({ target: t, answer: true, quote: "yes", segment_index: at })) : [] };
+      }
+      return stub(m, sys, u, h);
+    };
+    const r = await run("g2-01", "clean", ["This Saturday at 3pm at the Hongdae station lockers.", "yes"], { ask, userChecklist: [] });
+    check("it executes at 15:00 on the one yes, and the two conditions of round 1 are the ones the record holds",
+      [r.last.status, r.calls[0]?.args.time, (r.records.at(-1)?.user_checklist ?? []).filter(i => i.extracted).map(i => [i.stated_as, i.status])],
+      ["executed", "2026-10-31T15:00:00+09:00", [["Nothing after 8pm", "verified"], ["public places only", "verified"]]]);
+    const prompt = r.prompts.find(p => p.hook === "replies")?.system ?? "";
+    check("the reply reader is told one yes after several questions answers each", /One yes or no after several questions answers each/.test(prompt), true);
+  }
+
   console.log("\n--- 1-d. the words of a question: one writer, plain text taken as it is ---");
   {
     const qs = [{ kind: "value", slot: "time", lines: [] }];
