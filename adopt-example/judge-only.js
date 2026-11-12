@@ -274,17 +274,22 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
       const out = await call(
         "You find the conditions the USER set on a task: limits, ranges, things they never or only accept. " +
         "A value they gave is not a condition. Quote their own words exactly, from segments with \"trust\": " +
-        "\"user\" only. Return JSON only.",
+        "\"user\" only. Report every condition the user set, also one they later took back: never leave it " +
+        "out. For one taken back, also quote the user's words that take it back, in withdrawn_by. Return JSON only.",
         `Tool: ${mcpTool?.name}\nFields: ${Object.keys(props).join(", ")}\n\nSegments:\n${JSON.stringify(segmentsOf(instruction), null, 2)}\n\n` +
-        'Reply as {"conditions": [{"quote": "<exact words>", "segment_index": <int>, "constrains": ["<field>"]}]}, ' +
+        'Reply as {"conditions": [{"quote": "<exact words>", "segment_index": <int>, "constrains": ["<field>"], ' +
+        '"withdrawn_by": {"quote": "<exact words>", "segment_index": <int>} (only when taken back)}]}, ' +
         'or {"conditions": []} when the user set none.',
         "user_conditions");
       if (!Array.isArray(out?.conditions)) throw new Error("user conditions reply unusable");
       if (out.conditions.length === 0) return { none: "absent" };
       return out.conditions.map(c => {
         const seg = (instruction ?? [])[c?.segment_index];
+        const w = c?.withdrawn_by && typeof c.withdrawn_by === "object" ? c.withdrawn_by : null;
+        const wseg = w ? (instruction ?? [])[w.segment_index] : null;
         return { quote: c?.quote, segment_index: c?.segment_index ?? null, span: locateQuote(seg?.text, c?.quote),
-                 constrains: Array.isArray(c?.constrains) ? c.constrains : [] };
+                 constrains: Array.isArray(c?.constrains) ? c.constrains : [],
+                 ...(w ? { withdrawn_by: { quote: w.quote, segment_index: w.segment_index ?? null, span: locateQuote(wseg?.text, w.quote) } } : {}) };
       });
     },
 
@@ -311,6 +316,7 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
         ...(q.kind === "value" ? { field: q.slot, shown: q.candidate?.shown_text ?? null } : {}),
         ...(q.kind === "approve" ? { item: q.description, for: q.shown_text } : {}),
         ...(q.kind === "confirm_form" ? { said: q.wording, checked_like_this: q.text } : {}),
+        ...(q.kind === "withdraw" ? { remove_condition: q.stated_as, because_you_said: q.withdrawn_by } : {}),
       }));
       const out = await call(
         "The assistant asked the user the questions below. Report where the user's words answer each one. " +
