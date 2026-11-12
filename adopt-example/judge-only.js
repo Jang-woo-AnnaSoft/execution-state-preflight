@@ -90,12 +90,17 @@ const fieldsOf = tool => Object.entries(tool?.inputSchema?.properties ?? {}).map
 
 // The comparable forms a line can be put into (the skeleton's kinds), told to the model that writes one.
 const FORM_KINDS = [
+  // A field that is also a measurement: given the list of measurements, a real model put "The location is
+  //   the place the seller names" into user_approval in most runs, value_source in some, and once no form,
+  //   while the same line for the item, which is not a measurement, was value_source every time.
   '{"kind": "value_source", "slot": "<field>"}  who may give a field\'s value. With [Required]: only the system ' +
     '(a measurement). With [Verify]: only the user; add "measured_within_user_range": true when a measurement may ' +
-    'also give it, inside a range the user sets',
+    'also give it, inside a range the user sets. A line that says who gives a field\'s value is this kind, also ' +
+    'for a field that is also a measurement',
   '{"source": "measured_data", "measure": "<measurement>", "schema": <JSON Schema>}  a fact the system measures, ' +
     'and the JSON Schema it must satisfy. Only measurements in the list below can be named',
-  '{"kind": "user_approval"}  [Verify] only: the user confirms it each time, for the values of the fields it constrains',
+  '{"kind": "user_approval"}  [Verify] only: the user confirms it each time, for the values of the fields it ' +
+    'constrains. Not for a line that only says who gives a value',
   '<a JSON Schema>  a user\'s condition on one field\'s value; set constrains to that field',
 ];
 
