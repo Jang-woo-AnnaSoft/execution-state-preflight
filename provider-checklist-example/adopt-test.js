@@ -177,6 +177,17 @@ const run = async (id, condition, over = {}, replies = []) => {
   const cancelled = await run("g1-01", "clean", {}, ["CANCEL"]);
   check("the seller stops: nothing runs", [cancelled.last.status, cancelled.calls.length], ["cancelled", 0]);
 
+  console.log("\n--- 3-z. a model's answer that is not JSON keeps what it wrote ---");
+  {
+    const { readJsonReply } = require("../adopt-example/connect");
+    let a = null, b = null;
+    try { readJsonReply("Sure! Before I book it, please confirm the time."); } catch (e) { a = e.message; }
+    try { readJsonReply('{"message": "unclosed}'); } catch (e) { b = e.message; }
+    check("plain words: an error that carries them", [/did not answer in JSON/.test(a ?? ""), /please confirm the time/.test(a ?? "")], [true, true]);
+    check("broken JSON: an error that carries it", [/could not be read/.test(b ?? ""), /unclosed/.test(b ?? "")], [true, true]);
+    check("JSON with words around it is read", readJsonReply('Here: {"message": "ok"} done'), { message: "ok" });
+  }
+
   console.log("\n--- 4-0. the graph's model is not shown the provider's labelled lines ---");
   {
     const sm = standIn("g1-01", "clean");

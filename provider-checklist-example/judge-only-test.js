@@ -67,7 +67,7 @@ async function run(id, condition, replies = [], over = {}) {
   const s = standIn(id, condition, over);
   const main = createMain({ connect: s.connect });
   const threadId = `j${++thread}`;
-  const userChecklist = S.instructions.find(i => i.id === id).user_checklist ?? [];
+  const userChecklist = over.userChecklist ?? S.instructions.find(i => i.id === id).user_checklist ?? [];
   const first = await main.turn({ threadId, message: { typed: "(stand-in)" }, userChecklist });
   let last = first;
   for (const r of replies) last = await main.turn({ threadId, message: { typed: r }, userChecklist });
@@ -109,6 +109,30 @@ async function run(id, condition, replies = [], over = {}) {
     const match = g1.prompts.filter(p => p.hook === "tool_match");
     check("the tool-match question is asked with the tool's prose and without its labelled lines",
       [match.length > 0, match.every(p => p.user.includes("Schedule an in-person pickup")), match.some(p => /\[(Required|Verify|Notice)\]/.test(p.user))], [true, true, false]);
+  }
+
+  console.log("\n--- 1-c. the seller's own condition, put into a form by the model, is tried on the value shown ---");
+  {
+    // The form a real model wrote for "Nothing after 8pm": it matches a bare time of day, never a
+    //   date-time, so no time could ever pass. The seller was shown only the form, and said yes.
+    const BAD = { type: "string", pattern: "^(([01][0-9]:[0-5][0-9](:[0-5][0-9])?)|(20:00(:00)?))$" };
+    const stub = makeAsk("g2-01");
+    const ask = (m, s, u, h) => {
+      if (h === "comparable_form" && /Declared by: user/.test(u)) {
+        if (/Condition: Nothing after 8pm/.test(u)) return { form: { compare: BAD, constrains: ["time"] } };
+        if (/Condition: public places only/.test(u)) return { form: null };
+      }
+      if (h === "propose_value") return { value: "2026-10-31T15:00:00+09:00" };
+      return stub(m, s, u, h);
+    };
+    const r = await run("g2-01", "clean", [], { ask, userChecklist: [] });
+    const line = (r.first.question?.block ?? []).find(l => l.startsWith('"Nothing after 8pm"')) ?? "";
+    check("the form is shown with what it says about the time shown above: does not hold",
+      line.endsWith("for time = 2026-10-31 (Sat) 15:00 +09:00 (shown above): does not hold"), true);
+    const rec = r.records.at(-1);
+    const pub = (rec?.user_checklist ?? []).find(i => i.stated_as === "public places only") ?? {};
+    check("'public places only', no form fits: not pending a form, waiting on the place to approve it for",
+      [Boolean(pub.form_pending), typeof pub.form_none?.why, pub.status], [false, "string", "pending_on_slot"]);
   }
 
   console.log("\n--- 1-b. the gate could not tell what is wanted: its own words are shown, and the user says it again ---");
