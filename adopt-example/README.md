@@ -181,6 +181,12 @@ breaking one leaves a record that is right about an execution that was not.
    could check, and asked the user for the fact instead. This holds for a tool on someone else's MCP
    server too: what your model is shown is yours to decide.
 
+**When nothing runs, tell the user why.** `writeStop` (in `judge-only.js`) hands your model the
+skeleton's `stopFacts` for the record: the condition in its own words, whose it is, what was found.
+Your model writes the message from those alone; without its words there is still a plain sentence.
+The example shows it and adds it to the conversation. Without this, a hold ends with nothing said: a
+real run held on a `[Required]` line did.
+
 **Try it without blocking.** Because judging only records, you can call `judge.run` beside your
 agent as it is and read the records, before anything depends on them. Most first records will ask:
 whether a run reaches execution shows only once the asking is wired in. Each round calls the model.
@@ -189,7 +195,8 @@ whether a run reaches execution shows only once the asking is wired in. Each rou
 
 The same gate, with the flow written for you as a LangGraph graph. The graph does the flow's part of
 section 4 itself: it shows the values unchanged, judges again after a reply, executes from the record
-and writes the result back. It also gives its model the tools without the labelled lines.
+and writes the result back. It also gives its model the tools without the labelled lines, and tells
+the user why when nothing runs.
 
 **This departs from spec 3.5.** The one difference left is that the gate and the executing step are in
 one graph; the specification has the executing party outside the gate. It shows the behaviour, end to

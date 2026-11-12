@@ -37,7 +37,7 @@
  */
 
 // The skeleton: one file, copied beside this folder (the repository layout) or into it.
-const { createPreflight, labelledLines, toolsForModel, readTranslatedForms, renderValue } = (() => {
+const { createPreflight, labelledLines, toolsForModel, stopFacts, readTranslatedForms, renderValue } = (() => {
   try { return require("./execution-state-preflight"); }
   catch (e) { if (e.code !== "MODULE_NOT_FOUND") throw e; return require("../execution-state-preflight"); }
 })();
@@ -437,6 +437,33 @@ async function writeQuestion({ ask, say, model = "model" }, { questions, convers
   } catch { return null; }
 }
 
+// Why it did not run, told to the user. The facts are the skeleton's (stopFacts), read from the record
+//   the executing side decided from; the model only puts them into words. Without its words, a plain
+//   sentence: the user is told either way. A real run held on a [Required] line ended with nothing said.
+const STOP_SYSTEM =
+  "You tell the user, in conversation, that what they asked for was not carried out, and why. Write one " +
+  "short message, in the language the user writes in. Say only what the items say: do not add a reason, " +
+  "do not say it will run later unless an item says so, and do not suggest a way around a condition. " +
+  "set_by tells whose condition it is: the tool's provider, or the user's own. found is what was found.";
+const STOP_FALLBACK = "This was not carried out.";
+async function writeStop({ ask, say, model = "model" }, { record, conversation }) {
+  const facts = stopFacts(record);
+  const user =
+    `Not carried out (${facts.decision ?? "no decision"}). Items:\n${JSON.stringify(facts.items, null, 2)}\n\n` +
+    `Conversation:\n${JSON.stringify(segmentsOf(conversation), null, 2)}`;
+  const words = t => (typeof t === "string" && t.trim() ? t.trim() : null);
+  let text = null;
+  try {
+    if (typeof say === "function") {
+      text = words(await say(model, `${STOP_SYSTEM} Write only the message itself.`, user, "stop"));
+      if (text && text.startsWith("{")) { try { const o = JSON.parse(text); if (words(o?.message)) text = words(o.message); } catch {} }
+    } else {
+      text = words((await ask(model, `${STOP_SYSTEM} Return JSON only.`, `${user}\n\nReply as {"message": "..."}`, "stop"))?.message);
+    }
+  } catch { text = null; }
+  return { message: text ?? STOP_FALLBACK, facts };
+}
+
 // One round: judge the tool call against the conversation so far, and write the record. Returns the
 //   skeleton's state. gate.js reads it; createJudge hands on only what there is to ask.
 //   intentAttempt: how many times this conversation was already asked to restate what it wants done.
@@ -517,6 +544,6 @@ function createJudge({ ask, measure, readToolDefinition, measurements = [], stor
 }
 
 module.exports = {
-  createJudge, judgeRound, writeResult, writeQuestion, toolsForModel, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
+  createJudge, judgeRound, writeResult, writeQuestion, writeStop, stopFacts, toolsForModel, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
   createPreflight, labelledLines, readTranslatedForms, renderValue,
 };

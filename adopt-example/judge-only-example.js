@@ -26,7 +26,7 @@
  *   let r = await main.turn({ threadId, message: { typed: "Set up the pickup for LST-2291 …" } });
  *   // r.status "waiting": show r.question.message, then pass the user's answer as the next turn
  *   r = await main.turn({ threadId, message: { typed: "yes" } });
- *   // r.status "executed", or "replied", "not_executed" (r.reason says why), "call_failed", "tool_error"
+ *   // r.status "executed", or "replied", "not_executed" (r.message tells the user why), "call_failed", "tool_error"
  *
  * Or from a terminal: node judge-only-example.js "Set up the pickup for LST-2291, 2pm this Saturday,
  * Hongdae station lockers."
@@ -34,7 +34,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { createJudge, writeQuestion } = require("./judge-only");
+const { createJudge, writeQuestion, writeStop } = require("./judge-only");
 const defaultConnect = require("./connect");
 
 function systemPrompt() {
@@ -120,8 +120,13 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
 
     // 4. Nothing to ask. Read the record this round wrote, and decide from it.
     const record = r.key ? (await connect.store.list(r.key)).filter(x => x && "execution_decision" in x).at(-1) : null;
+    // Not ready: the user is told why, from the record this round wrote (writeStop). The words go into the
+    //   conversation as the assistant's, so the next turn starts from what the user was told.
     if (!readyToExecute(record, toolCall.name)) {
-      return { status: "not_executed", reason: record?.reason ?? r.reason, message: r.message, notices: r.notices };
+      const stop = r.message ? { message: r.message, facts: null }
+        : await writeStop({ ask: connect.ask, say: connect.say, model }, { record, conversation });
+      conversation.push({ trust: "assistant", text: stop.message });
+      return { status: "not_executed", reason: record?.reason ?? r.reason, message: stop.message, stop: stop.facts, notices: r.notices };
     }
     const name = record.tool_call.name, args = record.call_arguments;
     let result;

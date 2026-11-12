@@ -17,7 +17,8 @@
  *   r = await agent.reply({ threadId, message: { typed: "yes" } });
  *   // r.status "executed", or why not: "replied" (the model answered without calling a tool), "hold",
  *   //   "definition_repair", "exhausted", "cancelled", "input_required" (the server asked for more input;
- *   //   nothing was executed), "call_failed" (the call threw) or "tool_error" (the tool reported a failure)
+ *   //   nothing was executed), "call_failed" (the call threw) or "tool_error" (the tool reported a failure).
+ *   //   When nothing was executed because of the gate, r.stop.message says why, in words for the user.
  *
  * Or from a terminal: node agent.js "Set up the pickup for LST-2291, 2pm this Saturday, Hongdae
  * station lockers." It prints each question and reads your answer as one line.
@@ -56,6 +57,7 @@ function createAgent({ connect = defaultConnect, userId = "user", system = syste
       disclosures: state.verdict?.disclosures ?? [],   // the provider's notices: show them to the user
       serverRequests: state.serverRequests ?? null,    // the server asked for input instead of completing
       callError: state.callError ?? null,              // the call itself failed
+      stop: state.stop ?? null,                        // not executed: stop.message is what to show the user
       verdict: state.verdict,
     };
   }
@@ -103,6 +105,7 @@ if (require.main === module) {
     }
     rl.close();
     if (r.reply) console.log(`\n${r.reply}`);
+    if (r.stop?.message) console.log(`\n${r.stop.message}`);
     for (const d of r.disclosures) console.log(`Note: ${d}`);
     console.log(`\n${r.status}`, r.executedWith ? JSON.stringify(r.executedWith) : (r.verdict?.reason ?? ""));
   })().catch(e => { console.error(e.message); process.exit(1); });

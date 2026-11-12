@@ -25,7 +25,7 @@
 
 const { StateGraph, Annotation, interrupt, Command, MemorySaver, START, END } = require("@langchain/langgraph");
 
-const { judgeRound, writeResult, writeQuestion, toolsForModel, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
+const { judgeRound, writeResult, writeQuestion, writeStop, toolsForModel, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
         createPreflight, labelledLines, readTranslatedForms, renderValue } = require("./judge-only");
 
 const last = (a, b) => (b === undefined ? a : b);
@@ -50,6 +50,8 @@ const State = Annotation.Root({
   executedWith: Annotation({ reducer: last, default: () => null }),
   serverRequests: Annotation({ reducer: last, default: () => null }),
   callError: Annotation({ reducer: last, default: () => null }),
+  // Not executed: what the user was told, and the facts it was written from (writeStop).
+  stop: Annotation({ reducer: last, default: () => null }),
 });
 
 // How a conversation is shown to the agent's model: the user's words as the user's, anything else that
@@ -102,7 +104,7 @@ function buildGraph({ ask, say, chat, listTools, readToolDefinition, measure, ca
     if (out?.toolCall && typeof out.toolCall.name === "string") {
       // A new turn of the conversation: what an earlier turn ended with does not carry over.
       return { toolCall: { name: out.toolCall.name, arguments: out.toolCall.arguments ?? null }, reply: null,
-               ended: null, executedWith: null, serverRequests: null, callError: null };
+               ended: null, executedWith: null, serverRequests: null, callError: null, stop: null };
     }
     return { reply: typeof out?.text === "string" ? out.text : "", ended: "replied",
              ...(out?.text ? { conversation: [{ trust: "assistant", text: out.text }] } : {}) };
@@ -172,9 +174,14 @@ function buildGraph({ ask, say, chat, listTools, readToolDefinition, measure, ca
     const v = state.verdict;
     const record = v.key ? (await storage.list(v.key)).filter(x => x && "execution_decision" in x).at(-1) : null;
     if (!readyToExecute(record, state.toolCall?.name)) {
-      // Not ready: the run ends with the gate's reason. Were the gate to say execute over a record that
-      //   does not read as ready, nothing runs.
-      return v.decision === "execute" ? { ended: "not_executed" } : {};
+      // Not ready: nothing runs, and the user is told why, from this record (writeStop). Were the gate to
+      //   say execute over a record that does not read as ready, the same.
+      const stop = v.user_message ? { message: v.user_message, facts: null }
+        : await writeStop({ ask, say, model }, { record, conversation: state.conversation });
+      // The run's end stays the gate's decision (hold, definition_repair, …); not_executed only when the
+      //   gate said execute.
+      return { ...(v.decision === "execute" ? { ended: "not_executed" } : {}), stop,
+               conversation: [{ trust: "assistant", text: stop.message }] };
     }
     const name = record.tool_call.name, args = record.call_arguments;
     const deps = { ask, model, runId: `${runId}-result`, measure, readToolDefinition, measurements, storage };
