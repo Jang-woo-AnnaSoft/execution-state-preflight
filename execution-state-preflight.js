@@ -355,6 +355,47 @@ function toolsForModel(tools) {
   }));
 }
 
+// [STOP FACTS] Why a record does not execute, as facts for the user's side to put into words. Read
+//   from the record alone, along the same branch as its decision: a hold reports what prohibits it and
+//   not the routes still open beside it, since none of them can turn it met (4.5). No ids or hashes:
+//   each item names a condition by its words, a field by its name. The words for the user are not
+//   written here; the model writes them, from these items only.
+//   { decision, items: [{ why, condition?, set_by?, field?, found?, names? }] }. items is empty for a
+//   record that executes, asks, or already ran: there is nothing to report as a stop.
+//   why: not_allowed       a condition was checked against settled values, and prohibits this
+//        call_not_valid    every value settled, and the call is still not one the tool accepts
+//        cannot_be_checked a condition, or a check on a value, could not be put to a comparison
+//        no_source         a value nothing is declared to give, or a lookup that broke
+//        waiting_on_system values only the system can give, not read yet
+//        asked_enough      the route reached its ceiling: asked, or looked up, as often as allowed
+//        later             the work is for later, not now
+//        cannot_proceed    any other hold, named by its kind
+function stopFacts(record) {
+  const g = record?.gate ?? {}, decision = record?.execution_decision ?? null;
+  const items = [];
+  const byId = new Map([...(record?.provider_checklist ?? []), ...(record?.user_checklist ?? [])]
+    .map(i => [i.id, i.description ?? i.stated_as ?? null]));
+  const named = n => byId.get(n) ?? n;
+  if (decision === "hold") {
+    for (const u of g.unmet ?? []) {
+      items.push({ why: "not_allowed", condition: u.description ?? named(u.id), set_by: u.declared_by ?? null, found: u.note ?? null });
+    }
+    if (!items.length && g.payload_violation) items.push({ why: "call_not_valid", found: g.payload_violation });
+    if (!items.length) items.push({ why: "cannot_proceed", found: g.kind ?? null });
+  } else if (decision === "definition_repair") {
+    for (const c of g.definition_repair ?? []) items.push({ why: "cannot_be_checked", condition: c.description ?? null, set_by: "provider" });
+    for (const c of g.definition_repair_checks ?? []) items.push({ why: "cannot_be_checked", field: c.slot ?? null, found: c.note ?? null });
+    for (const f of [...(g.definition_repair_fields ?? []), ...(g.lookup_failed_fields ?? [])]) items.push({ why: "no_source", field: f.name, found: f.note ?? null });
+  } else if (decision === "system_lookup") {
+    items.push({ why: "waiting_on_system", names: (g.system_lookup ?? []).map(f => f.name) });
+  } else if (decision === "exhausted") {
+    for (const e of g.exhausted ?? []) items.push({ why: "asked_enough", found: e.route, names: (e.names ?? []).map(named) });
+  } else if (decision === "deferred") {
+    items.push({ why: "later", found: record?.fixed?.c1_when_case ?? null });
+  }
+  return { decision, items };
+}
+
 async function safeHook(fn, args, onFail) {
   try {
     return await fn(...args);
@@ -3972,7 +4013,7 @@ function createPreflight({ hooks = {}, storage, clock, strict = false, limits = 
   };
 }
 
-module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, labelledLines, toolsForModel, describeForm,
+module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, labelledLines, toolsForModel, stopFacts, describeForm,
                    readTranslatedForms, renderValue };
 
 
