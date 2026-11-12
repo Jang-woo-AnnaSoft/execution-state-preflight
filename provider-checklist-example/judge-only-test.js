@@ -112,11 +112,16 @@ async function run(id, condition, replies = [], over = {}) {
       [match.length > 0, match.every(p => p.user.includes("Schedule an in-person pickup")), match.some(p => /\[(Required|Verify|Notice)\]/.test(p.user))], [true, true, false]);
     // The location is also a measurement. A real model, told so, put its line into user_approval or no
     //   form at all, where the same line for the item was value_source.
-    const place = g1.prompts.find(p => p.hook === "comparable_form" && p.user.includes("Condition: The location is the place the seller names."));
+    const place = g1.prompts.find(p => p.hook === "comparable_form" && p.user.includes("Condition: The location is the place the seller names, not a place read from the platform."));
     check("the form for a line on a field that is also a measurement: the prompt says who gives the value is value_source",
       [Boolean(place), place?.user.includes("Measurements this system can read: order_status, listing_owned_by_seller, buyer_contact, time, location"),
        place?.user.includes("A line that says who gives a field's value is this kind, also for a field that is also a measurement"),
        place?.user.includes("Not for a line that only says who gives a value")], [true, true, true, true]);
+    // And the kept translations of those lines are marked for review: judge-only.js hands the skeleton
+    //   the names connect.js can measure ([ALSO MEASURED]).
+    const reviewed = (verdict?.provider_checklist ?? []).filter(c => c.form_translation?.review).map(c => [c.label, c.form_translation.review.also_measured]);
+    check("  the [Verify] lines on time and location are marked for review; the item, not measured, and [Required] lines are not",
+      reviewed, [["Verify", ["time"]], ["Verify", ["location"]]]);
   }
 
   console.log("\n--- 1-c. the seller's own condition, put into a form by the model, is tried on the value shown ---");

@@ -132,7 +132,8 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
     console.log("values:");
     for (const f of rec.fields ?? []) console.log(`    ${String(f.name).padEnd(14)} ${String(f.status).padEnd(8)} ${String(f.source ?? "-").padEnd(16)} ${String(f.status).toLowerCase() === "known" ? short(f.value, 60) : ""}`);
     console.log("the provider's lines:");
-    for (const c of rec.provider_checklist ?? []) console.log(`    [${c.label}] ${String(c.status).padEnd(22)} ${short(c.description ?? c.wording ?? "", 70)}\n        form: ${c.compare ? short(c.compare, 200) : "(none)"}`);
+    for (const c of rec.provider_checklist ?? []) console.log(`    [${c.label}] ${String(c.status).padEnd(22)} ${short(c.description ?? c.wording ?? "", 70)}\n        form: ${c.compare ? short(c.compare, 200) : "(none)"}` +
+      (c.form_translation?.review ? `\n        review: also measured: ${c.form_translation.review.also_measured.join(", ")}` : ""));
     if ((rec.user_checklist ?? []).length) {
       console.log("the user's conditions:");
       for (const c of rec.user_checklist) console.log(`    ${String(c.status).padEnd(22)} ${short(c.stated_as ?? c.description ?? "", 70)}`);

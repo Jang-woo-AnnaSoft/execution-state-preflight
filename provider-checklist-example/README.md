@@ -61,7 +61,7 @@ ask: the model asks, and code holds the answer to what was shown.
 | `[Required]` The listing must be the seller's own … | the measurement `listing_owned_by_seller` is exactly `true` |
 | `[Verify]` The item is the listing the seller names. | `item_id` only from the seller |
 | `[Verify]` The time is the one the seller states, or … a pickup request … inside a range the seller set … | `time` only from the seller, or from a measurement inside the seller's range |
-| `[Verify]` The location is the place the seller names. | `location` only from the seller |
+| `[Verify]` The location is the place the seller names, not a place read from the platform. | `location` only from the seller |
 | `[Required]` The buyer's contact is read from the platform. | `buyer_contact` only from a measurement |
 | `[Notice]` The buyer sees the time and location immediately … | none: a disclosure |
 
