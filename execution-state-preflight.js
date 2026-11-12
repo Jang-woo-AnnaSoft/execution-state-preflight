@@ -1652,7 +1652,7 @@ async function listRecords(h, key) {
 const NOT_VALUE_ASKS = new Set(["intent_undetermined", "intent_undetermined_exhausted", "tool_undetermined",
                                 "tool_undetermined_exhausted", "branch_unresolved", "branch_conflict"]);
 async function unitHistory(h, actionKey, phase) {
-  const none = { available: false, asked: new Map(), ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0, conditions: null };
+  const none = { available: false, asked: new Map(), askings: [], ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0, conditions: null };
   if (typeof actionKey !== "string" || actionKey === "") return none;
   const all = await listRecords(h, actionKey);
   if (!all) return { ...none, unlisted: true };
@@ -1660,7 +1660,7 @@ async function unitHistory(h, actionKey, phase) {
   for (let i = all.length - 1; i >= 0; i--) if (all[i]?.execution_decision === "executed") { start = i + 1; break; }
   const recs = all.slice(start).filter(r => r && typeof r === "object" && r.kind !== FORM_APPROVAL_KIND &&
     r.kind !== FORM_TRANSLATION_KIND);
-  const out = { available: true, asked: new Map(), ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0, conditions: null };
+  const out = { available: true, asked: new Map(), askings: [], ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0, conditions: null };
   for (const r of recs) {
     const g = r.gate ?? {};
     // The conditions taken from the user's words, and how far those words were read ([USER CONDITIONS]).
@@ -1672,6 +1672,7 @@ async function unitHistory(h, actionKey, phase) {
       for (const q of Array.isArray(g.questions) ? g.questions : []) {
         if (typeof q?.target === "string") out.asked.set(q.target, { question: q, asked_through: through });
       }
+      if ((g.questions ?? []).length > 0 && !out.askings.includes(through)) out.askings.push(through);
     }
     if (g.kind === "tool_undetermined") out.tool_attempts += 1;
     if (r.phase !== phase) continue;
@@ -1755,6 +1756,14 @@ async function readUserReplies(h, instruction, history) {
     if (!isNone && c.answer === true && q.kind === "value" && !q.candidate) { reject("nothing was shown to approve for this value"); continue; }
     const loc = checkLocatedQuote(c, instruction, a.asked_through);
     if (!loc.ok) { reject(loc.why); continue; }
+    // [REPLY IN FRONT] A reply answers the questions in front of it: those of the latest asking before it.
+    //   Words after a later asking answer that one. A real model mapped a "yes" given to a later question
+    //   back onto an earlier one the user had said no to.
+    const next = history.askings.filter(t => t > a.asked_through).sort((x, y) => x - y)[0];
+    if (next !== undefined && loc.located_at.segment_index >= next) {
+      reject(`segment ${loc.located_at.segment_index} comes after a later question (asked at ${next}), so it answers that one`);
+      continue;
+    }
     valid.set(target, [...(valid.get(target) ?? []), { target, q, answer: isNone ? null : c.answer, none: isNone, located_at: loc.located_at }]);
   }
   const accepted = new Map();
@@ -2069,7 +2078,7 @@ function locatedWithdrawal(claim, condAt, instruction) {
   }
   return { quote: w.quote, located_at: at.located_at, status: "proposed" };
 }
-async function userConditionsFromInstruction(h, instruction, mcpTool, existing, carried, withdrawAnswers = {}) {
+async function userConditionsFromInstruction(h, instruction, mcpTool, existing, carried, answers = {}) {
   const FAILED = Symbol("failed");
   const segs = Array.isArray(instruction) ? instruction : null;
   const from = segs && Number.isInteger(carried?.read_through) && carried.read_through <= segs.length ? carried.read_through : 0;
@@ -2093,15 +2102,15 @@ async function userConditionsFromInstruction(h, instruction, mcpTool, existing, 
       });
     }
     if (!segs.slice(from).some(s => s?.trust === "user")) {
-      return { items: settleWithdrawals(kept, withdrawAnswers),
+      return { items: settleWithdrawals(kept, answers),
                checks: check("checked", `${kept.length} condition(s) carried from words already read; nothing new from the user since segment ${from}`) };
     }
   }
   const out = await safeHook(h.extractUserConditions, [instruction, mcpTool], e => ({ [FAILED]: e?.message ?? String(e) }));
-  if (out === undefined) return { items: settleWithdrawals(kept, withdrawAnswers), checks: [] };   // not wired: nothing extracted, and unsafeDefaults says so
-  if (out?.[FAILED]) return { items: settleWithdrawals(kept, withdrawAnswers), checks: check("unverified", `extractUserConditions failed: ${out[FAILED]}`) };
-  if (out?.none === "absent") return { items: settleWithdrawals(kept, withdrawAnswers), checks: check("checked", kept.length ? `${kept.length} condition(s) carried; none new` : "no condition stated") };
-  if (!Array.isArray(out)) return { items: settleWithdrawals(kept, withdrawAnswers), checks: check("unverified", "extractUserConditions returned neither a list nor { none: \"absent\" }") };
+  if (out === undefined) return { items: settleWithdrawals(kept, answers), checks: [] };   // not wired: nothing extracted, and unsafeDefaults says so
+  if (out?.[FAILED]) return { items: settleWithdrawals(kept, answers), checks: check("unverified", `extractUserConditions failed: ${out[FAILED]}`) };
+  if (out?.none === "absent") return { items: settleWithdrawals(kept, answers), checks: check("checked", kept.length ? `${kept.length} condition(s) carried; none new` : "no condition stated") };
+  if (!Array.isArray(out)) return { items: settleWithdrawals(kept, answers), checks: check("unverified", "extractUserConditions returned neither a list nor { none: \"absent\" }") };
   const items = [...kept];
   let setAside = 0;
   const badWithdrawals = [];
@@ -2137,17 +2146,24 @@ async function userConditionsFromInstruction(h, instruction, mcpTool, existing, 
   }
   const fresh = items.length - kept.length;
   const bad = badWithdrawals.length ? `; ${badWithdrawals.length} taking back not kept (${badWithdrawals.join("; ")})` : "";
-  return { items: settleWithdrawals(items, withdrawAnswers), checks: check("checked", (from > 0
+  return { items: settleWithdrawals(items, answers), checks: check("checked", (from > 0
     ? `${kept.length} condition(s) carried, ${fresh} taken from the user's new words` +
       (setAside ? ` (${setAside} claim(s) about words already read set aside)` : "")
     : `${items.length} condition(s) taken from the user's words`) + bad) };
 }
-// The user's answer to a withdraw question settles it: yes confirms, no declines. Kept with the item, so
-//   a later round of the unit carries the answer and does not ask again.
-function settleWithdrawals(items, withdrawAnswers) {
+// The user's answers about the items themselves, kept with them so a later round of the unit carries
+//   them and does not ask again. A withdraw question: yes confirms, no declines. A proposed form the user
+//   said no to ([FORM DECLINED]): the item becomes one no form fits, approved for the values shown.
+function settleWithdrawals(items, answers) {
+  const withdrawAnswers = answers?.withdrawals ?? {}, declinedForms = answers?.declinedForms ?? {};
   return items.map(it => {
+    const d = declinedForms[it.id];
+    if (d && !it.form_none && !it.withdrawal) {
+      it = { ...it, form_none: { why: "the user said no to the proposed form, so the user approves it for the values shown",
+                                 declined: { form: d.form, answered_at: d.answered_at } } };
+    }
     if (it.withdrawal?.status !== "proposed") return it;
-    const a = withdrawAnswers?.[it.id];
+    const a = withdrawAnswers[it.id];
     if (!a || typeof a.answer !== "boolean") return it;
     return { ...it, withdrawal: { ...it.withdrawal, status: a.answer ? "confirmed" : "declined", answered_at: a.located_at ?? null } };
   });
@@ -2482,7 +2498,15 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
   userAnswers = replies.userAnswers;
   checklistAnswers = replies.checklistAnswers;
   const answerChecks = [...replies.checks];
+  // [FORM DECLINED] The user's no to a proposed form, by item: that condition is approved by the user for
+  //   the values shown from now on in this unit, and no form is proposed for it again (see
+  //   userConditionsFromInstruction). Kept with the item, not under the form's key: it holds for this
+  //   unit, and the next request proposes again.
+  const declinedForms = {};
   for (const f of replies.forms) {
+    if (f.answer === false && typeof f.question?.id === "string") {
+      declinedForms[f.question.id] = { form: f.question.form ?? null, answered_at: f.located_at ?? null };
+    }
     if (f.answer !== true) continue;
     const q = f.question;
     try {
@@ -2592,7 +2616,8 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
 
   // [USER CONDITIONS] The conditions the user stated in this instruction join the user checklist
   //   (4.4: made at instruction time, from the trusted part of the instruction). See extractUserConditions.
-  const extraction = await userConditionsFromInstruction(h, instruction, mcpTool, checklist, history.conditions, replies.withdrawals);
+  const extraction = await userConditionsFromInstruction(h, instruction, mcpTool, checklist, history.conditions,
+    { withdrawals: replies.withdrawals, declinedForms });
   const extractionChecks = extraction.checks;
   const extractedItems = [];
   for (const it of extraction.items) {
@@ -3641,7 +3666,11 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.21",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.22",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.22: a user condition whose proposed form the user said no to carries form_none with declined
+    //        ({ form, answered_at }): approved by the user for the values shown, its form not proposed
+    //        again in the unit ([FORM DECLINED]). A reply answers only the questions of the latest asking
+    //        before it; a claim about an earlier question is a rejected value_checks entry ([REPLY IN FRONT]).
     //   1.21: a user condition may carry withdrawal ({ quote, located_at, status: proposed | confirmed |
     //        declined, answered_at }); confirmed, its status is "withdrawn" and it is not compared
     //        ([WITHDRAWN]). Questions may be of kind "withdraw" (stated_as, withdrawn_by).
