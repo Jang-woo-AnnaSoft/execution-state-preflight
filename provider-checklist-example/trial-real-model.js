@@ -12,6 +12,8 @@
  *   cd ../provider-checklist-example
  *   MODEL=anthropic:<model-name> node trial-real-model.js
  *   MODEL=anthropic:<model-name> node trial-real-model.js --id g1-01 --condition clean --reply yes
+ *   MODEL=... node trial-real-model.js --id g2-01 --reply "Saturday at 3pm, Hongdae station lockers" --reply yes --reply yes
+ *     each --reply is what the seller says next, whether the gate asked or the assistant did
  *   node trial-real-model.js --stub          # the stand-in model, to check this script itself
  *
  * Prints every model call (which prompt, how long, what came back), each turn, and the last record.
@@ -89,15 +91,22 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
 
   let r = await main.turn({ threadId, message: { typed: instruction.text }, userChecklist: instruction.user_checklist ?? [] });
   log.turns.push({ said: instruction.text, result: r });
+  // A turn ends waiting on the gate's question, or with the assistant's own words (it asked or answered
+  //   without calling the tool). Either way the seller's next reply, if one was given, goes in.
+  const indent = t => String(t ?? "").split("\n").map(l => "    " + l).join("\n");
+  const show = res => {
+    if (res.status === "waiting") console.log(`\n→ waiting. The gate's question, as shown to the seller:\n${indent(res.question.message)}`);
+    else if (res.status === "replied") console.log(`\n→ the assistant answered in words, without calling the tool (the gate did not run):\n${indent(res.reply)}`);
+  };
   let n = 0;
-  while (r.status === "waiting" && n < replies.length) {
-    console.log(`\n→ waiting. The question shown to the seller:\n${r.question.message.split("\n").map(l => "    " + l).join("\n")}`);
+  show(r);
+  while ((r.status === "waiting" || r.status === "replied") && n < replies.length) {
     console.log(`\nThe seller: ${replies[n]}\n`);
     r = await main.turn({ threadId, message: { typed: replies[n] }, userChecklist: instruction.user_checklist ?? [] });
     log.turns.push({ said: replies[n], result: r });
     n++;
+    show(r);
   }
-  if (r.status === "waiting") console.log(`\n→ still waiting. The question:\n${r.question.message.split("\n").map(l => "    " + l).join("\n")}`);
 
   const tool = (await real.listTools())[0];
   const records = await store.list(`user:${tool.name}:${threadId}`);
