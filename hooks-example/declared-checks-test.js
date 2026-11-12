@@ -410,7 +410,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.20");
+    check("schema_version", persisted?.schema_version, "1.21");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -620,6 +620,50 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
       const r4 = await run({ storage: sOnce, instruction: [{ trust: "user", text: two }, { trust: "user", text: "ok" }, { trust: "assistant", text: "One more thing?" }, { trust: "user", text: said4 }],
         extract: exTwo, measured: ALL_MEASURED, over: { extractUserConditions: extractOf([merged, C]), proposeComparableForm: proposeOnce } });
       check("new words with a new condition: it joins the carried ones", ids(r4), ["Nothing after 8pm", "public places only", "not on Sundays"]);
+    }
+
+    // [WITHDRAWN] A condition the user takes back is not dropped: the user confirms it, and it stays in the
+    //   record as withdrawn. Declined, it is compared as before.
+    {
+      const late = "Pick up LST-2291 at 2026-10-31T21:00:00+09:00, Hongdae station lockers. Nothing after 8pm.";
+      const back = "Keep 9pm and drop the 8pm limit.";
+      const exLate = { item_id: at(late, "LST-2291"), time: at(late, "2026-10-31T21:00:00+09:00"), location: at(late, "Hongdae station lockers") };
+      const cond = { quote: "Nothing after 8pm.", segment_index: 0, span: [late.indexOf("Nothing"), late.length], constrains: ["time"] };
+      const withBack = { ...cond, withdrawn_by: { quote: "drop the 8pm limit", segment_index: 1, span: [back.indexOf("drop"), back.indexOf("drop") + 18] } };
+      const NA = { compare: { kind: "not_after", hhmm: "20:00" }, constrains: ["time"] };
+      const conv = (...more) => [{ trust: "user", text: late }, { trust: "user", text: back }, ...more];
+      const over = list => ({ extractUserConditions: () => list, proposeComparableForm: req => (req.declared_by === "user" ? NA : undefined), verifyUserChecklistItem: evening });
+      const sW = memStorage();
+      const w1 = await run({ storage: sW, instruction: conv(), extract: exLate, measured: ALL_MEASURED, over: over([withBack]) });
+      const wi = (w1.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+      const wq = (w1.r.gate?.questions ?? []).find(q => q.kind === "withdraw") ?? {};
+      check("taken back in the user's words: not dropped, asked to confirm, and not compared meanwhile",
+        [wi.status, wi.withdrawal?.status, wq.withdrawn_by, w1.r.execution_decision,
+         (w1.r.gate?.question_block ?? []).includes('"Nothing after 8pm." — remove this condition? (you said: "drop the 8pm limit")')],
+        ["unverified", "proposed", "drop the 8pm limit", "ask_user", true]);
+      const w2 = await run({ storage: sW, instruction: conv({ trust: "user", text: "yes" }), extract: exLate, measured: ALL_MEASURED, over: over([withBack]) });
+      const wi2 = (w2.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+      check("  confirmed: withdrawn, kept in the record with the words, 21:00 executes",
+        [wi2.status, wi2.withdrawal?.status, wi2.withdrawal?.quote, w2.r.execution_decision], ["withdrawn", "confirmed", "drop the 8pm limit", "execute"]);
+      const sN = memStorage();
+      await run({ storage: sN, instruction: conv(), extract: exLate, measured: ALL_MEASURED, over: over([withBack]) });
+      const n2 = await run({ storage: sN, instruction: conv({ trust: "user", text: "no" }), extract: exLate, measured: ALL_MEASURED, over: over([withBack]) });
+      const ni = (n2.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+      check("  declined: the condition stands, and its form is asked for now", [ni.withdrawal?.status, n2.r.execution_decision,
+        (n2.r.gate?.questions ?? []).some(q => q.kind === "confirm_form" && q.id === ni.id)], ["declined", "ask_user", true]);
+      const n3 = await run({ storage: sN, instruction: conv({ trust: "user", text: "no" }, { trust: "user", text: "yes" }), extract: exLate, measured: ALL_MEASURED, over: over([withBack]) });
+      check("    its form confirmed, it is compared: 21:00 is held", n3.r.execution_decision, "hold");
+      const misplaced = { ...cond, withdrawn_by: { quote: "Hongdae station lockers", segment_index: 0, span: [late.indexOf("Hongdae"), late.indexOf("Hongdae") + 23] } };
+      const m1 = await run({ storage: memStorage(), instruction: conv(), extract: exLate, measured: ALL_MEASURED, over: over([misplaced]) });
+      const mi = (m1.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+      check("  words that come before the condition do not take it back: not kept, noted",
+        [mi.withdrawal ?? null, /taking back not kept/.test(vc(m1.r, "user_conditions")?.note ?? "")], [null, true]);
+      // Carried from an earlier round, and taken back in new words.
+      const sC = memStorage();
+      await run({ storage: sC, instruction: [{ trust: "user", text: late }], extract: exLate, measured: ALL_MEASURED, over: over([cond]) });
+      const c2 = await run({ storage: sC, instruction: conv(), extract: exLate, measured: ALL_MEASURED, over: over([withBack]) });
+      const ci = (c2.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+      check("  a carried condition taken back in the new words: asked to confirm", [ci.withdrawal?.status, c2.r.execution_decision], ["proposed", "ask_user"]);
     }
 
     const only = "Pick up LST-2291, Hongdae station lockers. Nothing after 8pm.";
