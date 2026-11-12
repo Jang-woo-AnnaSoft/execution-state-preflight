@@ -30,7 +30,7 @@
  * (ports.js answerRound), read by a stand-in for the model (readReplies).
  */
 
-const { createPreflight, ruleHash, describeForm, readTranslatedForms, renderValue } = require("../execution-state-preflight");
+const { createPreflight, ruleHash, describeForm, readTranslatedForms, renderValue, stopFacts } = require("../execution-state-preflight");
 const { locatedActionName } = require("./c2-stub");
 const { withPorts, askRound, answerRound, hasAnswers, REPLY } = require("./ports");
 
@@ -1011,6 +1011,44 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
       condSeen.find(x => x[0] === "order_status"), ["order_status", "LST-2291"]);
     check("rendered values: a date-time carries its weekday, written by code", [renderValue(SAT_2PM, { format: "date-time" }), renderValue("x", {})],
       ["2026-10-31 (Sat) 14:00 +09:00", JSON.stringify("x")]);
+  }
+
+  heading("12. why a record does not execute, as facts for the user's side to put into words [STOP FACTS]");
+  {
+    // The shape of a real run: the sale line unmet from the order status, and the location line, which
+    //   the model put into no form, a definition gap beside it.
+    const held = {
+      execution_decision: "hold",
+      provider_checklist: [{ id: "p:1", description: "The sale must be agreed." }, { id: "p:2", description: "The location is the place the seller names." }],
+      gate: { kind: "definition_repair",
+        unmet: [{ id: "p:1", description: "The sale must be agreed.", note: 'order_status = "cancelled"', declared_by: "provider", label: "Required" }],
+        definition_repair: [{ id: "p:2", label: "Verify", description: "The location is the place the seller names." }] },
+    };
+    check("a hold: what prohibits it, by its words, whose, and what was found; not the route still open beside it",
+      stopFacts(held), { decision: "hold", items: [{ why: "not_allowed", condition: "The sale must be agreed.", set_by: "provider", found: 'order_status = "cancelled"' }] });
+    check("  a user's condition is named by the words the user stated",
+      stopFacts({ execution_decision: "hold", user_checklist: [{ id: "uc:1", stated_as: "Nothing after 8pm" }], gate: { kind: "unmet", unmet: [{ id: "uc:1", declared_by: "user", note: "21:00" }] } }).items,
+      [{ why: "not_allowed", condition: "Nothing after 8pm", set_by: "user", found: "21:00" }]);
+    check("  a hold with no unmet condition: the call itself, or the kind",
+      [stopFacts({ execution_decision: "hold", gate: { kind: "payload_invalid", payload_violation: "bad" } }).items, stopFacts({ execution_decision: "hold", gate: { kind: "schema_unsupported" } }).items],
+      [[{ why: "call_not_valid", found: "bad" }], [{ why: "cannot_proceed", found: "schema_unsupported" }]]);
+    check("definition_repair: each line, check and field that could not be checked",
+      stopFacts({ execution_decision: "definition_repair", gate: { kind: "definition_repair",
+        definition_repair: [{ id: "p:2", description: "The location is the place the seller names." }],
+        definition_repair_checks: [{ id: "time:format", slot: "time", note: "no validator" }],
+        definition_repair_fields: [{ name: "location", note: "no place to check" }], lookup_failed_fields: [{ name: "buyer_contact", note: "threw" }] } }).items,
+      [{ why: "cannot_be_checked", condition: "The location is the place the seller names.", set_by: "provider" },
+       { why: "cannot_be_checked", field: "time", found: "no validator" },
+       { why: "no_source", field: "location", found: "no place to check" }, { why: "no_source", field: "buyer_contact", found: "threw" }]);
+    check("system_lookup, exhausted (ids named by their words), deferred",
+      [stopFacts({ execution_decision: "system_lookup", gate: { kind: "system_lookup", system_lookup: [{ name: "order_status" }] } }).items,
+       stopFacts({ execution_decision: "exhausted", provider_checklist: [{ id: "p:3", description: "Ask before booking." }],
+         gate: { kind: "exhausted", exhausted: [{ route: "ask_user", attempt: 2, limit: 2, names: ["time", "p:3"] }] } }).items,
+       stopFacts({ execution_decision: "deferred", fixed: { c1_when_case: "scheduled" }, gate: {} }).items],
+      [[{ why: "waiting_on_system", names: ["order_status"] }], [{ why: "asked_enough", found: "ask_user", names: ["time", "Ask before booking."] }], [{ why: "later", found: "scheduled" }]]);
+    check("a record that executes, asks or already ran: nothing to report as a stop",
+      ["execute", "ask_user", "executed", "failed"].map(d => stopFacts({ execution_decision: d, gate: {} }).items), [[], [], [], []]);
+    check("no record: no decision, no items", stopFacts(null), { decision: null, items: [] });
   }
 
   console.log(failures ? `\n${failures} FAILED` : "\nall ok");
