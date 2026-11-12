@@ -225,6 +225,9 @@ async function run(id, condition, replies = [], over = {}) {
       [r.last.status, r.calls[0]?.args.time, eight.status, eight.withdrawal?.quote], ["executed", "2026-10-31T21:00:00+09:00", "withdrawn", "drop the 8pm limit"]);
     const prompt = r.prompts.find(p => p.hook === "user_conditions")?.system ?? "";
     check("  the model finding conditions is told never to leave one out that was taken back", /also one they later took back: never leave it out/.test(prompt), true);
+    const qPrompt = r.prompts.find(p => p.hook === "question" && /"kind": "withdraw"/.test(p.user))?.user ?? "";
+    check("  the model writing the question is told what the withdraw item is: the condition and the words",
+      [/"remove_condition": "Nothing after 8pm"/.test(qPrompt), /"because_you_said": "drop the 8pm limit"/.test(qPrompt)], [true, true]);
   }
 
   console.log("\n--- 1-d. the words of a question: one writer, plain text taken as it is ---");

@@ -110,8 +110,11 @@ const LOCKERS = "Hongdae station lockers";
   //   question shows each with what it will be checked against (3.3).
   const g2 = await drive("g2-01", "clean", [`yes, 2026-10-31T20:00:00+09:00 at ${LOCKERS}`, "yes"], { userChecklist: [] });
   const first = g2.questions[0]?.block ?? [];
-  check("g2-01: 'Nothing after 8pm.' and 'public places only.' each shown to confirm", first.filter(l => /will be checked like this/.test(l)).length, 2);
-  check("  the seller's yes keeps both; the place is then asked to approve against 'public places only'",
+  // 'public places only.' is proposed as "the user approves it": the same as no form, so there is no form
+  //   to confirm, and the place is asked about once it is known.
+  check("g2-01: 'Nothing after 8pm.' shown to confirm; 'public places only.' has no form to confirm",
+    [first.filter(l => /will be checked like this/.test(l)).length, first.some(l => /"public places only\."/.test(l))], [1, false]);
+  check("  the seller's yes keeps the form; the place is then asked to approve against 'public places only'",
     /public places only.*location = "Hongdae station lockers"/.test(g2.questions[1]?.block?.[0] ?? ""), true);
   check("  approved: executed", [g2.state.ended, g2.calls.length], ["executed", 1]);
   check("  the evening limit compared in its form, the place by the seller's yes", g2.state.verdict.user_checklist.map(i => `${i.status}:${i.source}`),
