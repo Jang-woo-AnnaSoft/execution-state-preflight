@@ -182,10 +182,18 @@ const run = async (id, condition, over = {}, replies = []) => {
     const { readJsonReply } = require("../adopt-example/connect");
     let a = null, b = null;
     try { readJsonReply("Sure! Before I book it, please confirm the time."); } catch (e) { a = e.message; }
-    try { readJsonReply('{"message": "unclosed}'); } catch (e) { b = e.message; }
+    try { readJsonReply('{"message": unclosed}'); } catch (e) { b = e.message; }
     check("plain words: an error that carries them", [/did not answer in JSON/.test(a ?? ""), /please confirm the time/.test(a ?? "")], [true, true]);
     check("broken JSON: an error that carries it", [/could not be read/.test(b ?? ""), /unclosed/.test(b ?? "")], [true, true]);
     check("JSON with words around it is read", readJsonReply('Here: {"message": "ok"} done'), { message: "ok" });
+    // What a real model wrote for a [Required] line: its thinking, holding a piece of JSON, then the answer.
+    const thinking = 'The schema should require it to be true, so {"const": true}. A boolean fits.\n\n' +
+      '{"form": {"compare": {"source": "measured_data", "measure": "listing_owned_by_seller", "schema": {"const": true}}, "constrains": ["item_id"]}}';
+    check("thinking aloud with JSON in it, then the answer: the answer is read", readJsonReply(thinking).form?.compare?.measure, "listing_owned_by_seller");
+    check("braces inside a string do not end the object", readJsonReply('{"message": "use {curly} braces", "n": 1}'), { message: "use {curly} braces", n: 1 });
+    let c = null;
+    try { readJsonReply('{"message": "never closed'); } catch (e) { c = e.message; }
+    check("an object never closed: not JSON, with the text kept", [/did not answer in JSON/.test(c ?? ""), /never closed/.test(c ?? "")], [true, true]);
   }
 
   {
