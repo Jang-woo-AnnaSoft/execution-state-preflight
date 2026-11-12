@@ -1824,9 +1824,27 @@ async function withConfirmedForm(h, item, { declared_by, tool, userId, mcpTool }
                        text: describeForm(approval.form, keyLabel) },
     };
   }
+  let proposeFailure = null;
   const proposed = await safeHook(h.proposeComparableForm,
-    [{ declared_by, label: keyLabel, wording, mcpTool, constrains: item.constrains ?? [] }], () => undefined);
+    [{ declared_by, label: keyLabel, wording, mcpTool, constrains: item.constrains ?? [] }],
+    e => { proposeFailure = e?.message ?? String(e); return undefined; });
   const proposal = proposed && typeof proposed === "object" && !Array.isArray(proposed) ? proposed : null;
+  // [NO FORM] The user's own condition with no form to compare it in ("public places only": whether a
+  //   named place is public cannot be read from its name). There is nothing for the user to confirm, so
+  //   it is not left pending: it is asked like an item with no form, the user approving it for the values
+  //   shown with the question, each time (judgeApproval). Not kept: the next run proposes again. Only for
+  //   a user's condition — its owner is the one asked, and a yes is theirs to give.
+  //   Only on the hook's explicit null ("looked: no form fits"). undefined is no proposal: the item stays
+  //   pending, for a form to be confirmed another way (approveForm), as before.
+  //   BREAKS: leave a null pending and it is asked about nowhere — no form to confirm, no approval — and
+  //     the run ends exhausted with the condition never put to the user.
+  if (declared_by === "user" && proposed === null && proposeFailure === null) {
+    return {
+      ...item,
+      compare: null,
+      form_none: { why: "no form fits: the condition cannot be compared by code, so the user approves it for the values shown" },
+    };
+  }
   formRequests.push({
     item_id: item.id ?? null, declared_by, tool, user_id: declared_by === "user" ? (userId ?? null) : null,
     label: keyLabel, wording, key, proposal,
@@ -2092,7 +2110,9 @@ function approvalPrompt(item, fieldsByName) {
 }
 
 // [OPTIONAL] A model's proposal for the comparable form of one condition. Shown to the declarer with
-//   the words; it confirms nothing. CONTRACT: { compare, constrains, description? } or undefined.
+//   the words; it confirms nothing. CONTRACT: { compare, constrains, description? }, or null (looked: no
+//   form fits — a user's condition is then approved by the user for the values shown, [NO FORM]), or
+//   undefined (no proposal). A provider line reads null and undefined alike: untranslated.
 //   Called with ({ declared_by, label, wording, mcpTool, constrains }).
 function proposeComparableForm() {
   return undefined;
@@ -2554,8 +2574,10 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
   //     confirm_form  a condition the user stated, shown with what it would check, for the user to confirm
   //   question_block is what code writes for the user to see with the model's question: each value as it
   //   will be used, rendered by code ([RENDERED VALUES]). A yes approves exactly what was shown there.
-  async function buildQuestions({ askFields, approveItems, formItems }) {
+  async function buildQuestions({ askFields, approveItems, formItems, values = [] }) {
     const questions = [], block = [], checks = [];
+    // The values a form is tried on: those settled, and the candidates shown in this same block.
+    const tryOn = new Map(values.filter(f => f?.status === "known").map(f => [f.name, { value: f.value, shown: "" }]));
     for (const f of askFields) {
       const schema = ctx.fieldSchemas?.[f.name];
       const lines = providerConditions
@@ -2587,6 +2609,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
               : `not shown: its format could not be checked (${v?.unverified ?? "unreadable reply"})` });
         }
       }
+      if (candidate) tryOn.set(f.name, { value: candidate.value, shown: " (shown above)" });
       questions.push({ target: `value:${f.name}`, kind: "value", slot: f.name, schema: schema ?? null, lines,
                        ...(candidate ? { candidate } : {}) });
       block.push(candidate ? `${f.name} = ${candidate.shown_text}` : `${f.name}: not given yet`);
@@ -2600,11 +2623,33 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
       block.push(`${it.description ?? it.id}${vals ? ` — for ${vals}` : ""}`);
     }
     for (const r of formItems) {
+      const tried = await tryFormOn(r.proposal, tryOn);
       questions.push({ target: `form:${r.item_id}`, kind: "confirm_form", id: r.item_id, wording: r.wording,
-                       form: r.proposal, text: r.proposal_text, key: r.key });
-      block.push(`"${r.wording}" — will be checked like this: ${r.proposal_text}`);
+                       form: r.proposal, text: r.proposal_text, key: r.key, tried });
+      block.push(`"${r.wording}" — will be checked like this: ${r.proposal_text}${tried ? ` — ${tried.text}` : ""}`);
     }
     return { questions, block, checks };
+  }
+  // [FORM TRIED] What a proposed form says about the values shown with it, computed by code with the
+  //   same comparison the gate will run (verifyUserChecklistItem). A form is code the user cannot read;
+  //   its result on their own values they can. "with time = … : does not hold" shows a wrong form for
+  //   what it is, where the form's text alone would be approved unread. Nothing is decided here: the
+  //   result is shown, the user answers, and the confirmed form is compared at the trigger as always.
+  //   null when the form names no value, a value it names is not known or shown, or it is not a schema.
+  async function tryFormOn(proposal, tryOn) {
+    const c = proposal?.compare;
+    const slots = Array.isArray(proposal?.constrains) ? proposal.constrains : [];
+    // Not tried: a form about who gives a value or that the user approves (nothing to compute), and one
+    //   that names a measurement (it is measured at the trigger, not from the values shown).
+    if (!c || typeof c !== "object" || c.kind === "value_source" || c.kind === "user_approval" ||
+        c.source === "measured_data" || slots.length === 0) return null;
+    if (!slots.every(n => tryOn.has(n))) return null;
+    const trialFields = slots.map(n => ({ name: n, status: "known", value: tryOn.get(n).value, source: null }));
+    const out = await safeHook(h.verifyUserChecklistItem,
+      [{ id: "form-trial", compare: c, constrains: slots }, { ...ctx, fields: trialFields, extra_fields: [] }], () => null);
+    const on = slots.map(n => `${n} = ${renderValue(tryOn.get(n).value, ctx.fieldSchemas?.[n])}${tryOn.get(n).shown}`).join(", ");
+    const result = out?.status === "verified" ? "holds" : out?.status === "unmet" ? "does not hold" : "cannot be checked";
+    return { on, result, text: `for ${on}: ${result}` };
   }
   const askedThrough = Array.isArray(instruction) ? instruction.length : 0;
 
@@ -2770,7 +2815,8 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
         : askExhaustedNow ? "exhausted" : "ask_user";
       const asked = decision === "ask_user"
         ? await buildQuestions({ askFields: blocking, approveItems: [],
-            formItems: formRequests.filter(r => r.proposal && userFormsNow.some(i => i.id === r.item_id)) })
+            formItems: formRequests.filter(r => r.proposal && userFormsNow.some(i => i.id === r.item_id)),
+            values: [...fields, ...extra_fields] })
         : null;
       if (asked) value_checks.push(...asked.checks);
       // Block the scheduling itself (fail-closed). This is the last moment the user is present.
@@ -3357,6 +3403,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
         ...providerAsk.map(c => ({ id: c.id, label: c.label, description: c.description, approve: approvalPrompt(c, fieldsByName) })),
       ],
       formItems: formRequests.filter(r => r.proposal && unverifiedItems.some(i => i.form_pending && i.id === r.item_id)),
+      values: [...fields, ...extra_fields],
     });
     value_checks.push(...asked.checks);
     gate.questions = asked.questions;
