@@ -410,7 +410,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.21");
+    check("schema_version", persisted?.schema_version, "1.22");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -636,6 +636,47 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
       const r4 = await run({ storage: sOnce, instruction: [{ trust: "user", text: two }, { trust: "user", text: "ok" }, { trust: "assistant", text: "One more thing?" }, { trust: "user", text: said4 }],
         extract: exTwo, measured: ALL_MEASURED, over: { extractUserConditions: extractOf([merged, C]), proposeComparableForm: proposeOnce } });
       check("new words with a new condition: it joins the carried ones", ids(r4), ["Nothing after 8pm", "public places only", "not on Sundays"]);
+    }
+
+    // [FORM DECLINED] The user says no to the proposed form: the condition is approved by the user for the
+    //   values shown, and the form is not proposed again in the unit.
+    {
+      let proposals = 0;
+      const proposeCount = req => { if (req.declared_by !== "user") return undefined; proposals++; return NOT_AFTER; };
+      const sD = memStorage();
+      const d1 = await run({ storage: sD, instruction: [{ trust: "user", text: said }], extract: ex, measured: ALL_MEASURED,
+        over: { extractUserConditions: extract([claim]), proposeComparableForm: proposeCount, verifyUserChecklistItem: evening } });
+      check("the form is proposed and asked to confirm", [(d1.r.gate?.questions ?? []).map(q => q.kind), proposals], [["confirm_form"], 1]);
+      const d2 = await run({ storage: sD, instruction: [{ trust: "user", text: said }, { trust: "user", text: "no" }], extract: ex, measured: ALL_MEASURED,
+        over: { extractUserConditions: extract([claim]), proposeComparableForm: proposeCount, verifyUserChecklistItem: evening } });
+      const di = (d2.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+      const dq = (d2.r.gate?.questions ?? []).find(q => q.kind === "approve" && q.id === di.id) ?? {};
+      check("  the user says no: the form is not proposed again; the item is asked to approve for the time shown",
+        [proposals, typeof di.form_none?.declined, dq.shown?.time, d2.r.execution_decision], [1, "object", SAT_2PM, "ask_user"]);
+      const d3 = await run({ storage: sD, instruction: [{ trust: "user", text: said }, { trust: "user", text: "no" }, { trust: "user", text: "yes" }], extract: ex, measured: ALL_MEASURED,
+        over: { extractUserConditions: extract([claim]), proposeComparableForm: proposeCount, verifyUserChecklistItem: evening } });
+      const di3 = (d3.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+      check("  the user approves 14:00 for it: verified by the user, executes, the declined form kept in the record",
+        [di3.status, di3.source, d3.r.execution_decision, Boolean(di3.form_none?.declined?.form), proposals], ["verified", "user_answer", "execute", true, 1]);
+      // [REPLY IN FRONT] A reader that maps the last yes onto every question asked in the unit: the yes
+      //   counts only for the question in front of it.
+      const yesToAll = (instr, questions) => questions.map(q => ({ target: q.target, answer: true, quote: "yes", segment_index: 2, span: [0, 3] }));
+      const sR = memStorage();
+      await run({ storage: sR, instruction: [{ trust: "user", text: said }], extract: ex, measured: ALL_MEASURED,
+        over: { extractUserConditions: extract([claim]), proposeComparableForm: proposeCount, verifyUserChecklistItem: evening } });
+      await run({ storage: sR, instruction: [{ trust: "user", text: said }, { trust: "user", text: "no" }], extract: ex, measured: ALL_MEASURED,
+        over: { extractUserConditions: extract([claim]), proposeComparableForm: proposeCount, verifyUserChecklistItem: evening } });
+      const r3 = await run({ storage: sR, instruction: [{ trust: "user", text: said }, { trust: "user", text: "no" }, { trust: "user", text: "yes" }], extract: ex, measured: ALL_MEASURED,
+        over: { extractUserConditions: extract([claim]), proposeComparableForm: proposeCount, verifyUserChecklistItem: evening, readReplies: yesToAll } });
+      const ri = (r3.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+      const formClaim = (r3.r.value_checks ?? []).find(c => c.target === `form:${ri.id}`) ?? {};
+      check("  [REPLY IN FRONT] a later yes mapped onto the form asked before is refused; it approves the question in front of it",
+        [formClaim.status, /comes after a later question/.test(formClaim.note ?? ""), ri.status, ri.source, Boolean(ri.form_approval)],
+        ["rejected", true, "verified", "user_answer", false]);
+      const fresh = await run({ storage: memStorage(), instruction: [{ trust: "user", text: said }], extract: ex, measured: ALL_MEASURED,
+        over: { extractUserConditions: extract([claim]), proposeComparableForm: proposeCount, verifyUserChecklistItem: evening } });
+      check("  a new request: the form is proposed again (the no held for that unit only)",
+        (fresh.r.gate?.questions ?? []).map(q => q.kind), ["confirm_form"]);
     }
 
     // [WITHDRAWN] A condition the user takes back is not dropped: the user confirms it, and it stays in the
