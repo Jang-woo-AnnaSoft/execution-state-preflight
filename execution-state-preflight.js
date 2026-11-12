@@ -1652,7 +1652,7 @@ async function listRecords(h, key) {
 const NOT_VALUE_ASKS = new Set(["intent_undetermined", "intent_undetermined_exhausted", "tool_undetermined",
                                 "tool_undetermined_exhausted", "branch_unresolved", "branch_conflict"]);
 async function unitHistory(h, actionKey, phase) {
-  const none = { available: false, asked: new Map(), ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0 };
+  const none = { available: false, asked: new Map(), ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0, conditions: null };
   if (typeof actionKey !== "string" || actionKey === "") return none;
   const all = await listRecords(h, actionKey);
   if (!all) return { ...none, unlisted: true };
@@ -1660,9 +1660,13 @@ async function unitHistory(h, actionKey, phase) {
   for (let i = all.length - 1; i >= 0; i--) if (all[i]?.execution_decision === "executed") { start = i + 1; break; }
   const recs = all.slice(start).filter(r => r && typeof r === "object" && r.kind !== FORM_APPROVAL_KIND &&
     r.kind !== FORM_TRANSLATION_KIND);
-  const out = { available: true, asked: new Map(), ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0 };
+  const out = { available: true, asked: new Map(), ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0, conditions: null };
   for (const r of recs) {
     const g = r.gate ?? {};
+    // The conditions taken from the user's words, and how far those words were read ([USER CONDITIONS]).
+    //   The latest record that read them is the one carried.
+    const took = (Array.isArray(r.value_checks) ? r.value_checks : []).find(c => c?.id === "user_conditions" && Number.isInteger(c?.read_through));
+    if (took) out.conditions = { read_through: took.read_through, items: (r.user_checklist ?? []).filter(i => i?.extracted === true) };
     const through = Number.isInteger(g.asked_through) ? g.asked_through : null;
     if (through !== null) {
       for (const q of Array.isArray(g.questions) ? g.questions : []) {
@@ -1824,6 +1828,8 @@ async function withConfirmedForm(h, item, { declared_by, tool, userId, mcpTool }
                        text: describeForm(approval.form, keyLabel) },
     };
   }
+  // Settled earlier in this unit that no form fits ([READ ONCE] carries it): not proposed again.
+  if (declared_by === "user" && item.form_none) return { ...item, compare: null };
   let proposeFailure = null;
   const proposed = await safeHook(h.proposeComparableForm,
     [{ declared_by, label: keyLabel, wording, mcpTool, constrains: item.constrains ?? [] }],
@@ -2027,17 +2033,50 @@ async function recordFormDecision(h, request, { form, approved_by, revoked_by },
 //   An item the caller already passed (a standing setting, 4.4) with the same words is not repeated.
 //   The extraction is a check of its own (value_checks, kind "extraction"): a hook that threw is
 //   unverified, and the run goes to definition repair — the user's limits are not known to be absent.
-async function userConditionsFromInstruction(h, instruction, mcpTool, existing) {
+//   [READ ONCE] Within a unit, words already read are not read again. The conditions an earlier round of
+//   this unit took are carried from its record (unitHistory), and the hook's claims about segments before
+//   that round's read_through are set aside; with no new segment the user typed, the hook is not called.
+//   A real model asked the same words again split them differently ("Nothing after 8pm" and "public places
+//   only" in one round, both in one quote in the next), and the confirmations given for the first items
+//   then belonged to items no longer there.
+//   [LIMIT] A condition the user takes back later ("8pm is fine after all") is new words: it is read, but
+//   nothing removes the condition carried. Kept on purpose: removing one on a reading of the user's words
+//   would be a guess, and a condition only adds reasons not to execute.
+async function userConditionsFromInstruction(h, instruction, mcpTool, existing, carried) {
   const FAILED = Symbol("failed");
-  const out = await safeHook(h.extractUserConditions, [instruction, mcpTool], e => ({ [FAILED]: e?.message ?? String(e) }));
-  const check = (status, note) => [{ id: "user_conditions", kind: "extraction", slot: null, status, source: status === "checked" ? "instruction" : null, note }];
-  if (out === undefined) return { items: [], checks: [] };   // not wired: nothing extracted, and unsafeDefaults says so
-  if (out?.[FAILED]) return { items: [], checks: check("unverified", `extractUserConditions failed: ${out[FAILED]}`) };
-  if (out?.none === "absent") return { items: [], checks: check("checked", "no condition stated") };
-  if (!Array.isArray(out)) return { items: [], checks: check("unverified", "extractUserConditions returned neither a list nor { none: \"absent\" }") };
+  const segs = Array.isArray(instruction) ? instruction : null;
+  const from = segs && Number.isInteger(carried?.read_through) && carried.read_through <= segs.length ? carried.read_through : 0;
+  const readThrough = segs ? { read_through: segs.length } : {};
+  const check = (status, note) => [{ id: "user_conditions", kind: "extraction", slot: null, status,
+    source: status === "checked" ? "instruction" : null, note, ...readThrough }];
   const seen = new Set((existing ?? []).map(i => foldActionText(i?.stated_as ?? i?.description ?? "")));
-  const items = [];
+  // The items carried, as items: what was taken and where, not what was decided about them last round.
+  const kept = [];
+  if (from > 0) {
+    for (const it of carried.items ?? []) {
+      const words = it?.stated_as ?? it?.description;
+      if (typeof words !== "string" || seen.has(foldActionText(words))) continue;
+      seen.add(foldActionText(words));
+      kept.push({
+        id: it.id, description: words, stated_as: words,
+        constrains: Array.isArray(it.constrains) ? it.constrains : [], compare: null, extracted: true,
+        located_at: it.located_at ?? null, ...(it.unlocated ? { unlocated: it.unlocated } : {}),
+        ...(it.form_none ? { form_none: it.form_none } : {}),
+      });
+    }
+    if (!segs.slice(from).some(s => s?.trust === "user")) {
+      return { items: kept, checks: check("checked", `${kept.length} condition(s) carried from words already read; nothing new from the user since segment ${from}`) };
+    }
+  }
+  const out = await safeHook(h.extractUserConditions, [instruction, mcpTool], e => ({ [FAILED]: e?.message ?? String(e) }));
+  if (out === undefined) return { items: kept, checks: [] };   // not wired: nothing extracted, and unsafeDefaults says so
+  if (out?.[FAILED]) return { items: kept, checks: check("unverified", `extractUserConditions failed: ${out[FAILED]}`) };
+  if (out?.none === "absent") return { items: kept, checks: check("checked", kept.length ? `${kept.length} condition(s) carried; none new` : "no condition stated") };
+  if (!Array.isArray(out)) return { items: kept, checks: check("unverified", "extractUserConditions returned neither a list nor { none: \"absent\" }") };
+  const items = [...kept];
+  let setAside = 0;
   for (const claim of out) {
+    if (from > 0 && Number.isInteger(claim?.segment_index) && claim.segment_index < from) { setAside++; continue; }
     const quote = typeof claim?.quote === "string" ? claim.quote : null;
     if (!quote || quote.trim() === "") continue;
     const folded = foldActionText(quote);
@@ -2052,7 +2091,11 @@ async function userConditionsFromInstruction(h, instruction, mcpTool, existing) 
       ...(located.ok ? {} : { unlocated: located.why }),
     });
   }
-  return { items, checks: check("checked", `${items.length} condition(s) taken from the user's words`) };
+  const fresh = items.length - kept.length;
+  return { items, checks: check("checked", from > 0
+    ? `${kept.length} condition(s) carried, ${fresh} taken from the user's new words` +
+      (setAside ? ` (${setAside} claim(s) about words already read set aside)` : "")
+    : `${items.length} condition(s) taken from the user's words`) };
 }
 
 // [APPROVAL BINDING] 6.3: an approval is bound to {slot_id, value}, is void when the value changes, and
@@ -2492,7 +2535,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
 
   // [USER CONDITIONS] The conditions the user stated in this instruction join the user checklist
   //   (4.4: made at instruction time, from the trusted part of the instruction). See extractUserConditions.
-  const extraction = await userConditionsFromInstruction(h, instruction, mcpTool, checklist);
+  const extraction = await userConditionsFromInstruction(h, instruction, mcpTool, checklist, history.conditions);
   const extractionChecks = extraction.checks;
   const extractedItems = [];
   for (const it of extraction.items) {
@@ -3515,7 +3558,12 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.19",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.20",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.20: value_checks entry "user_conditions" carries read_through (how many segments of the
+    //        instruction its words were read through). Within a unit, the next round carries the
+    //        conditions taken and reads only the user's later words ([READ ONCE]). A user condition no form
+    //        fits carries form_none and is approved by the user for the values shown ([NO FORM]). A
+    //        confirm_form question carries tried: what its form says about the values shown with it.
     //   1.19: the gate runs on the model's tool call (tool_call: its name, and its arguments recorded and
     //        never used as values) and reads the tool's definition itself (tool_definition: name, hash,
     //        schema_hash); a definition it cannot read is definition_repair, gate.kind
