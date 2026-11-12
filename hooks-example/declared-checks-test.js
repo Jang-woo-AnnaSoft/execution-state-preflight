@@ -410,7 +410,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.22");
+    check("schema_version", persisted?.schema_version, "1.23");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -488,6 +488,30 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     check("readTranslatedForms: each labelled line with its kept form, for audit", [read.length, read[0].label, JSON.stringify(read[0].form?.compare), read[0].translated_by],
       [1, "Required", JSON.stringify(proposal.compare), "stub-model"]);
     check("  a line not translated yet reads null", (await readTranslatedForms(memStorage(), tool(LINE)))[0].form, null);
+
+    // [ALSO MEASURED] A [Verify] line about a value the user can give and the system can also measure:
+    //   the translation is marked for review. The mark changes no verdict.
+    const PLINE = "Schedule a pickup.\n[Verify] The location is the place the seller names.";
+    const asSource = () => ({ compare: { kind: "value_source", slot: "location" }, constrains: ["location"] });
+    const pStore = memStorage();
+    const names = list => ({ proposeComparableForm: asSource, getMeasurableNames: () => list });
+    const marked = await run({ storage: pStore, measured: ALL_MEASURED, tool: tool(PLINE), over: names(["order_status", "location"]) });
+    const plain = await run({ measured: ALL_MEASURED, tool: tool(PLINE), over: names(["order_status"]) });
+    check("a [Verify] line about a value the system can also measure: the translation is marked for review",
+      [cond(marked.r).form_translation?.review?.also_measured, /check that the form says what the sentence means/.test(cond(marked.r).form_translation?.review?.why ?? "")], [["location"], true]);
+    check("  the mark changes no verdict: the same decision and status as without it",
+      [marked.r.execution_decision, cond(marked.r).status, cond(marked.r).source], [plain.r.execution_decision, cond(plain.r).status, cond(plain.r).source]);
+    check("  and is in the record as persisted", marked.persisted?.provider_checklist?.[0]?.form_translation?.review?.also_measured, ["location"]);
+    const unnamed = await run({ measured: ALL_MEASURED, tool: tool(PLINE), over: { proposeComparableForm: asSource } });
+    const broken = await run({ measured: ALL_MEASURED, tool: tool(PLINE), over: { proposeComparableForm: asSource, getMeasurableNames: () => { throw new Error("x"); } } });
+    check("  not marked: a value not measured, no names given, or a names hook that throws",
+      [cond(plain.r).form_translation?.review, cond(unnamed.r).form_translation?.review, cond(broken.r).form_translation?.review, broken.r.execution_decision],
+      [undefined, undefined, undefined, plain.r.execution_decision]);
+    const req = await run({ measured: ALL_MEASURED, tool: tool(LINE), over: { proposeComparableForm: propose, getMeasurableNames: () => ["buyer_contact"] } });
+    check("  a [Required] line is not marked: its label already says only the system's value counts", cond(req.r).form_translation?.review, undefined);
+    check("readTranslatedForms marks it too, given the names; not without them",
+      [(await readTranslatedForms(pStore, tool(PLINE), { measurements: ["location"] }))[0].review?.also_measured, (await readTranslatedForms(pStore, tool(PLINE)))[0].review],
+      [["location"], undefined]);
 
     // A [Verify] line translated as the user's approval of a slot: the seller is asked, with the place shown.
     const VLINE = "Schedule a pickup.\n[Verify] The seller agrees to the pickup place.";
