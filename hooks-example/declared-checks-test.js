@@ -410,7 +410,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.19");
+    check("schema_version", persisted?.schema_version, "1.20");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -587,6 +587,40 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const pi3 = (p3.r.user_checklist ?? []).find(i => i.extracted) ?? {};
     check("  no proposal at all (undefined) is not 'no form fits': still pending, for a form to be confirmed",
       [Boolean(pi3.form_pending), pi3.form_none ?? null], [true, null]);
+
+    // [READ ONCE] Within a unit, the words already read are not read again: the conditions are carried,
+    //   and a different split of the same words in a later round is set aside.
+    {
+      const two = "Pick up LST-2291 at 2026-10-31T14:00:00+09:00, Hongdae station lockers. Nothing after 8pm, public places only.";
+      const exTwo = { item_id: at(two, "LST-2291"), time: at(two, SAT_2PM), location: at(two, "Hongdae station lockers") };
+      const A = { quote: "Nothing after 8pm", segment_index: 0, span: [two.indexOf("Nothing"), two.indexOf("Nothing") + 17], constrains: ["time"] };
+      const B = { quote: "public places only", segment_index: 0, span: [two.indexOf("public"), two.indexOf("public") + 18], constrains: ["location"] };
+      const merged = { quote: "Nothing after 8pm, public places only", segment_index: 0, span: [two.indexOf("Nothing"), two.length - 1], constrains: ["time", "location"] };
+      const sOnce = memStorage();
+      let calls = 0, proposals = 0;
+      const extractOf = list => () => { calls++; return list; };
+      const proposeOnce = req => { if (req.declared_by !== "user") return undefined; proposals++; return null; };
+      const ids = r => (r.r.user_checklist ?? []).filter(i => i.extracted).map(i => i.stated_as);
+      const r1 = await run({ storage: sOnce, instruction: [{ trust: "user", text: two }], extract: exTwo, measured: ALL_MEASURED,
+        over: { extractUserConditions: extractOf([A, B]), proposeComparableForm: proposeOnce } });
+      check("round 1: two conditions taken, and how far the words were read", [ids(r1), vc(r1.r, "user_conditions")?.read_through],
+        [["Nothing after 8pm", "public places only"], 1]);
+      const r2 = await run({ storage: sOnce, instruction: [{ trust: "user", text: two }, { trust: "user", text: "ok" }], extract: exTwo, measured: ALL_MEASURED,
+        over: { extractUserConditions: extractOf([merged]), proposeComparableForm: proposeOnce } });
+      check("round 2: the same words split differently are set aside; the two are carried",
+        [ids(r2), /set aside/.test(vc(r2.r, "user_conditions")?.note ?? "")], [["Nothing after 8pm", "public places only"], true]);
+      const callsBefore = calls;
+      const r3 = await run({ storage: sOnce, instruction: [{ trust: "user", text: two }, { trust: "user", text: "ok" }, { trust: "assistant", text: "One more thing?" }],
+        extract: exTwo, measured: ALL_MEASURED, over: { extractUserConditions: extractOf([merged]), proposeComparableForm: proposeOnce } });
+      check("nothing new from the user: the extractor is not called, the conditions are carried", [calls - callsBefore, ids(r3)],
+        [0, ["Nothing after 8pm", "public places only"]]);
+      check("  'no form fits' was settled once in the unit: not proposed again", proposals, 2);
+      const said4 = "And not on Sundays.";
+      const C = { quote: "not on Sundays", segment_index: 3, span: [4, 18], constrains: ["time"] };
+      const r4 = await run({ storage: sOnce, instruction: [{ trust: "user", text: two }, { trust: "user", text: "ok" }, { trust: "assistant", text: "One more thing?" }, { trust: "user", text: said4 }],
+        extract: exTwo, measured: ALL_MEASURED, over: { extractUserConditions: extractOf([merged, C]), proposeComparableForm: proposeOnce } });
+      check("new words with a new condition: it joins the carried ones", ids(r4), ["Nothing after 8pm", "public places only", "not on Sundays"]);
+    }
 
     const only = "Pick up LST-2291, Hongdae station lockers. Nothing after 8pm.";
     const d = await run({ text: only, extract: { item_id: at(only, "LST-2291"), time: at(only, "8pm"), location: at(only, "Hongdae station lockers") }, measured: ALL_MEASURED,
