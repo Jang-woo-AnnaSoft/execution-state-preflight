@@ -48,7 +48,7 @@ function standIn(id, condition, over = {}) {
       // Every prompt the gate's model calls were sent, kept for the checks.
       ask: async (m, system, user, hook) => { prompts.push({ hook, system, user }); return askInner(m, system, user, hook); },
       // What the agent's model is given, kept for the checks.
-      chat: async a => { shown.push(a?.tools ?? null); return chatInner(a); },
+      chat: async a => { shown.push(a?.tools ?? null); return over.chat ? over.chat(a, chatInner) : chatInner(a); },
       listTools: async () => [TOOL],
       readToolDefinition: async name => [TOOL].find(t => t.name === name),
       measure: measurePort(measuredFor(ctx, date)),
@@ -228,6 +228,57 @@ async function run(id, condition, replies = [], over = {}) {
     const qPrompt = r.prompts.find(p => p.hook === "question" && /"kind": "withdraw"/.test(p.user))?.user ?? "";
     check("  the model writing the question is told what the withdraw item is: the condition and the words",
       [/"remove_condition": "Nothing after 8pm"/.test(qPrompt), /"because_you_said": "drop the 8pm limit"/.test(qPrompt)], [true, true]);
+  }
+
+  console.log("\n--- 1-g. the seller says the proposed form is wrong: the condition is approved for the time instead ---");
+  {
+    const GOOD = { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d:[0-5]\\d:[0-5]\\d|20:00:00)(?:Z|[+-]\\d{2}:\\d{2})$" };
+    const stub = makeAsk("g2-01");
+    const segsOf = (u, until) => JSON.parse(u.slice(u.indexOf("Segments:\n") + 10, u.indexOf(until)));
+    let formProposals = 0;
+    const ask = (m, sys, u, h) => {
+      if (h === "user_conditions") return { conditions: [{ quote: "Nothing after 8pm", segment_index: 3, constrains: ["time"] }, { quote: "public places only", segment_index: 3, constrains: ["location"] }] };
+      if (h === "comparable_form" && /Declared by: user/.test(u)) {
+        if (/Condition: Nothing after 8pm$/m.test(u)) { formProposals++; return { form: { compare: GOOD, constrains: ["time"] } }; }
+        return { form: null };
+      }
+      if (h === "extraction") {
+        const segs = segsOf(u, "\n\nFields to locate");
+        const at = segs.findIndex(x => x.trust === "user" && x.text.includes("This Saturday at 3pm"));
+        return { item_id: { found: true, value: "LST-2291", segment_index: 3 },
+          ...(at >= 0 ? { time: { found: true, value: "This Saturday at 3pm", segment_index: at }, location: { found: true, value: "Hongdae station lockers", segment_index: at } }
+                      : { time: { found: false }, location: { found: false } }), buyer_contact: { found: false } };
+      }
+      if (h === "propose_value") return { value: /^Field: time:/m.test(u) && /This Saturday at 3pm/.test(u) ? "2026-10-31T15:00:00+09:00" : null };
+      if (h === "replies") {
+        // As a real reader does: each question answered by the seller's first reply after it was asked.
+        const qs = JSON.parse(u.slice(u.indexOf("Questions:\n") + 11, u.indexOf("\n\nSegments:")));
+        const segs = segsOf(u, "\n\nFor each question");
+        const replies = [];
+        for (const q of qs) {
+          const at = segs.findIndex((x, i) => i > q.asked_after_segment && x.trust === "user");
+          if (at < 0) continue;
+          const text = segs[at].text;
+          if (/check is wrong/.test(text)) replies.push(q.target.startsWith("form:")
+            ? { target: q.target, answer: false, quote: "that 8pm check is wrong", segment_index: at }
+            : { target: q.target, answer: true, quote: "The time and place are fine", segment_index: at });
+          else if (text === "yes") replies.push({ target: q.target, answer: true, quote: "yes", segment_index: at });
+        }
+        return { replies };
+      }
+      return stub(m, sys, u, h);
+    };
+    // As the real model did: it asks in words for the time and place first, and calls the tool once given them.
+    let turns = 0;
+    const chat = (a, inner) => (++turns === 1 ? { text: "When and where should the pickup be?" } : inner(a));
+    const r = await run("g2-01", "clean", ["This Saturday at 3pm at the Hongdae station lockers.", "The time and place are fine, but that 8pm check is wrong.", "yes"], { ask, chat, userChecklist: [] });
+    const afterNo = r.records.find(x => (x.gate?.questions ?? []).some(q => q.kind === "approve" && /^uc:/.test(q.id) && x.user_checklist?.some(i => i.id === q.id && i.stated_as === "Nothing after 8pm")));
+    check("after the no: 'Nothing after 8pm' is asked to approve for the time, and its form is not proposed again",
+      [((afterNo?.gate?.question_block ?? []).find(l => l.startsWith("Nothing after 8pm")) ?? ""), formProposals],
+      ["Nothing after 8pm — for time = 2026-10-31 (Sat) 15:00 +09:00", 1]);
+    const eight = (r.records.filter(x => x.execution_decision === "execute").at(-1)?.user_checklist ?? []).find(i => i.stated_as === "Nothing after 8pm") ?? {};
+    check("  the seller's yes: 15:00 executes, the condition verified by the seller, the declined form in the record",
+      [r.last.status, r.calls[0]?.args.time, eight.status, eight.source, Boolean(eight.form_none?.declined)], ["executed", "2026-10-31T15:00:00+09:00", "verified", "user_answer", true]);
   }
 
   console.log("\n--- 1-d. the words of a question: one writer, plain text taken as it is ---");
