@@ -585,6 +585,22 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const p3 = await run({ storage: memStorage(), text: saidPub, extract: exPub, measured: ALL_MEASURED,
       over: { extractUserConditions: extract([pubClaim]), proposeComparableForm: () => undefined } });
     const pi3 = (p3.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+    const asApprovalUser = req => (req.declared_by === "user" ? { compare: { kind: "user_approval" }, constrains: ["location"] } : undefined);
+    const sA = memStorage();
+    const pa1 = await run({ storage: sA, text: saidPub, extract: exPub, measured: ALL_MEASURED,
+      over: { extractUserConditions: extract([pubClaim]), proposeComparableForm: asApprovalUser } });
+    const pai = (pa1.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+    check("  'the user approves it' proposed: the same as no form — no form to confirm, the place asked about",
+      [Boolean(pai.form_pending), (pa1.r.gate?.questions ?? []).map(q => q.kind)], [false, ["approve"]]);
+    const pa2 = await run({ storage: sA, instruction: [{ trust: "user", text: saidPub }, { trust: "user", text: "yes" }], extract: exPub, measured: ALL_MEASURED,
+      over: { extractUserConditions: extract([pubClaim]), proposeComparableForm: asApprovalUser } });
+    check("    one yes: verified, executes", [((pa2.r.user_checklist ?? []).find(i => i.extracted) ?? {}).status, pa2.r.execution_decision], ["verified", "execute"]);
+    const standingApproval = { id: "pref_pub", stated_as: "Public places only.", constrains: ["location"], compare: { kind: "user_approval" } };
+    let verifyCalls = 0;
+    const sp = await run({ storage: memStorage(), text: saidPub, extract: exPub, measured: ALL_MEASURED,
+      over: { verifyUserChecklistItem: (it) => { verifyCalls++; return { ...it, status: "unverified", source: null }; } } }, { userChecklist: [standingApproval] });
+    check("  a standing item of kind user_approval is not handed to the comparison: it is asked about",
+      [verifyCalls, ((sp.r.user_checklist ?? []).find(i => i.id === "pref_pub") ?? {}).note], [0, "the user approves it for the values shown"]);
     check("  no proposal at all (undefined) is not 'no form fits': still pending, for a form to be confirmed",
       [Boolean(pi3.form_pending), pi3.form_none ?? null], [true, null]);
 
