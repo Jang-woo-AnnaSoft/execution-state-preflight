@@ -311,13 +311,7 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
     // Where the user's reply answers each question the gate asked. Quotes, located here; the skeleton
     //   keeps a claim only for a question it asked, in the user's words after it ([REPLIES]).
     async readReplies(instruction, questions) {
-      const shown = questions.map(q => ({
-        target: q.target, kind: q.kind, asked_after_segment: q.asked_through - 1,
-        ...(q.kind === "value" ? { field: q.slot, shown: q.candidate?.shown_text ?? null } : {}),
-        ...(q.kind === "approve" ? { item: q.description, for: q.shown_text } : {}),
-        ...(q.kind === "confirm_form" ? { said: q.wording, checked_like_this: q.text } : {}),
-        ...(q.kind === "withdraw" ? { remove_condition: q.stated_as, because_you_said: q.withdrawn_by } : {}),
-      }));
+      const shown = questions.map(q => ({ target: q.target, asked_after_segment: q.asked_through - 1, ...aboutQuestion(q) }));
       const out = await call(
         "The assistant asked the user the questions below. Report where the user's words answer each one. " +
         "Quote the user's own words exactly, from segments with \"trust\": \"user\" that come after the " +
@@ -414,9 +408,20 @@ const QUESTION_SYSTEM =
   "message, in the language the user writes in. Ask about every item below, and follow the tool's lines " +
   "on how to ask. Do not write any value yourself: the values to approve are shown under your message, " +
   "exactly as they will be used.";
+// What a question is about, as the model writing it and the model reading the reply are told: the same
+//   words for both. A model told only a question's kind guessed: "withdraw" became "Cancel the pickup".
+function aboutQuestion(q) {
+  return {
+    kind: q.kind,
+    ...(q.kind === "value" ? { field: q.slot, shown: q.candidate?.shown_text ?? null } : {}),
+    ...(q.kind === "approve" ? { item: q.description, for: q.shown_text } : {}),
+    ...(q.kind === "confirm_form" ? { said: q.wording, checked_like_this: q.text } : {}),
+    ...(q.kind === "withdraw" ? { remove_condition: q.stated_as, because_you_said: q.withdrawn_by } : {}),
+  };
+}
 async function writeQuestion({ ask, say, model = "model" }, { questions, conversation }) {
   const user =
-    `Items:\n${JSON.stringify((questions ?? []).map(q => ({ kind: q.kind, field: q.slot, item: q.description ?? q.wording ?? null,
+    `Items:\n${JSON.stringify((questions ?? []).map(q => ({ ...aboutQuestion(q),
       lines: (q.lines ?? []).map(l => `[${l.label}] ${l.text}`) })), null, 2)}\n\n` +
     `Conversation:\n${JSON.stringify(segmentsOf(conversation), null, 2)}`;
   const words = t => (typeof t === "string" && t.trim() ? t.trim() : null);
