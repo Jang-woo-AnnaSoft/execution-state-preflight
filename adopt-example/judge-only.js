@@ -167,6 +167,8 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
       if (typeof measure !== "function") throw new Error("measure is not connected");
       return measure(name, settled);
     },
+    // The names connect.js can measure: the skeleton marks a translation about one of them for review.
+    getMeasurableNames: () => measurements,
 
     async classifyWhenCase(instruction) {
       const system =

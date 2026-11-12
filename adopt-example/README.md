@@ -53,7 +53,7 @@ Two places, and nothing else:
 Schedule an in-person pickup for a marketplace item. The buyer sees it at once. Times are in the time zone of the seller's account region.
 [Required] The sale must be agreed, as shown by the order status. Only the status "agreed" means agreed.
 [Verify] The time is the one the seller states, or the time of a pickup request the buyer sent in the app inside a range the seller set for this pickup. It is one moment.
-[Verify] The location is the place the seller names.
+[Verify] The location is the place the seller names, not a place read from the platform.
 [Required] The buyer's contact is read from the platform.
 [Notice] The buyer sees the time and location immediately. Tell the seller before the pickup is scheduled.
 ```

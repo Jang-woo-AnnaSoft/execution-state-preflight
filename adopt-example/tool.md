@@ -24,7 +24,8 @@ schedule_pickup
 ## Description
 
 What the tool does, then each rule on a line of its own, starting with its label. Say what the value
-is and who gives it, or what must hold. A line need not say how to ask: the model asks, and code holds
+is and who gives it, or what must hold. For a value the system can also read, say whether that counts
+too (spec 4.2.1). A line need not say how to ask: the model asks, and code holds
 the answer to what was shown.
 
 ```text
@@ -33,7 +34,7 @@ Schedule an in-person pickup for a marketplace item. The buyer sees it at once. 
 [Required] The listing must be the seller's own, as shown by the listing's owner on the platform.
 [Verify] The item is the listing the seller names.
 [Verify] The time is the one the seller states, or the time of a pickup request the buyer sent in the app inside a range the seller set for this pickup. It is one moment.
-[Verify] The location is the place the seller names.
+[Verify] The location is the place the seller names, not a place read from the platform.
 [Required] The buyer's contact is read from the platform.
 [Notice] The buyer sees the time and location immediately. Tell the seller before the pickup is scheduled.
 ```
