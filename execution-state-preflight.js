@@ -1446,6 +1446,13 @@ function getAllowedSources(fieldName, mcpTool) {
   return null;
 }
 
+// The names this system can measure (the measure port's), for marking translations to review
+//   ([ALSO MEASURED]). Only read: nothing is measured here, and the list changes no verdict.
+// CONTRACT: an array of strings. Anything else, or a throw, is read as none known: nothing is marked.
+function getMeasurableNames(mcpTool) {
+  return [];
+}
+
 // Is this slot's value settled at execution time (3.3)? A value the user does not set when instructing,
 //   but the state at execution decides. The gate then lets a measurement settle it only when the user
 //   checklist holds a range for it (resolveField, [SETTLED-AT-EXECUTION]).
@@ -1953,13 +1960,36 @@ async function withTranslatedForm(h, item, { tool, wording, label, mcpTool }) {
   } else if (validateForm({ declared_by: "provider", label }, rec.form)) {
     return untranslated(`the kept translation does not fit the line: ${validateForm({ declared_by: "provider", label }, rec.form)}`);
   }
+  const review = alsoMeasuredReview(label, rec.form, await measurableNames(h, mcpTool));
   return {
     ...item,
     compare: rec.form.compare,
     constrains: Array.isArray(rec.form.constrains) ? rec.form.constrains : [],
     form_translation: { key, translated_by: rec.translated_by ?? null, at: rec.at ?? null, new: !stored,
-                        text: describeForm(rec.form, label) },
+                        text: describeForm(rec.form, label), ...(review ? { review } : {}) },
   };
+}
+
+// [ALSO MEASURED] A [Verify] line about a value the user can give and the system can also measure
+//   (4.2.1). Unless its sentence says whether the system's value counts, the same line can be put into a
+//   different form each time it is translated: with a real model, "The location is the place the seller
+//   names" became user_approval, value_source or no form, from one run to the next, where the same line
+//   for the item, which is not measured, never changed. The translation is kept once and then used as it
+//   is, so the mark is for whoever reads the kept forms: does the form (text) say what the sentence
+//   means? The mark changes no verdict, and is worked out on every read, from the kept form and the
+//   names the system can measure now; it is not kept with the translation.
+//   A [Required] line is not marked: its label already says only the system's value counts.
+function alsoMeasuredReview(label, form, names) {
+  if (label !== "Verify" || !form || !Array.isArray(names) || names.length === 0) return null;
+  const slots = new Set([...(Array.isArray(form.constrains) ? form.constrains : []),
+                         ...(typeof form.compare?.slot === "string" ? [form.compare.slot] : [])]);
+  const also = [...slots].filter(s => names.includes(s)).sort();
+  return also.length ? { also_measured: also,
+    why: "the user can give this value and the system can also measure it: check that the form says what the sentence means about the system's value (4.2.1)" } : null;
+}
+async function measurableNames(h, mcpTool) {
+  const out = await safeHook(h.getMeasurableNames ?? (() => []), [mcpTool], () => []);
+  return Array.isArray(out) ? out.filter(n => typeof n === "string") : [];
 }
 
 // [FORM IN WORDS] What a form checks, written from the form alone, for whoever confirms it (3.3: shown
@@ -2005,15 +2035,18 @@ function describeForm(form, label) {
 // [TRANSLATED FORMS] for the adopting system: each labelled line of a tool's description with the form
 //   kept for it, or null when it has not been translated yet. The same lookup the gate makes, so the forms
 //   can be read and audited outside a run.
-async function readTranslatedForms(storage, toolDefinition) {
+//   measurements: the names the system can measure. Given, a line about a value the system can also
+//   measure carries review ([ALSO MEASURED]), as in a run.
+async function readTranslatedForms(storage, toolDefinition, { measurements = [] } = {}) {
   const h = { storage };
   const out = [];
   for (const l of labelledLines(toolDefinition?.description)) {
     const key = formTranslationKey({ tool: toolDefinition?.name ?? null, label: l.label, wording: l.text });
     const t = await loadFormTranslation(h, key);
     const rec = t && !t.unavailable ? t : null;
+    const review = rec?.form ? alsoMeasuredReview(l.label, rec.form, measurements) : null;
     out.push({ label: l.label, wording: l.text, key, form: rec?.form ?? null, translated_by: rec?.translated_by ?? null,
-               text: rec?.form ? describeForm(rec.form, l.label) : null });
+               text: rec?.form ? describeForm(rec.form, l.label) : null, ...(review ? { review } : {}) });
   }
   return out;
 }
@@ -3707,7 +3740,10 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.22",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.23",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.23: a provider line's form_translation may carry review ({ also_measured, why }): a [Verify] line
+    //        about a value the system can also measure, marked for whoever reads the kept forms. It changes
+    //        no verdict ([ALSO MEASURED]).
     //   1.22: a user condition whose proposed form the user said no to carries form_none with declined
     //        ({ form, answered_at }): approved by the user for the values shown, its form not proposed
     //        again in the unit ([FORM DECLINED]). A reply answers only the questions of the latest asking
@@ -3939,7 +3975,7 @@ const UNSAFE_DEFAULT_HOOKS = ["applyFieldPolicy", "validateFieldSchema", "verify
 const defaultHooks = {
   classifyWhenCase, extractUserActionName, confirmToolNameMatchesIntent,
   getRequiredFields, getCandidateSlots, materializeSlots, getAdvisoryNotes,
-  getProviderConditions, verifyProviderCondition, getAllowedSources, isSettledAtExecution,
+  getProviderConditions, verifyProviderCondition, getAllowedSources, getMeasurableNames, isSettledAtExecution,
   proposeComparableForm, extractUserConditions, readReplies, proposeValue,
   extractFromInstruction, spanSupportsValue, measure, readToolDefinition,
   applyFieldPolicy, validateFieldSchema, validatePayload, verifyUserChecklistItem,

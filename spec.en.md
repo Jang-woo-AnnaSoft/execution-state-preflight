@@ -285,6 +285,7 @@ Every intent, value, and condition item is registered in an external checklist, 
 
 - Providers already write conditions in the tool description. Written with the labels for the three kinds of condition (3.3), [Required], [Verify] and [Notice], those sentences become the checklist, since the description arrives with the tool list.
 - To use labeled sentences as an enforced checklist, the declaring party must be trusted. The gate reads the definition as its provider declared it, not a copy kept on the agent's side. When the same party builds the agent and the tool, that party is the provider. The sentences are put into a form that can be compared and compared only in that form (3.3), and the record keeps which definition the verdict was made under.
+- For a value the user can give and the system can also measure, the sentence says whether the system's value counts too. Left unsaid, the same sentence can be put into a different form each time it is translated. A sentence about such a value has its translated form marked for review. The mark does not change the verdict.
 
 ### 4.3 User Checklist: varies per user and environment.
 
