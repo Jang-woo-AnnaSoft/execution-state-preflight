@@ -550,6 +550,44 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     check("  the user's yes keeps it, and it is compared in this run: executes", [it3.form_approval?.approved_by, it3.status, convYes.r.execution_decision],
       ["user:u", "verified", "execute"]);
 
+    // [FORM TRIED] The question shows what the proposed form says about the values shown with it, computed
+    //   by the same comparison the gate runs. A wrong form shows as wrong, before the user confirms it.
+    const tried = (await Promise.all([NOT_AFTER, { compare: { kind: "not_after", hhmm: "12:00" }, constrains: ["time"] }].map(async form => {
+      const r = await run({ storage: memStorage(), text: said, extract: ex, measured: ALL_MEASURED,
+        over: { extractUserConditions: extract([claim]), proposeComparableForm: req => (req.declared_by === "user" ? form : undefined), verifyUserChecklistItem: evening } });
+      const q = (r.r.gate?.questions ?? []).find(x => x.kind === "confirm_form") ?? {};
+      return [q.tried?.result, (r.r.gate?.question_block ?? []).some(l => l.endsWith(`for time = 2026-10-31 (Sat) 14:00 +09:00: ${q.tried?.result}`))];
+    })));
+    check("a proposed form is tried on the value shown: a right one holds, a wrong one does not, and the block says so",
+      tried, [["holds", true], ["does not hold", true]]);
+    const notTried = await run({ storage: memStorage(), text: said, extract: ex, measured: ALL_MEASURED,
+      over: { extractUserConditions: extract([claim]), proposeComparableForm: req => (req.declared_by === "user" ? { compare: { kind: "user_approval" }, constrains: ["time"] } : undefined) } });
+    check("  a form with nothing to compute is not tried", ((notTried.r.gate?.questions ?? []).find(x => x.kind === "confirm_form") ?? {}).tried ?? null, null);
+
+    // [NO FORM] The model looked and no form fits ("public places only"): not left pending, but asked
+    //   like an item with no form, the user approving it for the values shown.
+    const pub = { quote: "Public places only.", segment_index: 0, span: [0, 0], constrains: ["location"] };
+    const saidPub = "Pick up LST-2291 at 2026-10-31T14:00:00+09:00, Hongdae station lockers. Public places only.";
+    const pubClaim = { ...pub, span: [saidPub.indexOf("Public"), saidPub.length] };
+    const exPub = { item_id: at(saidPub, "LST-2291"), time: at(saidPub, SAT_2PM), location: at(saidPub, "Hongdae station lockers") };
+    const noForm = req => (req.declared_by === "user" ? null : undefined);
+    const sPub = memStorage();
+    const p1 = await run({ storage: sPub, text: saidPub, extract: exPub, measured: ALL_MEASURED,
+      over: { extractUserConditions: extract([pubClaim]), proposeComparableForm: noForm } });
+    const pi = (p1.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+    const pq = (p1.r.gate?.questions ?? []).find(x => x.kind === "approve" && x.id === pi.id) ?? {};
+    check("no form fits: not pending, asked for approval with the value shown",
+      [Boolean(pi.form_pending), typeof pi.form_none?.why, pq.shown?.location, p1.r.execution_decision], [false, "string", "Hongdae station lockers", "ask_user"]);
+    const p2 = await run({ storage: sPub, instruction: [{ trust: "user", text: saidPub }, { trust: "user", text: "yes" }], extract: exPub, measured: ALL_MEASURED,
+      over: { extractUserConditions: extract([pubClaim]), proposeComparableForm: noForm } });
+    const pi2 = (p2.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+    check("  the user's yes for that value: verified, executes", [pi2.status, pi2.source, p2.r.execution_decision], ["verified", "user_answer", "execute"]);
+    const p3 = await run({ storage: memStorage(), text: saidPub, extract: exPub, measured: ALL_MEASURED,
+      over: { extractUserConditions: extract([pubClaim]), proposeComparableForm: () => undefined } });
+    const pi3 = (p3.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+    check("  no proposal at all (undefined) is not 'no form fits': still pending, for a form to be confirmed",
+      [Boolean(pi3.form_pending), pi3.form_none ?? null], [true, null]);
+
     const only = "Pick up LST-2291, Hongdae station lockers. Nothing after 8pm.";
     const d = await run({ text: only, extract: { item_id: at(only, "LST-2291"), time: at(only, "8pm"), location: at(only, "Hongdae station lockers") }, measured: ALL_MEASURED,
       over: { extractUserConditions: extract([{ ...claim, span: [only.indexOf("Nothing"), only.length] }]) } });
