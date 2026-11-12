@@ -98,16 +98,18 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
 
   let r = await main.turn({ threadId, message: { typed: instruction.text }, userChecklist: NO_CHECKLIST ? [] : (instruction.user_checklist ?? []) });
   log.turns.push({ said: instruction.text, result: r });
-  // A turn ends waiting on the gate's question, or with the assistant's own words (it asked or answered
-  //   without calling the tool). Either way the seller's next reply, if one was given, goes in.
+  // A turn ends waiting on the gate's question, with the assistant's own words (it asked or answered
+  //   without calling the tool), or not executed, with what the seller is told. Each way the seller's
+  //   next reply, if one was given, goes in.
   const indent = t => String(t ?? "").split("\n").map(l => "    " + l).join("\n");
   const show = res => {
     if (res.status === "waiting") console.log(`\n→ waiting. The gate's question, as shown to the seller:\n${indent(res.question.message)}`);
     else if (res.status === "replied") console.log(`\n→ the assistant answered in words, without calling the tool (the gate did not run):\n${indent(res.reply)}`);
+    else if (res.status === "not_executed") console.log(`\n→ not executed. What the seller is told:\n${indent(res.message)}`);
   };
   let n = 0;
   show(r);
-  while ((r.status === "waiting" || r.status === "replied") && n < replies.length) {
+  while (["waiting", "replied", "not_executed"].includes(r.status) && n < replies.length) {
     console.log(`\nThe seller: ${replies[n]}\n`);
     r = await main.turn({ threadId, message: { typed: replies[n] }, userChecklist: NO_CHECKLIST ? [] : (instruction.user_checklist ?? []) });
     log.turns.push({ said: replies[n], result: r });

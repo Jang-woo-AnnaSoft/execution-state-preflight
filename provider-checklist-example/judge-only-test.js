@@ -292,6 +292,20 @@ async function run(id, condition, replies = [], over = {}) {
     check("  the line that stopped it: [Required] sale agreed, unmet from the measured order status",
       [v.execution_decision, v.gate?.kind, agreed.label, agreed.status, String(r.first.reason).includes('order_status = "cancelled"')], ["hold", "unmet", "Required", "unmet", true]);
     check("  the seller's yes changes nothing: no reply can meet a line read from the system", [r.last.status, r.calls.length, r.records.some(x => x.execution_decision === "execute")], ["not_executed", 0, false]);
+
+    // The seller is told. A real run ended here with nothing said: message null, the reason an internal string.
+    const stops = r.prompts.filter(p => p.hook === "stop");
+    check("  the seller is told why, in the model's words: one writer call each time it stops",
+      [r.first.message, stops.length], ["I did not schedule it.", 2]);
+    check("  the writer is given the skeleton's facts: the condition's words, whose, what was found",
+      r.first.stop, { decision: "hold", items: [{ why: "not_allowed", condition: agreed.description, set_by: "provider", found: 'order_status = "cancelled": data must be equal to constant' }] });
+    check("  no ids or hashes in what the writer is given", [stops[0].user.includes("The sale must be agreed"), /schedule_pickup:\d|\d+-[0-9a-z]{8,}/.test(stops[0].user)], [true, false]);
+    check("  what the seller was told is in the conversation the next turn starts from",
+      stops[1].user.includes("I did not schedule it."), true);
+    // Without the model's words, the seller is still told.
+    const base = makeAsk("g1-01");
+    const silent = await run("g1-01", "order_cancelled", [], { ask: async (m, s, u, hook) => { if (hook === "stop") throw new Error("down"); return base(m, s, u, hook); } });
+    check("  the writer fails: a plain sentence, not nothing", silent.first.message, "This was not carried out.");
   }
 
   console.log("\n--- 1-d. the words of a question: one writer, plain text taken as it is ---");

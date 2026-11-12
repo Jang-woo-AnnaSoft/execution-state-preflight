@@ -190,6 +190,7 @@ function makeAsk(instructionId, extractor = "faithful") {
       return { replies };
     }
     if (hook === "question") return { message: "Before I schedule it, please check:" };
+    if (hook === "stop") return { message: "I did not schedule it." };
     if (hook === "extraction" || user.includes('"item_id"')) {
       const segs = segmentsIn(user);
       const out = extractionFor(instructionId, segs, extractor);

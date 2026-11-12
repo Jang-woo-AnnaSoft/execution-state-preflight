@@ -137,6 +137,13 @@ const LOCKERS = "Hongdae station lockers";
   const mute = await drive("g4-01", "clean", [], { ask: async (m, s, u, hook) => { if (hook === "question") throw new Error("model down"); return base(m, s, u, hook); } });
   check("the list, as code wrote it", mute.questions[0]?.message.split("\n")[0], "Before this can run, please answer:");
 
+  console.log("\n--- 6-a. the gate stops it: the seller is told why ---");
+  const held = await drive("g1-01", "order_cancelled");
+  check("order cancelled: no call, the run ends on the gate's decision, and the seller is told in the model's words",
+    [held.calls.length, held.state.ended ?? held.state.verdict?.decision, held.state.stop?.message, held.state.stop?.facts?.items?.[0]?.why],
+    [0, "hold", "I did not schedule it.", "not_allowed"]);
+  check("  what the seller was told is the conversation's last word", held.state.conversation.at(-1), { trust: "assistant", text: "I did not schedule it." });
+
   console.log("\n--- 7. the graph's first verdict is the arm's verdict ---");
   const mismatched = [];
   for (const ins of S.instructions) {
