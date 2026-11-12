@@ -188,6 +188,14 @@ const run = async (id, condition, over = {}, replies = []) => {
     check("JSON with words around it is read", readJsonReply('Here: {"message": "ok"} done'), { message: "ok" });
   }
 
+  {
+    const sq = standIn("g1-01", "clean");
+    sq.connect.say = async (m, sys, u, h) => (h === "question" ? "Plain words from say." : "");
+    const aq = createAgent({ connect: sq.connect });
+    const rq = await aq.start({ threadId: `q${++thread}`, message: { typed: "x" } });
+    check("the graph: the question starts with what say wrote", rq.question?.message.split("\n")[0], "Plain words from say.");
+  }
+
   console.log("\n--- 4-0. the graph's model is not shown the provider's labelled lines ---");
   {
     const sm = standIn("g1-01", "clean");

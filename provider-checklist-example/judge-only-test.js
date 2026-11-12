@@ -14,7 +14,8 @@
 const path = require("path");
 const ADOPT = path.join(__dirname, "..", "adopt-example");
 const { createMain, readyToExecute } = require(path.join(ADOPT, "judge-only-example"));
-const { createJudge, createStorage, toolsForModel } = require(path.join(ADOPT, "judge-only"));
+const { createJudge, createStorage, toolsForModel, writeQuestion } = require(path.join(ADOPT, "judge-only"));
+const fs = require("fs");
 const graphSide = require(path.join(ADOPT, "gate"));
 const realConnect = require(path.join(ADOPT, "connect"));
 const { runArm, measuredFor, measurePort, MEASUREMENTS } = require("./arm");
@@ -129,10 +130,33 @@ async function run(id, condition, replies = [], over = {}) {
     const line = (r.first.question?.block ?? []).find(l => l.startsWith('"Nothing after 8pm"')) ?? "";
     check("the form is shown with what it says about the time shown above: does not hold",
       line.endsWith("for time = 2026-10-31 (Sat) 15:00 +09:00 (shown above): does not hold"), true);
+    const formPrompt = r.prompts.find(p => p.hook === "comparable_form" && /Condition: Nothing after 8pm/.test(p.user))?.user ?? "";
+    check("the model putting it into a form is told each field's declared form", /time: string, format date-time/.test(formPrompt), true);
     const rec = r.records.at(-1);
     const pub = (rec?.user_checklist ?? []).find(i => i.stated_as === "public places only") ?? {};
     check("'public places only', no form fits: not pending a form, waiting on the place to approve it for",
       [Boolean(pub.form_pending), typeof pub.form_none?.why, pub.status], [false, "string", "pending_on_slot"]);
+  }
+
+  console.log("\n--- 1-d. the words of a question: one writer, plain text taken as it is ---");
+  {
+    const qs = [{ kind: "value", slot: "time", lines: [] }];
+    const conv = [{ trust: "user", text: "Arrange it." }];
+    const viaSay = await writeQuestion({ ask: () => { throw new Error("not used"); }, say: async () => "  Is this time right?  " }, { questions: qs, conversation: conv });
+    const jsonAnyway = await writeQuestion({ ask: null, say: async () => '{"message": "Is this right?"}' }, { questions: qs, conversation: conv });
+    const viaAsk = await writeQuestion({ ask: async () => ({ message: "Right?" }) }, { questions: qs, conversation: conv });
+    const nothing = await writeQuestion({ say: async () => { throw new Error("down"); } }, { questions: qs, conversation: conv });
+    check("plain text from say is the message; JSON from say is read; without say, ask; a failure is null",
+      [viaSay, jsonAnyway, viaAsk, nothing], ["Is this time right?", "Is this right?", "Right?", null]);
+    const strip = f => fs.readFileSync(path.join(ADOPT, f), "utf8").replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, "");
+    check("the question prompt is written in one place: judge-only.js, not in either flow",
+      ["judge-only.js", "gate.js", "judge-only-example.js"].map(f => strip(f).includes("You ask the user, in conversation")), [true, false, false]);
+    // Both flows ask through it: with say connected, its words head the question.
+    const s = standIn("g1-01", "clean");
+    s.connect.say = async (m, sys, u, h) => (h === "question" ? "Plain words from say." : "");
+    const main = createMain({ connect: s.connect });
+    const r1 = await main.turn({ threadId: "say-1", message: { typed: "x" } });
+    check("the agent's side: the question starts with what say wrote", r1.question?.message.split("\n")[0], "Plain words from say.");
   }
 
   console.log("\n--- 1-b. the gate could not tell what is wanted: its own words are shown, and the user says it again ---");
