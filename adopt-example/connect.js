@@ -67,15 +67,32 @@ async function say(_model, system, user) {
   return textOf(res);
 }
 
-// The JSON object in a model's answer. An answer that is not JSON is an error, with what the model wrote
-//   kept in it: the gate treats the failure as unconfirmed, and the text says why.
+// The JSON object in a model's answer: the last whole object in it. A model may think aloud before its
+//   answer, and its thinking may hold a piece of JSON of its own ("the schema should be {"const": true}"),
+//   so the text from the first { to the last } is not one object. Each object is found by matching its
+//   braces outside strings; the last one that parses is the answer. An answer with none is an error, with
+//   what the model wrote kept in it: the gate treats the failure as unconfirmed, and the text says why.
 function readJsonReply(text) {
   const t = String(text ?? "");
-  const start = t.indexOf("{"), end = t.lastIndexOf("}");
   const raw = () => JSON.stringify(t.length > 300 ? t.slice(0, 300) + " …" : t);
-  if (start < 0 || end < start) throw new Error(`the model did not answer in JSON: ${raw()}`);
-  try { return JSON.parse(t.slice(start, end + 1)); }
-  catch (e) { throw new Error(`the model's JSON could not be read (${e.message}): ${raw()}`); }
+  const found = [];
+  let lastError = null;
+  for (let i = t.indexOf("{"); i >= 0 && i < t.length; ) {
+    let depth = 0, inString = false, end = -1;
+    for (let j = i; j < t.length; j++) {
+      const ch = t[j];
+      if (inString) { if (ch === "\\") j++; else if (ch === '"') inString = false; continue; }
+      if (ch === '"') inString = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}" && --depth === 0) { end = j; break; }
+    }
+    if (end < 0) break;
+    try { found.push(JSON.parse(t.slice(i, end + 1))); i = t.indexOf("{", end + 1); }
+    catch (e) { lastError = e.message; i = t.indexOf("{", i + 1); }
+  }
+  if (found.length > 0) return found[found.length - 1];
+  if (lastError !== null) throw new Error(`the model's JSON could not be read (${lastError}): ${raw()}`);
+  throw new Error(`the model did not answer in JSON: ${raw()}`);
 }
 
 // The agent's model, with the server's tools bound as they are listed: name, description, input
