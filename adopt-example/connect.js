@@ -57,8 +57,18 @@ const textOf = res => (typeof res.content === "string" ? res.content
 async function ask(_model, system, user) {
   const m = await model();
   const res = await m.invoke([{ role: "system", content: system }, { role: "user", content: user }]);
-  const text = textOf(res);
-  return JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
+  return readJsonReply(textOf(res));
+}
+
+// The JSON object in a model's answer. An answer that is not JSON is an error, with what the model wrote
+//   kept in it: the gate treats the failure as unconfirmed, and the text says why.
+function readJsonReply(text) {
+  const t = String(text ?? "");
+  const start = t.indexOf("{"), end = t.lastIndexOf("}");
+  const raw = () => JSON.stringify(t.length > 300 ? t.slice(0, 300) + " …" : t);
+  if (start < 0 || end < start) throw new Error(`the model did not answer in JSON: ${raw()}`);
+  try { return JSON.parse(t.slice(start, end + 1)); }
+  catch (e) { throw new Error(`the model's JSON could not be read (${e.message}): ${raw()}`); }
 }
 
 // The agent's model, with the server's tools bound as they are listed: name, description, input
@@ -245,6 +255,6 @@ const store = {
 const checkpointer = new MemorySaver();
 
 module.exports = { ask, chat, listTools, readToolDefinition, measure, labelInput, callTool, store, checkpointer,
-                   MEASUREMENTS, TOOLS, MODEL_NAME, readToolFile };
+                   MEASUREMENTS, TOOLS, MODEL_NAME, readToolFile, readJsonReply };
 // With the MCP connection above uncommented:
 //   listTools: mcpListTools, readToolDefinition: mcpReadToolDefinition, callTool: mcpCallTool

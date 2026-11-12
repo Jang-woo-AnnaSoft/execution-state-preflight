@@ -255,6 +255,8 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
         'Reply as {"form": {"compare": <one of the kinds>, "constrains": ["<field>", ...]}} or {"form": null}',
         "comparable_form");
       const f = out?.form;
+      // The model looked and no form fits: said so, not left as no answer.
+      if (out && typeof out === "object" && "form" in out && f === null) return null;
       if (!f || typeof f !== "object" || !f.compare || typeof f.compare !== "object") return undefined;
       if (f.compare.source === "measured_data" && !measurements.includes(f.compare.measure)) return undefined;
       const constrains = Array.isArray(f.constrains) ? f.constrains.filter(n => n in props) : [];
