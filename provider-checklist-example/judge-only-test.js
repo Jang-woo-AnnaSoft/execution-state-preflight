@@ -183,6 +183,50 @@ async function run(id, condition, replies = [], over = {}) {
     check("the reply reader is told one yes after several questions answers each", /One yes or no after several questions answers each/.test(prompt), true);
   }
 
+  console.log("\n--- 1-f. the seller takes a condition back: asked, confirmed, recorded as withdrawn ---");
+  {
+    // The real run: the seller said "Nothing after 8pm", then "Keep 9pm and drop the 8pm limit". The model
+    //   reading the conditions left the 8pm one out, and the record showed no trace of it.
+    const GOOD = { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d:[0-5]\\d:[0-5]\\d|20:00:00)(?:Z|[+-]\\d{2}:\\d{2})$" };
+    const stub = makeAsk("g2-01");
+    const segsOf = (u, until) => JSON.parse(u.slice(u.indexOf("Segments:\n") + 10, u.indexOf(until)));
+    const ask = (m, sys, u, h) => {
+      if (h === "user_conditions") {
+        const segs = segsOf(u, "\n\nReply as");
+        const back = segs.findIndex(x => x.trust === "user" && x.text.includes("drop the 8pm limit"));
+        return { conditions: [
+          { quote: "Nothing after 8pm", segment_index: 3, constrains: ["time"], ...(back >= 0 ? { withdrawn_by: { quote: "drop the 8pm limit", segment_index: back } } : {}) },
+          { quote: "public places only", segment_index: 3, constrains: ["location"] }] };
+      }
+      if (h === "comparable_form" && /Declared by: user/.test(u)) return /Condition: Nothing after 8pm$/m.test(u) ? { form: { compare: GOOD, constrains: ["time"] } } : { form: null };
+      if (h === "extraction") {
+        const segs = segsOf(u, "\n\nFields to locate");
+        const at = segs.findIndex(x => x.trust === "user" && x.text.includes("This Saturday at 9pm"));
+        return { item_id: { found: true, value: "LST-2291", segment_index: 3 },
+          ...(at >= 0 ? { time: { found: true, value: "This Saturday at 9pm", segment_index: at }, location: { found: true, value: "Hongdae station lockers", segment_index: at } }
+                      : { time: { found: false }, location: { found: false } }), buyer_contact: { found: false } };
+      }
+      if (h === "propose_value") return { value: /^Field: time:/m.test(u) && /This Saturday at 9pm/.test(u) ? "2026-10-31T21:00:00+09:00" : null };
+      if (h === "replies") {
+        const targets = [...u.matchAll(/"target": "((?:value|approve|form|withdraw):[^"]+)"/g)].map(x => x[1]);
+        const segs = segsOf(u, "\n\nFor each question");
+        const at = segs.length - 1;
+        return { replies: segs[at]?.text === "yes" ? targets.map(t => ({ target: t, answer: true, quote: "yes", segment_index: at })) : [] };
+      }
+      return stub(m, sys, u, h);
+    };
+    const r = await run("g2-01", "clean", ["This Saturday at 9pm at the Hongdae station lockers. Keep 9pm and drop the 8pm limit.", "yes"], { ask, userChecklist: [] });
+    const asked = r.records.find(x => (x.gate?.questions ?? []).some(q => q.kind === "withdraw"));
+    check("the taking back is asked about, with the seller's words", ((asked?.gate?.question_block ?? []).find(l => l.includes("remove this condition")) ?? ""),
+      '"Nothing after 8pm" — remove this condition? (you said: "drop the 8pm limit")');
+    const done = r.records.filter(x => x.execution_decision === "execute").at(-1);
+    const eight = (done?.user_checklist ?? []).find(i => i.stated_as === "Nothing after 8pm") ?? {};
+    check("  the seller's yes: 21:00 executes, and the record keeps the condition as withdrawn, with the words",
+      [r.last.status, r.calls[0]?.args.time, eight.status, eight.withdrawal?.quote], ["executed", "2026-10-31T21:00:00+09:00", "withdrawn", "drop the 8pm limit"]);
+    const prompt = r.prompts.find(p => p.hook === "user_conditions")?.system ?? "";
+    check("  the model finding conditions is told never to leave one out that was taken back", /also one they later took back: never leave it out/.test(prompt), true);
+  }
+
   console.log("\n--- 1-d. the words of a question: one writer, plain text taken as it is ---");
   {
     const qs = [{ kind: "value", slot: "time", lines: [] }];
