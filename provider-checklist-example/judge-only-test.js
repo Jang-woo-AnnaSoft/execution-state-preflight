@@ -281,6 +281,19 @@ async function run(id, condition, replies = [], over = {}) {
       [r.last.status, r.calls[0]?.args.time, eight.status, eight.source, Boolean(eight.form_none?.declined)], ["executed", "2026-10-31T15:00:00+09:00", "verified", "user_answer", true]);
   }
 
+  console.log("\n--- 1-h. the system's data does not meet a [Required] line: the gate stops, and asks nothing ---");
+  {
+    // The conversation is the clean one. Only the platform's order status is "cancelled", and the
+    //   agent's model sees neither the status nor the [Required] lines: it has no reason to stop.
+    const r = await run("g1-01", "order_cancelled", ["yes"]);
+    const v = r.records.filter(x => VERDICTS.includes(x.execution_decision)).at(-1) ?? {};
+    const agreed = (v.provider_checklist ?? []).find(l => String(l.description).startsWith("The sale must be agreed")) ?? {};
+    check("g1-01, order cancelled: not executed, no call, and no question", [r.first.status, r.calls.length, Boolean(r.first.question)], ["not_executed", 0, false]);
+    check("  the line that stopped it: [Required] sale agreed, unmet from the measured order status",
+      [v.execution_decision, v.gate?.kind, agreed.label, agreed.status, String(r.first.reason).includes('order_status = "cancelled"')], ["hold", "unmet", "Required", "unmet", true]);
+    check("  the seller's yes changes nothing: no reply can meet a line read from the system", [r.last.status, r.calls.length, r.records.some(x => x.execution_decision === "execute")], ["not_executed", 0, false]);
+  }
+
   console.log("\n--- 1-d. the words of a question: one writer, plain text taken as it is ---");
   {
     const qs = [{ kind: "value", slot: "time", lines: [] }];
