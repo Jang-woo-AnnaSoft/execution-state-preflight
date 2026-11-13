@@ -26,10 +26,13 @@ schedule_pickup
 What the tool does, then each rule on a line of its own, starting with its label. Say what the value
 is and who gives it, or what must hold. For a value the system can also read, say whether that counts
 too (spec 4.2.1). A line need not say how to ask: the model asks, and code holds
-the answer to what was shown.
+the answer to what was shown. Say once, in a line without a label, that the labelled lines are
+checked after the call and before it runs: the model choosing the tool reads them too, and without
+that line takes them for conditions to meet before calling (spec 4.2.1).
 
 ```text
 Schedule an in-person pickup for a marketplace item. The buyer sees it at once. Times are in the time zone of the seller's account region.
+The lines below are checked after this tool is called and before it runs: [Required] by the platform from its own data, [Verify] with the user, and [Notice] is told to the user. Call it with what the user said; what is missing is asked or checked then.
 [Required] The sale must be agreed, as shown by the order status. Only the status "agreed" means agreed.
 [Required] The listing must be the seller's own, as shown by the listing's owner on the platform.
 [Verify] The item is the listing the seller names.

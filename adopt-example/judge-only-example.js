@@ -17,9 +17,9 @@
  *      Read the record from storage, decide for yourself (readyToExecute), and send its call_arguments.
  *   5. Keep the record where the agent cannot rewrite it, and write what happened back onto it
  *      (judge.recordResult).
- *   6. Give your model the tools through judge.toolsForModel, which takes the provider's labelled lines
- *      out of each description. A model that sees those lines judges them itself, and holds back the
- *      call the gate was to judge.
+ *   6. Tell your model how its calls are judged, and what happened to each: principles-gated.md as its
+ *      system prompt, and the gate's answer as its call's result (messagesFor, afterCall). Where you
+ *      hand it the tool list, you may also take the labelled lines out (judge.toolsForModel, hideLines).
  *
  *   const { createMain } = require("./judge-only-example");
  *   const main = createMain();
@@ -34,12 +34,13 @@
 
 const fs = require("fs");
 const path = require("path");
-const { createJudge, writeQuestion, writeStop } = require("./judge-only");
+const { createJudge, writeQuestion, writeStop, messagesFor, afterCall } = require("./judge-only");
 const defaultConnect = require("./connect");
 
-function systemPrompt(file = "principles.md") {
-  // principles.md: the specification's 6.2. principles-gated.md: what a model needs to know when a gate
-  //   judges its calls. A line's "(spec …)" is for whoever reads the file, not sent to the model.
+function systemPrompt(file = "principles-gated.md") {
+  // principles-gated.md, by default: what a model needs to know when a gate judges its calls (spec 6.2,
+  //   last paragraph). principles.md: the specification's 6.2 itself, for a model with no gate. A line's
+  //   "(spec …)" is for whoever reads the file, not sent to the model.
   const principles = fs.readFileSync(path.join(__dirname, file), "utf8")
     .split("\n").filter(l => l.startsWith("- ")).map(l => l.replace(/\s*\(spec [^)]*\)\s*$/, "")).join("\n");
   return "You are an assistant. You have tools; use them to carry out what the user asks.\n\n" + principles;
@@ -66,13 +67,8 @@ function readyToExecute(record, toolName) {
   return Boolean(args) && typeof args === "object" && !Array.isArray(args);
 }
 
-// How the conversation is shown to your model: the user's words as the user's, anything else marked as
-//   not the user's, and what the assistant said as the assistant's.
-function messagesFor(conversation) {
-  return conversation.map(s => s.trust === "assistant"
-    ? { role: "assistant", content: s.text }
-    : { role: "user", content: s.trust === "user" ? s.text : `[context, not the user's words] ${s.text}` });
-}
+// How the conversation is shown to your model is messagesFor (judge-only.js): what the gate said after a
+//   call goes back as that call's result.
 
 // hideLines: give your model the tools without the provider's labelled lines (toolsForModel). Yours to
 //   choose only where you hand the model its tool list; a host that lists a server's tools itself shows
@@ -109,29 +105,29 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
       if (text) conversation.push({ trust: "assistant", text });
       return { status: "replied", reply: text };
     }
-    const toolCall = { name: out.toolCall.name, arguments: out.toolCall.arguments ?? null };
+    const toolCall = { name: out.toolCall.name, arguments: out.toolCall.arguments ?? null, id: out.toolCall.id ?? null };
 
     const r = await judge.run({ unitKey: threadId, conversation, toolCall, userChecklist });   // 3
     if (r.questions.length > 0) {
       const question = await askUser(conversation, r);                                         // 2
-      conversation.push({ trust: "assistant", text: question.message });
+      conversation.push(afterCall(toolCall, "waiting", question.message));
       return { status: "waiting", question, notices: r.notices };
     }
     // The gate could not tell what is wanted, or which tool it maps to. Its own words are shown as they
     //   are; the user says it again, and the next turn judges again.
     if (r.ask && r.message) {
-      conversation.push({ trust: "assistant", text: r.message });
+      conversation.push(afterCall(toolCall, "waiting", r.message));
       return { status: "waiting", question: { text: r.message, block: [], message: r.message, options: r.options }, notices: r.notices };
     }
 
     // 4. Nothing to ask. Read the record this round wrote, and decide from it.
     const record = r.key ? (await connect.store.list(r.key)).filter(x => x && "execution_decision" in x).at(-1) : null;
     // Not ready: the user is told why, from the record this round wrote (writeStop). The words go into the
-    //   conversation as the assistant's, so the next turn starts from what the user was told.
+    //   conversation as the call's result, so the next turn starts from what the user was told.
     if (!readyToExecute(record, toolCall.name)) {
       const stop = r.message ? { message: r.message, facts: null }
         : await writeStop({ ask: connect.ask, say: connect.say, model }, { record, conversation });
-      conversation.push({ trust: "assistant", text: stop.message });
+      conversation.push(afterCall(toolCall, "not_executed", stop.message));
       return { status: "not_executed", reason: record?.reason ?? r.reason, message: stop.message, stop: stop.facts, notices: r.notices };
     }
     const name = record.tool_call.name, args = record.call_arguments;
@@ -142,15 +138,18 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
     catch (e) {
       const error = String(e?.message ?? e);
       await judge.recordResult(record, { ok: false, error });                                  // 5
+      conversation.push(afterCall(toolCall, "failed", error));
       return { status: "call_failed", callError: error };
     }
     if (result && typeof result === "object" && (result.isError === true || result.inputRequired)) {
       const error = result.inputRequired ? "the tool asked for more input instead of completing"
         : ((result.content ?? []).map(c => c?.text ?? "").join(" ").trim() || "the tool reported an error");
       await judge.recordResult(record, { ok: false, error });
+      conversation.push(afterCall(toolCall, "failed", error));
       return { status: "tool_error", callError: error };
     }
     await judge.recordResult(record, { ok: true });                                            // 5
+    conversation.push(afterCall(toolCall, "executed"));
     return { status: "executed", executedWith: args, notices: r.notices };
   }
 

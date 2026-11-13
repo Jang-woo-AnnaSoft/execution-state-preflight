@@ -4,7 +4,7 @@ Put these in your agent's system prompt when a gate judges its tool calls (`judg
 `agent.js`). [`principles.md`](./principles.md) is the specification's 6.2: the rules for a model that
 does the work alone. With a gate, several of them are the gate's work, and a model told to do them asks
 the user before it calls, so the gate's questions and the record come after a conversation they did not
-see. These lines say what the model needs to know instead. Each one ends with the part of the
+see. These lines say what the model needs to know instead (spec 6.2, last paragraph). Each one ends with the part of the
 specification it comes from; that reference is not sent to the model.
 
 The gate does not rely on them either. What they change is whether the gate gets a call to judge.

@@ -444,6 +444,38 @@ async function writeQuestion({ ask, say, model = "model" }, { questions, convers
   } catch { return null; }
 }
 
+// How a conversation is shown to the agent's model: the user's words as the user's, anything else that
+//   arrived as context, marked as not the user's, and what the assistant said as the assistant's.
+//   What the gate said after a call goes back as that call's result, not as the model's own words: a
+//   real model, shown the gate's reason as something it had said itself, took it back on the next turn
+//   as made up ("I never called the scheduling tool"). A segment from afterCall carries the call.
+const CALL_RESULT = {
+  waiting: "Not run yet. The system is asking the user first. The user was shown:",
+  not_executed: "Not run. The user was told:",
+  executed: "Run.",
+  failed: "The call failed:",
+};
+function messagesFor(conversation) {
+  return (conversation ?? []).flatMap(s => {
+    const c = s.after_call;
+    if (c) {
+      const result = [CALL_RESULT[c.status] ?? c.status, s.text].filter(Boolean).join("\n");
+      return [{ role: "assistant", content: "", tool_calls: [{ id: c.id, name: c.name, args: c.arguments ?? {} }] },
+              { role: "tool", tool_call_id: c.id, name: c.name, content: result }];
+    }
+    return [s.trust === "assistant"
+      ? { role: "assistant", content: s.text }
+      : { role: "user", content: s.trust === "user" ? s.text : `[context, not the user's words] ${s.text}` }];
+  });
+}
+// The segment that ends a call's turn: the gate reads it as the assistant's words (text), the model as
+//   its call and the call's result (messagesFor). status: waiting, not_executed, executed, failed.
+let callSeq = 0;
+function afterCall(toolCall, status, text = "") {
+  return { trust: "assistant", text,
+           after_call: { id: toolCall?.id ?? `call_${++callSeq}`, name: toolCall?.name ?? null, arguments: toolCall?.arguments ?? null, status } };
+}
+
 // Why it did not run, told to the user. The facts are the skeleton's (stopFacts), read from the record
 //   the executing side decided from; the model only puts them into words. Without its words, a plain
 //   sentence: the user is told either way. A real run held on a [Required] line ended with nothing said.
@@ -551,6 +583,6 @@ function createJudge({ ask, measure, readToolDefinition, measurements = [], stor
 }
 
 module.exports = {
-  createJudge, judgeRound, writeResult, writeQuestion, writeStop, stopFacts, toolsForModel, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
+  createJudge, judgeRound, writeResult, writeQuestion, writeStop, stopFacts, toolsForModel, messagesFor, afterCall, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
   createPreflight, labelledLines, readTranslatedForms, renderValue,
 };

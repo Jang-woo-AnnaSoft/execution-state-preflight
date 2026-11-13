@@ -30,9 +30,10 @@ const gate = require("./gate");
 const defaultConnect = require("./connect");
 
 // The agent's system prompt: an assistant that uses its tools, and the specification's principles.
-function systemPrompt(file = "principles.md") {
-  // principles.md: the specification's 6.2. principles-gated.md: what a model needs to know when a gate
-  //   judges its calls. A line's "(spec …)" is for whoever reads the file, not sent to the model.
+function systemPrompt(file = "principles-gated.md") {
+  // principles-gated.md, by default: what a model needs to know when a gate judges its calls (spec 6.2,
+  //   last paragraph). principles.md: the specification's 6.2 itself, for a model with no gate. A line's
+  //   "(spec …)" is for whoever reads the file, not sent to the model.
   const principles = fs.readFileSync(path.join(__dirname, file), "utf8")
     .split("\n").filter(l => l.startsWith("- ")).map(l => l.replace(/\s*\(spec [^)]*\)\s*$/, "")).join("\n");
   return "You are an assistant. You have tools; use them to carry out what the user asks.\n\n" + principles;

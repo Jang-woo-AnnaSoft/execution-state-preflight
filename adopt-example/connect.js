@@ -96,7 +96,8 @@ function readJsonReply(text) {
 }
 
 // The agent's model, with the server's tools bound as they are listed: name, description, input
-//   schema. → { toolCall: { name, arguments } } or { text }.
+//   schema. → { toolCall: { name, arguments, id } } or { text }. id is the model's id for the call: its
+//   result goes back under it (messagesFor).
 async function chat({ system, messages, tools }) {
   const m = await model();
   const bound = m.bindTools(tools.map(t => ({
@@ -104,7 +105,7 @@ async function chat({ system, messages, tools }) {
   })));
   const res = await bound.invoke([...(system ? [{ role: "system", content: system }] : []), ...messages]);
   const call = (res.tool_calls ?? [])[0];
-  return call ? { toolCall: { name: call.name, arguments: call.args ?? null } } : { text: textOf(res) };
+  return call ? { toolCall: { name: call.name, arguments: call.args ?? null, id: call.id ?? null } } : { text: textOf(res) };
 }
 
 // ── the tools: your declaration, and your call ─────────────────────────────────────────────────

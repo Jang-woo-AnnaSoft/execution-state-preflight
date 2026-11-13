@@ -26,8 +26,8 @@ Sections 1 to 3 are for both. Section 4 is `judge-only.js`. Section 5 is the dem
 |---|---|
 | [`tool.md`](./tool.md) | **Write.** Your declaration of the tool: name, rules in words, input schema |
 | [`connect.js`](./connect.js) | **Fill in.** Your model, your tools, your system's values, your storage |
-| [`principles.md`](./principles.md) | Goes into your agent's system prompt (`agent.js` puts it there). The specification's rules as prompt sentences |
-| [`principles-gated.md`](./principles-gated.md) | Being tried: what the model needs to know when a gate judges its calls, in place of `principles.md` (`systemPrompt("principles-gated.md")`) |
+| [`principles-gated.md`](./principles-gated.md) | Goes into your agent's system prompt (both flows put it there). What the model needs to know when a gate judges its calls (spec 6.2, last paragraph) |
+| [`principles.md`](./principles.md) | The specification's 6.2 as prompt sentences, for a model with no gate (`systemPrompt("principles.md")`) |
 | [`judge-only.js`](./judge-only.js) | Do not edit. Gives the skeleton its model calls and a validator; judges one tool call and writes the record |
 | [`judge-only-example.js`](./judge-only-example.js) | Read and adapt. Your agent's side: ask, judge again, read the record, execute, write the result |
 | [`agent.js`](./agent.js) | Demonstration. Run it, or call it from your app. No edits needed |
@@ -46,12 +46,15 @@ Two places, and nothing else:
 
 - **The description, in words.** What the tool does, and then each rule on a line of its own,
   starting with a label. Say what the value is and who gives it. A line need not say how to ask:
-  the model asks, and code holds the answer to what was shown.
+  the model asks, and code holds the answer to what was shown. Say once, in a line without a label,
+  that the labelled lines are checked after the call and before it runs: a model that does not know
+  the labels reads them as conditions to meet before it calls, and then does not call (spec 4.2.1).
 - **The input schema, forms only.** Each value's `type`, and its `format` or `pattern` where it has
   one, and which values are required.
 
 ```
 Schedule an in-person pickup for a marketplace item. The buyer sees it at once. Times are in the time zone of the seller's account region.
+The lines below are checked after this tool is called and before it runs: [Required] by the platform from its own data, [Verify] with the user, and [Notice] is told to the user. Call it with what the user said; what is missing is asked or checked then.
 [Required] The sale must be agreed, as shown by the order status. Only the status "agreed" means agreed.
 [Verify] The time is the one the seller states, or the time of a pickup request the buyer sent in the app inside a range the seller set for this pickup. It is one moment.
 [Verify] The location is the place the seller names, not a place read from the platform.
@@ -176,17 +179,22 @@ breaking one leaves a record that is right about an execution that was not.
    values known so far: arguments alone are not a sign of readiness.
 5. **Keep the record where the agent cannot rewrite it** (spec 8.2), **and write what happened back**
    with `judge.recordResult`. Only an executed record is what a later run may carry values from.
-6. **Give your model the tools through `judge.toolsForModel`** (the skeleton's function, handed on). It
-   takes the provider's labelled lines out of each description; the gate reads the full definition itself. A model that sees the lines
-   judges them: with a real model, it held back the call over a `[Required]` line only the system
-   could check, and asked the user for the fact instead. This holds for a tool on someone else's MCP
-   server too: what your model is shown is yours to decide.
+6. **Tell your model how its calls are judged, and what happened to each.** Give it
+   `principles-gated.md` as its system prompt, and keep the line in the description that says when
+   the labelled lines are checked (section 1). A model that does not know the labels reads them as
+   conditions to meet before calling: with a real model and the lines alone, it did not call, and
+   asked the user for a fact only the system could check; with both, it called at once and left the
+   asking to the gate. Show the gate's answer, a question, a stop or a run, as the result of the
+   model's call (`messagesFor`, `afterCall` in `judge-only.js`): a real model shown the gate's reason
+   as its own words took it back, on the next turn, as made up. Where you hand the model its tool
+   list yourself you may also take the labelled lines out (`judge.toolsForModel`); a host that lists
+   a server's tools itself shows the whole description. The gate reads the full definition either way.
 
 **When nothing runs, tell the user why.** `writeStop` (in `judge-only.js`) hands your model the
 skeleton's `stopFacts` for the record: the condition in its own words, whose it is, what was found.
 Your model writes the message from those alone; without its words there is still a plain sentence.
-The example shows it and adds it to the conversation. Without this, a hold ends with nothing said: a
-real run held on a `[Required]` line did.
+The example shows it, and gives it to the model as its call's result. Without this, a hold ends with
+nothing said: a real run held on a `[Required]` line did.
 
 **Try it without blocking.** Because judging only records, you can call `judge.run` beside your
 agent as it is and read the records, before anything depends on them. Most first records will ask:
@@ -243,8 +251,8 @@ else means it did not: the gate's own reasons (`hold`, `definition_repair`, `exh
 
 ## What the code here does not show
 
-- **Principles** ([`principles.md`](./principles.md), spec 6.2). The gate catches a violation either
-  way. The prompt makes it rarer.
+- **Principles** ([`principles-gated.md`](./principles-gated.md), spec 6.2). The gate catches a
+  violation either way. The prompt decides whether the gate gets a call to judge.
 - **Only the record decides execution** (spec 3.5). Both paths read the record and decide from it, but
   both run in one process here. A real system reads the record across the boundary between the gate
   and the executing party, and leaves no way to the tool that does not pass through it.
@@ -273,8 +281,8 @@ else means it did not: the gate's own reasons (`hold`, `definition_repair`, `exh
 The tests are in [`provider-checklist-example/`](../provider-checklist-example/), so this folder holds
 only what you keep. They check:
 
-- this folder holds only these files, and `principles.md` matches spec 6.2 and is in the system prompt;
-  each line of `principles-gated.md` names spec sections that exist;
+- this folder holds only these files, `principles.md` matches spec 6.2, and each line of
+  `principles-gated.md` names spec sections that exist and is in the system prompt by default;
 - the tool is read from `tool.md` by default, and `connect.js` as shipped fails closed;
 - the MCP connection kept as comments is still code once uncommented;
 - the model calls the tool, the gate asks, the user replies in words, and the tool runs;

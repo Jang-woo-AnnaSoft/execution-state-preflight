@@ -25,7 +25,7 @@
 
 const { StateGraph, Annotation, interrupt, Command, MemorySaver, START, END } = require("@langchain/langgraph");
 
-const { judgeRound, writeResult, writeQuestion, writeStop, toolsForModel, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
+const { judgeRound, writeResult, writeQuestion, writeStop, toolsForModel, messagesFor, afterCall, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
         createPreflight, labelledLines, readTranslatedForms, renderValue } = require("./judge-only");
 
 const last = (a, b) => (b === undefined ? a : b);
@@ -54,13 +54,8 @@ const State = Annotation.Root({
   stop: Annotation({ reducer: last, default: () => null }),
 });
 
-// How a conversation is shown to the agent's model: the user's words as the user's, anything else that
-//   arrived as context, marked as not the user's, and what the assistant said as the assistant's.
-function messagesFor(conversation) {
-  return conversation.map(s => s.trust === "assistant"
-    ? { role: "assistant", content: s.text }
-    : { role: "user", content: s.trust === "user" ? s.text : `[context, not the user's words] ${s.text}` });
-}
+// How a conversation is shown to the agent's model: messagesFor (judge-only.js). What the gate said after
+//   a call goes back as that call's result (afterCall).
 
 // The executing side's own decision, read from the record (spec 3.5): the same reading as
 //   judge-only-example.js, where each line of it is explained. It does not follow the gate's
@@ -103,7 +98,7 @@ function buildGraph({ ask, say, chat, listTools, readToolDefinition, measure, ca
     const out = await chat({ system, messages: messagesFor(state.conversation), tools });
     if (out?.toolCall && typeof out.toolCall.name === "string") {
       // A new turn of the conversation: what an earlier turn ended with does not carry over.
-      return { toolCall: { name: out.toolCall.name, arguments: out.toolCall.arguments ?? null }, reply: null,
+      return { toolCall: { name: out.toolCall.name, arguments: out.toolCall.arguments ?? null, id: out.toolCall.id ?? null }, reply: null,
                ended: null, executedWith: null, serverRequests: null, callError: null, stop: null };
     }
     return { reply: typeof out?.text === "string" ? out.text : "", ended: "replied",
@@ -145,14 +140,14 @@ function buildGraph({ ask, say, chat, listTools, readToolDefinition, measure, ca
     // Nothing listed to ask about: the gate could not tell what is wanted. Its own words, as they are.
     if (v.questions.length === 0) {
       return { question: { text: v.user_message, block: [], message: v.user_message, options: v.options },
-               conversation: [{ trust: "assistant", text: v.user_message }] };
+               conversation: [afterCall(state.toolCall, "waiting", v.user_message)] };
     }
     const text = await writeQuestion({ ask, say, model }, { questions: v.questions, conversation: state.conversation });
     // Without the model's words the question is still asked: the list, as code wrote it.
     const words = text ?? "Before this can run, please answer:";
     const block = [...v.question_block, ...v.disclosures.map(d => `Note: ${d}`)];
     const message = [words, ...block.map(l => `- ${l}`)].join("\n");
-    return { question: { text: words, block, message }, conversation: [{ trust: "assistant", text: message }] };
+    return { question: { text: words, block, message }, conversation: [afterCall(state.toolCall, "waiting", message)] };
   }
 
   // Waits for the user's reply. Runs again from the top on resume, so nothing before interrupt() may
@@ -181,7 +176,7 @@ function buildGraph({ ask, say, chat, listTools, readToolDefinition, measure, ca
       // The run's end stays the gate's decision (hold, definition_repair, …); not_executed only when the
       //   gate said execute.
       return { ...(v.decision === "execute" ? { ended: "not_executed" } : {}), stop,
-               conversation: [{ trust: "assistant", text: stop.message }] };
+               conversation: [afterCall(state.toolCall, "not_executed", stop.message)] };
     }
     const name = record.tool_call.name, args = record.call_arguments;
     const deps = { ask, model, runId: `${runId}-result`, measure, readToolDefinition, measurements, storage };
@@ -192,7 +187,7 @@ function buildGraph({ ask, say, chat, listTools, readToolDefinition, measure, ca
     catch (e) {
       const error = String(e?.message ?? e);
       await writeResult(deps, record, { ok: false, error });
-      return { ended: "call_failed", callError: error };
+      return { ended: "call_failed", callError: error, conversation: [afterCall(state.toolCall, "failed", error)] };
     }
     if (result && typeof result === "object" && result.inputRequired) {
       await writeResult(deps, record, { ok: false, error: "the tool asked for more input instead of completing" });
@@ -202,10 +197,11 @@ function buildGraph({ ask, say, chat, listTools, readToolDefinition, measure, ca
     if (result && typeof result === "object" && result.isError === true) {
       const text = (result.content ?? []).map(c => c?.text ?? "").join(" ").trim();
       await writeResult(deps, record, { ok: false, error: text || "the tool reported an error" });
-      return { ended: "tool_error", callError: text || "the tool reported an error" };
+      return { ended: "tool_error", callError: text || "the tool reported an error",
+               conversation: [afterCall(state.toolCall, "failed", text || "the tool reported an error")] };
     }
     await writeResult(deps, record, { ok: true });
-    return { ended: "executed", executedWith: args };
+    return { ended: "executed", executedWith: args, conversation: [afterCall(state.toolCall, "executed")] };
   }
 
   return new StateGraph(State)
