@@ -37,9 +37,11 @@ const path = require("path");
 const { createJudge, writeQuestion, writeStop } = require("./judge-only");
 const defaultConnect = require("./connect");
 
-function systemPrompt() {
-  const principles = fs.readFileSync(path.join(__dirname, "principles.md"), "utf8")
-    .split("\n").filter(l => l.startsWith("- ")).join("\n");
+function systemPrompt(file = "principles.md") {
+  // principles.md: the specification's 6.2. principles-gated.md: what a model needs to know when a gate
+  //   judges its calls. A line's "(spec …)" is for whoever reads the file, not sent to the model.
+  const principles = fs.readFileSync(path.join(__dirname, file), "utf8")
+    .split("\n").filter(l => l.startsWith("- ")).map(l => l.replace(/\s*\(spec [^)]*\)\s*$/, "")).join("\n");
   return "You are an assistant. You have tools; use them to carry out what the user asks.\n\n" + principles;
 }
 
@@ -72,7 +74,10 @@ function messagesFor(conversation) {
     : { role: "user", content: s.trust === "user" ? s.text : `[context, not the user's words] ${s.text}` });
 }
 
-function createMain({ connect = defaultConnect, userId = "user", system = systemPrompt() } = {}) {
+// hideLines: give your model the tools without the provider's labelled lines (toolsForModel). Yours to
+//   choose only where you hand the model its tool list; a host that lists a server's tools itself shows
+//   the whole description. Either way the gate reads the full definition.
+function createMain({ connect = defaultConnect, userId = "user", system = systemPrompt(), hideLines = true } = {}) {
   const model = connect.MODEL_NAME ?? "model";
   const judge = createJudge({
     ask: connect.ask, measure: connect.measure, readToolDefinition: connect.readToolDefinition,
@@ -96,7 +101,8 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
     conversations.set(threadId, conversation);
     conversation.push(...connect.labelInput(message));                                      // 1
 
-    const tools = judge.toolsForModel(await connect.listTools());                           // 6
+    const listed = await connect.listTools();
+    const tools = hideLines ? judge.toolsForModel(listed) : listed;                           // 6
     const out = await connect.chat({ system, messages: messagesFor(conversation), tools });
     if (!out?.toolCall || typeof out.toolCall.name !== "string") {
       const text = typeof out?.text === "string" ? out.text : "";

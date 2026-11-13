@@ -27,6 +27,7 @@ Sections 1 to 3 are for both. Section 4 is `judge-only.js`. Section 5 is the dem
 | [`tool.md`](./tool.md) | **Write.** Your declaration of the tool: name, rules in words, input schema |
 | [`connect.js`](./connect.js) | **Fill in.** Your model, your tools, your system's values, your storage |
 | [`principles.md`](./principles.md) | Goes into your agent's system prompt (`agent.js` puts it there). The specification's rules as prompt sentences |
+| [`principles-gated.md`](./principles-gated.md) | Being tried: what the model needs to know when a gate judges its calls, in place of `principles.md` (`systemPrompt("principles-gated.md")`) |
 | [`judge-only.js`](./judge-only.js) | Do not edit. Gives the skeleton its model calls and a validator; judges one tool call and writes the record |
 | [`judge-only-example.js`](./judge-only-example.js) | Read and adapt. Your agent's side: ask, judge again, read the record, execute, write the result |
 | [`agent.js`](./agent.js) | Demonstration. Run it, or call it from your app. No edits needed |
@@ -273,6 +274,7 @@ The tests are in [`provider-checklist-example/`](../provider-checklist-example/)
 only what you keep. They check:
 
 - this folder holds only these files, and `principles.md` matches spec 6.2 and is in the system prompt;
+  each line of `principles-gated.md` names spec sections that exist;
 - the tool is read from `tool.md` by default, and `connect.js` as shipped fails closed;
 - the MCP connection kept as comments is still code once uncommented;
 - the model calls the tool, the gate asks, the user replies in words, and the tool runs;
