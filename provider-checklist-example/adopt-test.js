@@ -85,7 +85,7 @@ const run = async (id, condition, over = {}, replies = []) => {
   const spec = fs.readFileSync(path.join(__dirname, "..", "spec.en.md"), "utf8");
   const bullets = fs.readFileSync(path.join(ADOPT, "principles.md"), "utf8").split("\n").filter(l => l.startsWith("- ")).map(l => l.slice(2));
   check("principles.md: ten bullets, each word for word in spec 6.2", [bullets.length, bullets.filter(b => !spec.includes(b))], [10, []]);
-  check("  and they are in the agent's system prompt", bullets.every(b => systemPrompt().includes(b)), true);
+  check("  and they are what systemPrompt(\"principles.md\") gives", bullets.every(b => systemPrompt("principles.md").includes(b)), true);
   // principles-gated.md: what the model needs to know when a gate judges its calls. Each line names the
   //   spec section it comes from; the reference is for the reader, not sent to the model.
   const gated = fs.readFileSync(path.join(ADOPT, "principles-gated.md"), "utf8").split("\n").filter(l => l.startsWith("- ")).map(l => l.slice(2));
@@ -94,6 +94,7 @@ const run = async (id, condition, over = {}, replies = []) => {
   check("principles-gated.md: every line names spec sections, and each section exists",
     [gated.length > 0, refs.every(Boolean), refs.flatMap(r => (r ?? "").split(/,\s*/)).filter(s => !sections.has(s))], [true, true, []]);
   const gatedPrompt = systemPrompt("principles-gated.md");
+  check("  with a gate, the agent's system prompt is principles-gated.md by default", systemPrompt(), gatedPrompt);
   check("  in the system prompt, each line without its reference",
     [gated.every(b => gatedPrompt.includes(b.replace(/\s*\(spec [^)]*\)$/, ""))), gatedPrompt.includes("(spec ")], [true, false]);
   check("  the tool-selection lines are spec 6.2's own sentences",
@@ -179,7 +180,7 @@ const run = async (id, condition, over = {}, replies = []) => {
   check("  the provider's notice goes with it", g1.first.question?.block?.some(l => l.startsWith("Note: The buyer sees")), true);
   check("  the seller's yes: executed once, with the record's arguments", [g1.last.status, g1.calls.length, g1.calls[0]?.args.time], ["executed", 1, SAT_2PM]);
   check("  the location is the seller's words", g1.calls[0]?.args.location, "Hongdae station lockers");
-  check("  the principles were in the model's system prompt", g1.prompts.every(p => p.includes("Do not generate values")), true);
+  check("  the principles were in the model's system prompt", g1.prompts.every(p => p.includes("Do not fill in a value the user did not give")), true);
   const kept = [];
   for (const key of ["user:schedule_pickup:" + `t${thread}`]) kept.push(...await g1.store.list(key));
   const rec = kept.filter(r => r.provider_checklist).at(-1);
@@ -227,7 +228,7 @@ const run = async (id, condition, over = {}, replies = []) => {
     await am.start({ threadId: idM, message: { typed: "x" } });
     const rm = await am.reply({ threadId: idM, message: { typed: "yes" } });
     check("every list the model was given had no labelled line, and the run still executes",
-      [given.length > 0, given.flat().some(t => /\[(Required|Verify|Notice)\]/.test(t?.description ?? "")), rm.status], [true, false, "executed"]);
+      [given.length > 0, given.flat().some(t => /^\[(Required|Verify|Notice)\]/m.test(t?.description ?? "")), rm.status], [true, false, "executed"]);
   }
 
   {

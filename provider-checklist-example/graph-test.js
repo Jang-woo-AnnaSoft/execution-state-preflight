@@ -142,7 +142,9 @@ const LOCKERS = "Hongdae station lockers";
   check("order cancelled: no call, the run ends on the gate's decision, and the seller is told in the model's words",
     [held.calls.length, held.state.ended ?? held.state.verdict?.decision, held.state.stop?.message, held.state.stop?.facts?.items?.[0]?.why],
     [0, "hold", "I did not schedule it.", "not_allowed"]);
-  check("  what the seller was told is the conversation's last word", held.state.conversation.at(-1), { trust: "assistant", text: "I did not schedule it." });
+  check("  what the seller was told is the conversation's last word, as the result of the model's call",
+    [held.state.conversation.at(-1)?.text, held.state.conversation.at(-1)?.after_call?.status, held.state.conversation.at(-1)?.after_call?.name],
+    ["I did not schedule it.", "not_executed", "schedule_pickup"]);
 
   console.log("\n--- 7. the graph's first verdict is the arm's verdict ---");
   const mismatched = [];

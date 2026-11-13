@@ -36,19 +36,19 @@ let thread = 0;
 
 function standIn(id, condition, over = {}) {
   const ctx = S.conditions[condition].context, date = S.date_modes.said;
-  const calls = [], shown = [], prompts = [];
+  const calls = [], shown = [], prompts = [], heard = [];
   const chatInner = makeChat();
   const askInner = over.ask ?? makeAsk(id);
   const text = S.instructions.find(i => i.id === id).text;
   let first = true;
   const store = createStorage();
   return {
-    calls, store, shown, prompts,
+    calls, store, shown, prompts, heard,
     connect: {
       // Every prompt the gate's model calls were sent, kept for the checks.
       ask: async (m, system, user, hook) => { prompts.push({ hook, system, user }); return askInner(m, system, user, hook); },
       // What the agent's model is given, kept for the checks.
-      chat: async a => { shown.push(a?.tools ?? null); return over.chat ? over.chat(a, chatInner) : chatInner(a); },
+      chat: async a => { shown.push(a?.tools ?? null); heard.push(a?.messages ?? null); return over.chat ? over.chat(a, chatInner) : chatInner(a); },
       listTools: async () => [TOOL],
       readToolDefinition: async name => [TOOL].find(t => t.name === name),
       measure: measurePort(measuredFor(ctx, date)),
@@ -73,7 +73,7 @@ async function run(id, condition, replies = [], over = {}) {
   let last = first;
   for (const r of replies) last = await main.turn({ threadId, message: { typed: r }, userChecklist });
   const records = await s.store.list(`user:${TOOL.name}:${threadId}`);
-  return { first, last, calls: s.calls, shown: s.shown, prompts: s.prompts, store: s.store, key: `user:${TOOL.name}:${threadId}`, records };
+  return { first, last, calls: s.calls, shown: s.shown, heard: s.heard, prompts: s.prompts, store: s.store, key: `user:${TOOL.name}:${threadId}`, records };
 }
 
 (async () => {
@@ -99,12 +99,13 @@ async function run(id, condition, replies = [], over = {}) {
     check("the tool has labelled lines, and the gate read all of them", [lines.filter(l => /^\[/.test(l)).length, verdict?.provider_checklist?.length], [7, 7]);
     check("what the model is given keeps the prose and the input schema", [forModel.description, forModel.inputSchema, forModel.name],
       [lines.filter(l => !/^\s*\[/.test(l)).join("\n").trim(), TOOL.inputSchema, TOOL.name]);
-    check("  and none of the labels", ["[Required]", "[Verify]", "[Notice]"].filter(l => forModel.description.includes(l)), []);
+    check("  and no line that starts with a label; the prose line that says when they are checked stays",
+      [forModel.description.split("\n").filter(l => /^\s*\[/.test(l)), forModel.description.includes("The lines below are checked after this tool is called")], [[], true]);
     check("a label the gate does not know is taken out too: the gate holds it, the model does not judge it",
       toolsForModel([{ name: "t", description: "Does a thing.\n[Requried] Must be agreed.\n  [Beta] Indented." }])[0].description, "Does a thing.");
     check("a tool with no description is left as it is", toolsForModel([{ name: "t" }]), [{ name: "t", description: "" }]);
     const seen = g1.shown.flat().map(t => t?.description ?? "");
-    check("in the run, every list the model was given had no labelled line", [g1.shown.length > 0, seen.some(d => /\[(Required|Verify|Notice)\]/.test(d))], [true, false]);
+    check("in the run, every list the model was given had no labelled line", [g1.shown.length > 0, seen.some(d => /^\[(Required|Verify|Notice)\]/m.test(d))], [true, false]);
     // Where a host lists the server's tools itself, the model sees the whole description. The gate reads
     //   the same full definition either way, so the verdict is the same.
     const whole = await run("g1-01", "clean", ["yes"], { hideLines: false });
@@ -115,7 +116,7 @@ async function run(id, condition, replies = [], over = {}) {
     //   handed them judged them there, and refused the match.
     const match = g1.prompts.filter(p => p.hook === "tool_match");
     check("the tool-match question is asked with the tool's prose and without its labelled lines",
-      [match.length > 0, match.every(p => p.user.includes("Schedule an in-person pickup")), match.some(p => /\[(Required|Verify|Notice)\]/.test(p.user))], [true, true, false]);
+      [match.length > 0, match.every(p => p.user.includes("Schedule an in-person pickup")), match.some(p => /^\[(Required|Verify|Notice)\]/m.test(p.user))], [true, true, false]);
     // The location is also a measurement. A real model, told so, put its line into user_approval or no
     //   form at all, where the same line for the item was value_source.
     const place = g1.prompts.find(p => p.hook === "comparable_form" && p.user.includes("Condition: The location is the place the seller names, not a place read from the platform."));
@@ -128,6 +129,18 @@ async function run(id, condition, replies = [], over = {}) {
     const reviewed = (verdict?.provider_checklist ?? []).filter(c => c.form_translation?.review).map(c => [c.label, c.form_translation.review.also_measured]);
     check("  the [Verify] lines on time and location are marked for review; the item, not measured, and [Required] lines are not",
       reviewed, [["Verify", ["time"]], ["Verify", ["location"]]]);
+    // The gate's question goes back to the model as its call's result, and the messages are ones the
+    //   model library takes as a call and its result.
+    const heard = g1.heard[1] ?? [];
+    const at = heard.findIndex(m => m.role === "assistant" && m.tool_calls?.length);
+    check("the gate asked: the model's next turn has its call, then the result: the question the seller was shown",
+      [at >= 0, heard[at + 1]?.role, String(heard[at + 1]?.content).startsWith("Not run yet. The system is asking the user first. The user was shown:\n"), heard.at(-1)],
+      [true, "tool", true, { role: "user", content: "yes" }]);
+    const { coerceMessageLikeToMessage } = require(path.join(__dirname, "..", "adopt-example", "node_modules", "@langchain", "core", "messages"));
+    const lc = heard.map(m => coerceMessageLikeToMessage(m));
+    check("  as LangChain messages: an AI message with the tool call, then a tool message under its id",
+      [lc[at]?._getType(), lc[at]?.tool_calls?.[0]?.name, lc[at + 1]?._getType(), lc[at + 1]?.tool_call_id === lc[at]?.tool_calls?.[0]?.id],
+      ["ai", "schedule_pickup", "tool", true]);
   }
 
   console.log("\n--- 1-c. the seller's own condition, put into a form by the model, is tried on the value shown ---");
@@ -320,6 +333,14 @@ async function run(id, condition, replies = [], over = {}) {
     check("  no ids or hashes in what the writer is given", [stops[0].user.includes("The sale must be agreed"), /schedule_pickup:\d|\d+-[0-9a-z]{8,}/.test(stops[0].user)], [true, false]);
     check("  what the seller was told is in the conversation the next turn starts from",
       stops[1].user.includes("I did not schedule it."), true);
+    // The agent's model is given its own call and, as that call's result, what the seller was told: not
+    //   the gate's words as its own. A real model, given them as its own, took them back as made up.
+    const next = r.heard[1] ?? [];
+    const callAt = next.findIndex(m => m.role === "assistant" && m.tool_calls?.length);
+    check("  the model's next turn: its call, then the call's result with what the seller was told",
+      [next[callAt]?.tool_calls?.[0]?.name, next[callAt + 1]?.role, next[callAt + 1]?.tool_call_id === next[callAt]?.tool_calls?.[0]?.id,
+       next[callAt + 1]?.content, next.some(m => m.role === "assistant" && m.content === "I did not schedule it.")],
+      ["schedule_pickup", "tool", true, "Not run. The user was told:\nI did not schedule it.", false]);
     // Without the model's words, the seller is still told.
     const base = makeAsk("g1-01");
     const silent = await run("g1-01", "order_cancelled", [], { ask: async (m, s, u, hook) => { if (hook === "stop") throw new Error("down"); return base(m, s, u, hook); } });

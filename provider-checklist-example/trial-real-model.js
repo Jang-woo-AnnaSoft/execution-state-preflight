@@ -16,7 +16,7 @@
  *     each --reply is what the seller says next, whether the gate asked or the assistant did
  *   add --no-checklist to have the seller's conditions taken from their words and put into a form by
  *     the model, instead of handed in with the forms the test data already wrote
- *   add --show-lines, --label-note and --principles gated to change what the agent's model is shown
+ *   add --show-lines, --no-label-note and --principles spec to change what the agent's model is shown
  *     (see below), and compare how it calls
  *   node trial-real-model.js --stub          # the stand-in model, to check this script itself
  *
@@ -48,16 +48,14 @@ const EXPECT_TIME = "2026-10-31T14:00:00+09:00";
 // What the agent's model is shown, to compare how it calls:
 //   --show-lines         the tool's whole description, labelled lines included, as a host that lists a
 //                        server's tools itself would show it (default: the lines taken out, toolsForModel)
-//   --label-note         a line of prose added to the description, after its first line, saying when the
-//                        labelled lines are checked. Both the model and the gate read it; the gate as prose
-//   --principles gated   the system prompt from principles-gated.md (default: principles.md, spec 6.2)
-const SHOW_LINES = argv.includes("--show-lines"), LABEL_NOTE = argv.includes("--label-note");
-const PRINCIPLES = opt("principles", "spec");
-const NOTE = "The lines below are checked after this tool is called and before it runs: [Required] by the platform " +
-  "from its own data, [Verify] with the user, and [Notice] is told to the user. Call it with what the user said; " +
-  "what is missing is asked or checked then.";
-const withNote = t => (LABEL_NOTE && t?.description
-  ? { ...t, description: t.description.replace(/\n/, `\n${NOTE}\n`) } : t);
+//   --no-label-note      the description without its line saying when the labelled lines are checked
+//                        (tool.md has it, spec 4.2.1). Both the model and the gate read it; the gate as prose
+//   --principles spec    the system prompt from principles.md, spec 6.2 itself (default: gated,
+//                        principles-gated.md)
+const SHOW_LINES = argv.includes("--show-lines"), LABEL_NOTE = !argv.includes("--no-label-note");
+const PRINCIPLES = opt("principles", "gated");
+const NOTE_LINE = /^The lines below are checked after this tool is called.*\n/m;
+const withNote = t => (!LABEL_NOTE && t?.description ? { ...t, description: t.description.replace(NOTE_LINE, "") } : t);
 
 const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.stringify(v); return s.length > n ? s.slice(0, n) + " …" : s; };
 
