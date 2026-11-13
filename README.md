@@ -192,15 +192,20 @@ if (state.execution_decision === "execute") {
 
 ## What this doesn't do
 
-- **No masking.**
-- **No integrity check on the state it is handed.**
-- **No retry.**
-- **No per-tool risk weighting.**
-- **No locking.**
-- **Flat arguments assumed.**
-- **Verdict and execution are not separated here, and that is on purpose.** **That is for demonstration, not a design to copy.**
+The skeleton judges and records. What surrounds it belongs to the system that adopts it, and is filled in there:
 
-These are limits of the skeleton. Take them into account when applying it.
+- **Masking.** Values are recorded as given. Hide what must not be stored or shown, in the storage adapter.
+- **Integrity of what it is handed.** Prior records and stored settings are taken as they come. Keep them where the agent cannot rewrite them (spec 8.2).
+- **Trust labels.** Set on arrival by the system, never by the model (spec 5.2).
+- **Retry.** A failed call is recorded, not retried.
+- **Which tools go through it.** No per-tool risk weighting. Apply it to irreversible executions (spec 1.2).
+- **Locking.** Two runs of one unit at the same time are not kept apart.
+- **Execution across a boundary.** The gate writes the record; the executing party reads it and decides (spec 3.5). The examples do both in one process.
+- **What the model is told.** That the labeled lines are checked after the call, and what the gate said, as the call's result (spec 4.2.1, 6.2). Without it a model holds back the call, and the gate has nothing to judge.
+
+One is a limit of the skeleton itself:
+
+- **Flat arguments assumed.** Branches at the top of the input schema are read; a value nested inside an argument is not a slot of its own.
 
 ---
 
@@ -210,7 +215,7 @@ A tool's input schema defines the shape of the values it needs. It does not say 
 
 **If you build the agent and the tool together, you are still the tool provider.** Sharing an owner removes the protocol, not the role. The failure mode of same-ownership is not that the declaration lands in the wrong place; it is that **nobody plays the provider role at all.**
 
-So, a proposal for tool providers: declare conditions and how each is checked in the `description`, with a label — `[Required]`, `[Verify]`, `[Notice]`. A labeled line is read by the gate, not the model, so a hint the model may or may not follow becomes a condition that can be checked before execution. It needs no protocol change and can be done today (spec 4.2.1).
+So, a proposal for tool providers: declare conditions and how each is checked in the `description`, with a label — `[Required]`, `[Verify]`, `[Notice]`. The gate reads a labeled line as a condition, so a hint the model may or may not follow becomes a condition checked before execution. The model reads the line too, so the description also says, in a line of its own, that the labeled lines are checked after the call. It needs no protocol change and can be done today (spec 4.2.1).
 
 The first version of the argument was posted as [If unsure, ask. Never guess. — AI Agent Pre-Execution Checklist](https://discuss.huggingface.co/t/if-unsure-ask-never-guess-ai-agent-pre-execution-checklist/176632). The discussion continues in [Misalignment is not required for an agent to act without authorization](https://discuss.huggingface.co/t/misalignment-is-not-required-for-an-agent-to-act-without-authorization/180541) and [We gave AI a trust we never gave people — The third axis, after capability and permission](https://discuss.huggingface.co/t/we-gave-ai-a-trust-we-never-gave-people-the-third-axis-after-capability-and-permission/183807/), where a team running its own agent is cross-checking the skeleton against its cases ([`hooks-example/crosscheck/`](./hooks-example/crosscheck/)).
 
