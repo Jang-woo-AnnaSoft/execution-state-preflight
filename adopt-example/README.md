@@ -157,7 +157,7 @@ if (r.questions.length > 0) {
 
 ```
 npm install
-npm install @langchain/anthropic        # or the package for the provider you chose
+npm install --no-save @langchain/anthropic@1.5.13   # or your provider's package, in a version that takes @langchain/core 1.2.20
 MODEL=anthropic:<model-name> node judge-only-example.js "Set up the pickup for LST-2291, 2pm this Saturday, Hongdae station lockers."
 ```
 
