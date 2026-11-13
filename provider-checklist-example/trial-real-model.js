@@ -16,6 +16,8 @@
  *     each --reply is what the seller says next, whether the gate asked or the assistant did
  *   add --no-checklist to have the seller's conditions taken from their words and put into a form by
  *     the model, instead of handed in with the forms the test data already wrote
+ *   add --show-lines, --label-note and --principles gated to change what the agent's model is shown
+ *     (see below), and compare how it calls
  *   node trial-real-model.js --stub          # the stand-in model, to check this script itself
  *
  * Prints every model call (which prompt, how long, what came back), each turn, and the last record.
@@ -25,7 +27,7 @@
 const fs = require("fs");
 const path = require("path");
 const ADOPT = path.join(__dirname, "..", "adopt-example");
-const { createMain } = require(path.join(ADOPT, "judge-only-example"));
+const { createMain, systemPrompt } = require(path.join(ADOPT, "judge-only-example"));
 const { createStorage } = require(path.join(ADOPT, "judge-only"));
 const real = require(path.join(ADOPT, "connect"));
 const { measuredFor, measurePort, MEASUREMENTS } = require("./arm");
@@ -43,6 +45,19 @@ const replies = all("reply").length ? all("reply") : ["yes"];
 //   and the model puts each into a form for the seller to confirm: the path a real conversation takes.
 const NO_CHECKLIST = argv.includes("--no-checklist");
 const EXPECT_TIME = "2026-10-31T14:00:00+09:00";
+// What the agent's model is shown, to compare how it calls:
+//   --show-lines         the tool's whole description, labelled lines included, as a host that lists a
+//                        server's tools itself would show it (default: the lines taken out, toolsForModel)
+//   --label-note         a line of prose added to the description, after its first line, saying when the
+//                        labelled lines are checked. Both the model and the gate read it; the gate as prose
+//   --principles gated   the system prompt from principles-gated.md (default: principles.md, spec 6.2)
+const SHOW_LINES = argv.includes("--show-lines"), LABEL_NOTE = argv.includes("--label-note");
+const PRINCIPLES = opt("principles", "spec");
+const NOTE = "The lines below are checked after this tool is called and before it runs: [Required] by the platform " +
+  "from its own data, [Verify] with the user, and [Notice] is told to the user. Call it with what the user said; " +
+  "what is missing is asked or checked then.";
+const withNote = t => (LABEL_NOTE && t?.description
+  ? { ...t, description: t.description.replace(/\n/, `\n${NOTE}\n`) } : t);
 
 const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.stringify(v); return s.length > n ? s.slice(0, n) + " …" : s; };
 
@@ -56,7 +71,8 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
   const stub = STUB ? require("./stub") : null;
   const askInner = STUB ? stub.makeAsk(id) : real.ask;
   const chatInner = STUB ? stub.makeChat() : real.chat;
-  const log = { model: STUB ? "stub" : process.env.MODEL, id, condition, date: dateMode, started: new Date().toISOString(), calls: [], turns: [] };
+  const log = { model: STUB ? "stub" : process.env.MODEL, id, condition, date: dateMode,
+    shown: { lines: SHOW_LINES, label_note: LABEL_NOTE, principles: PRINCIPLES }, started: new Date().toISOString(), calls: [], turns: [] };
 
   async function timed(hook, prompt, fn) {
     const t0 = Date.now();
@@ -76,9 +92,9 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
   const connect = {
     ask: (model, system, user, hook) => timed(hook ?? "ask", { system, user }, () => askInner(model, system, user, hook)),
     ...(STUB ? {} : { say: (model, system, user, hook) => timed(hook ?? "say", { system, user }, () => real.say(model, system, user, hook)) }),
-    chat: a => timed("agent_chat", { system: a?.system, messages: a?.messages }, () => chatInner(a)),
-    listTools: real.listTools,
-    readToolDefinition: real.readToolDefinition,
+    chat: a => timed("agent_chat", { system: a?.system, messages: a?.messages, tools: a?.tools }, () => chatInner(a)),
+    listTools: async () => (await real.listTools()).map(withNote),
+    readToolDefinition: async name => withNote(await real.readToolDefinition(name)),
     measure: measurePort(measuredFor(ctx, date)),
     // The first message arrives with the condition's context, as in the tests; later ones are typed.
     labelInput: msg => {
@@ -91,9 +107,12 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
     MODEL_NAME: log.model,
   };
 
-  const main = createMain({ connect });
+  if (!["spec", "gated"].includes(PRINCIPLES)) throw new Error("--principles is spec or gated");
+  const main = createMain({ connect, hideLines: !SHOW_LINES,
+    system: systemPrompt(PRINCIPLES === "gated" ? "principles-gated.md" : "principles.md") });
   const threadId = `trial-${Date.now()}`;
-  console.log(`model: ${log.model}   run: ${id} / ${condition} / date ${dateMode}`);
+  console.log(`model: ${log.model}   run: ${id} / ${condition} / date ${dateMode}   ` +
+    `shown: ${SHOW_LINES ? "whole description" : "labelled lines taken out"}${LABEL_NOTE ? " + label note" : ""}   principles: ${PRINCIPLES}`);
   console.log(`\nThe seller: ${instruction.text}\n`);
 
   let r = await main.turn({ threadId, message: { typed: instruction.text }, userChecklist: NO_CHECKLIST ? [] : (instruction.user_checklist ?? []) });

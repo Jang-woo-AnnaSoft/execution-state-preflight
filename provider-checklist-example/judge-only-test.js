@@ -66,7 +66,7 @@ function standIn(id, condition, over = {}) {
 }
 async function run(id, condition, replies = [], over = {}) {
   const s = standIn(id, condition, over);
-  const main = createMain({ connect: s.connect });
+  const main = createMain({ connect: s.connect, ...(over.hideLines === false ? { hideLines: false } : {}) });
   const threadId = `j${++thread}`;
   const userChecklist = over.userChecklist ?? S.instructions.find(i => i.id === id).user_checklist ?? [];
   const first = await main.turn({ threadId, message: { typed: "(stand-in)" }, userChecklist });
@@ -105,6 +105,12 @@ async function run(id, condition, replies = [], over = {}) {
     check("a tool with no description is left as it is", toolsForModel([{ name: "t" }]), [{ name: "t", description: "" }]);
     const seen = g1.shown.flat().map(t => t?.description ?? "");
     check("in the run, every list the model was given had no labelled line", [g1.shown.length > 0, seen.some(d => /\[(Required|Verify|Notice)\]/.test(d))], [true, false]);
+    // Where a host lists the server's tools itself, the model sees the whole description. The gate reads
+    //   the same full definition either way, so the verdict is the same.
+    const whole = await run("g1-01", "clean", ["yes"], { hideLines: false });
+    check("hideLines false: the model is given the whole description; the run judges and executes the same",
+      [whole.shown.every(l => l?.[0]?.description === TOOL.description), whole.last.status, whole.calls[0]?.args, whole.records.map(r => r.execution_decision)],
+      [true, g1.last.status, g1.calls[0]?.args, g1.records.map(r => r.execution_decision)]);
     // Whether the act the user named is what the tool does is asked without the lines too: a real model
     //   handed them judged them there, and refused the match.
     const match = g1.prompts.filter(p => p.hook === "tool_match");

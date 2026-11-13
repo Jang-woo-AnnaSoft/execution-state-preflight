@@ -74,7 +74,7 @@ const run = async (id, condition, over = {}, replies = []) => {
 (async () => {
   console.log("--- 1. the folder holds only what an adopter keeps ---");
   const files = fs.readdirSync(ADOPT).filter(f => f !== "node_modules").sort();
-  check("adopt-example files", files, ["README.md", "agent.js", "connect.js", "gate.js", "judge-only-example.js", "judge-only.js", "package-lock.json", "package.json", "principles.md", "tool.md"]);
+  check("adopt-example files", files, ["README.md", "agent.js", "connect.js", "gate.js", "judge-only-example.js", "judge-only.js", "package-lock.json", "package.json", "principles-gated.md", "principles.md", "tool.md"]);
   // tool.md is the declaration the agent reads by default: it must be the tool the tests run.
   const md = fs.readFileSync(path.join(ADOPT, "tool.md"), "utf8");
   const blocks = [...md.matchAll(/```(\w+)\n([\s\S]*?)\n```/g)].map(m => [m[1], m[2]]);
@@ -86,6 +86,18 @@ const run = async (id, condition, over = {}, replies = []) => {
   const bullets = fs.readFileSync(path.join(ADOPT, "principles.md"), "utf8").split("\n").filter(l => l.startsWith("- ")).map(l => l.slice(2));
   check("principles.md: ten bullets, each word for word in spec 6.2", [bullets.length, bullets.filter(b => !spec.includes(b))], [10, []]);
   check("  and they are in the agent's system prompt", bullets.every(b => systemPrompt().includes(b)), true);
+  // principles-gated.md: what the model needs to know when a gate judges its calls. Each line names the
+  //   spec section it comes from; the reference is for the reader, not sent to the model.
+  const gated = fs.readFileSync(path.join(ADOPT, "principles-gated.md"), "utf8").split("\n").filter(l => l.startsWith("- ")).map(l => l.slice(2));
+  const refs = gated.map(b => (b.match(/\(spec ([^)]*)\)$/) ?? [])[1]);
+  const sections = new Set([...spec.matchAll(/^#+ (\d+(?:\.\d+)*)\b/gm)].map(m => m[1]));
+  check("principles-gated.md: every line names spec sections, and each section exists",
+    [gated.length > 0, refs.every(Boolean), refs.flatMap(r => (r ?? "").split(/,\s*/)).filter(s => !sections.has(s))], [true, true, []]);
+  const gatedPrompt = systemPrompt("principles-gated.md");
+  check("  in the system prompt, each line without its reference",
+    [gated.every(b => gatedPrompt.includes(b.replace(/\s*\(spec [^)]*\)$/, ""))), gatedPrompt.includes("(spec ")], [true, false]);
+  check("  the tool-selection lines are spec 6.2's own sentences",
+    gated.filter(b => b.endsWith("(spec 6.2)")).map(b => spec.includes(b.replace(/\s*\(spec [^)]*\)$/, ""))), [true, true]);
 
   console.log("\n--- 2. connect.js as shipped: the tools from tool.md, and it fails closed ---");
   {
