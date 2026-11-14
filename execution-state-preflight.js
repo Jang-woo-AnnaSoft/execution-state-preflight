@@ -1267,10 +1267,31 @@ async function lookupField(h, fieldName, ctx) {
   // Source 2 — instruction: known only from a trusted segment with a valid span.
   //   To use a value from an untrusted segment, ask and take it back as user_answer.
   //   If instruction is a string, this entire source dies (fail-closed).
-  const fromInstruction = allowed.has("instruction")
+  let fromInstruction = allowed.has("instruction")
     ? await safeHook(h.extractFromInstruction, [fieldName, instruction], lookupFailed("instruction"))
     : undefined;
   if (fromInstruction?.[LOOKUP_HOOK_FAILED]) return failedAt(fromInstruction);
+  // [VALUE READ ONCE] Within a unit, a value read from the user's words is not read again from the same
+  //   words. When the extractor points again into a segment an earlier round already read, the value
+  //   that round took is carried, if its words are still there. A real model read the same sentence as
+  //   "the Hongdae station lockers", then "Hongdae station lockers", then "the …" again; the user's yes to
+  //   "public places only", bound to the place shown, stopped counting each time, and the run ended
+  //   exhausted. A claim in a segment the earlier round had not read (the user said something new), or no
+  //   claim at all, is taken as it comes.
+  let readOnce = null;
+  const carried = ctx.readValues?.[fieldName];
+  if (carried && fromInstruction && typeof fromInstruction === "object" && noneReport(fromInstruction) === null &&
+      Number.isInteger(fromInstruction.segment_index) && fromInstruction.segment_index < carried.read_through) {
+    const cseg = instruction?.[carried.segment_index];
+    const [a, b] = carried.span;
+    if (cseg?.trust === "user" && typeof cseg.text === "string" && Number.isInteger(a) && Number.isInteger(b) &&
+        b <= cseg.text.length && cseg.text.slice(a, b) === carried.value &&
+        (fromInstruction.value !== carried.value || fromInstruction.segment_index !== carried.segment_index)) {
+      readOnce = { segment_index: carried.segment_index, span: [a, b], read_through: carried.read_through,
+                   set_aside: { value: fromInstruction.value ?? null, segment_index: fromInstruction.segment_index } };
+      fromInstruction = { value: carried.value, segment_index: carried.segment_index, span: [a, b] };
+    }
+  }
   const instructionNone = noneReport(fromInstruction);
   if (allowed.has("instruction") && fromInstruction === undefined) saw("instruction", "no_report");
   // A report of nothing is recorded and the search goes on (5.2). Never a value, never the end.
@@ -1336,6 +1357,10 @@ async function lookupField(h, fieldName, ctx) {
           // the auditor would have to take the gate's word — which is the thing
           // this specification refuses to do for the model.
           located_at: { segment_index: fromInstruction.segment_index, span: [sp[0], sp[1]] },
+          // How many segments of the instruction this round read: the next round in the unit does not
+          //   read these words again for this value ([VALUE READ ONCE]).
+          read_through: Array.isArray(instruction) ? instruction.length : null,
+          ...(readOnce ? { read_once: readOnce } : {}),
           // A derived match ("tomorrow" → a date) is recorded as derived. The span then
           // points at supporting text rather than stating the value, and the record says so.
           ...(derivedFrom?.ok
@@ -1700,7 +1725,7 @@ async function listRecords(h, key) {
 const NOT_VALUE_ASKS = new Set(["intent_undetermined", "intent_undetermined_exhausted", "tool_undetermined",
                                 "tool_undetermined_exhausted", "branch_unresolved", "branch_conflict"]);
 async function unitHistory(h, actionKey, phase) {
-  const none = { available: false, asked: new Map(), askings: [], ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0, conditions: null };
+  const none = { available: false, asked: new Map(), askings: [], ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0, conditions: null, values: {} };
   if (typeof actionKey !== "string" || actionKey === "") return none;
   const all = await listRecords(h, actionKey);
   if (!all) return { ...none, unlisted: true };
@@ -1708,9 +1733,17 @@ async function unitHistory(h, actionKey, phase) {
   for (let i = all.length - 1; i >= 0; i--) if (all[i]?.execution_decision === "executed") { start = i + 1; break; }
   const recs = all.slice(start).filter(r => r && typeof r === "object" && r.kind !== FORM_APPROVAL_KIND &&
     r.kind !== FORM_TRANSLATION_KIND);
-  const out = { available: true, asked: new Map(), askings: [], ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0, conditions: null };
+  const out = { available: true, asked: new Map(), askings: [], ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0, conditions: null, values: {} };
   for (const r of recs) {
     const g = r.gate ?? {};
+    // The values read from the user's words, where, and how far those words were read ([VALUE READ ONCE]).
+    //   The latest record that read each one is the one carried.
+    for (const f of Array.isArray(r.fields) ? r.fields : []) {
+      if (f?.source === "instruction" && Number.isInteger(f.read_through) && Number.isInteger(f.located_at?.segment_index) &&
+          Array.isArray(f.located_at?.span) && typeof f.name === "string") {
+        out.values[f.name] = { value: f.value, segment_index: f.located_at.segment_index, span: f.located_at.span.slice(0, 2), read_through: f.read_through };
+      }
+    }
     // The conditions taken from the user's words, and how far those words were read ([USER CONDITIONS]).
     //   The latest record that read them is the one carried.
     const took = (Array.isArray(r.value_checks) ? r.value_checks : []).find(c => c?.id === "user_conditions" && Number.isInteger(c?.read_through));
@@ -2786,6 +2819,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
                 fieldSchemas: mcpTool?.inputSchema?.properties ?? {},
                 sourceRules,
                 valueApprovals: replies.valueApprovals,   // the user's yes to a value shown, bound to it
+                readValues: history.values,               // values read in earlier rounds of the unit ([VALUE READ ONCE])
                 measure: name => measureNow(name, settledValues),
                 mcpTool };
 
@@ -3767,7 +3801,10 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.24",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.25",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.25: a field read from the user's words carries read_through (how many segments were read). Within
+    //        a unit, the next round carries it rather than read the same words again; a carried field has
+    //        read_once ({ segment_index, span, read_through, set_aside }) ([VALUE READ ONCE]).
     //   1.24: a user's condition may carry form_none.proposed: a form proposed that no user's condition can
     //        take, kept beside the no-form approval ([UNFIT FORM]).
     //   1.23: a provider line's form_translation may carry review ({ also_measured, why }): a [Verify] line
