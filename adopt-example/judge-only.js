@@ -316,13 +316,15 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
     async proposeValue(fieldName, instruction, schema) {
       const p = schema ?? {};
       const out = await call(
+        // A smaller model wrote 2026-11-01, a Sunday, for "this Saturday" with today Wednesday, October 28.
         // The value is the user's; what the form needs beyond it may come from what the system gave. With
         //   the user's words alone, a model that kept to them wrote no date-time: the year and the time zone
         //   were only in the account context. The user approves what is shown either way (spec 5.2).
         "You read what the user said and write the value of one field in the field's declared form. The value " +
         "itself, which moment or which thing, comes only from the user's words (segments with \"trust\": \"user\"). " +
         "What the form needs beyond it, such as the year, or the time zone the tool's description points to, may " +
-        "be taken from the other segments. If the user's words do not give one value, answer {\"value\": null}. " +
+        "be taken from the other segments. If the user named a day of the week, the date you write falls on that " +
+        "day: count from the date the user gave for today. If the user's words do not give one value, answer {\"value\": null}. " +
         "The user will be shown your value to approve. Return JSON only.",
         `Tool: ${tool?.name}\n${String(tool?.description ?? "")}\n\nSegments:\n${JSON.stringify(segmentsOf(instruction), null, 2)}\n\n` +
         `Field: ${fieldName}: ${[p.type, p.format && `format ${p.format}`, p.pattern && `pattern ${p.pattern}`].filter(Boolean).join(", ")}\n\n` +
