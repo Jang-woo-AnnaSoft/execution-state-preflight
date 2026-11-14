@@ -1876,6 +1876,11 @@ function sameCallValue(a, b, schema) {
 //   not another value, and a model's filler ("", "the model's own guess") asks nothing.
 async function callDisagrees(h, ctx, f, args, schema) {
   if (f?.status !== "known" || f.source !== "user_answer" || !f.approval) return f;
+  //   Only a value the gate made from the user's words: there the model's call is another reading of the
+  //   same words. A stored value or the last execution's, the user approved as it is, and a choice they
+  //   made between two: a call that says otherwise has no words of its own behind it. A real model,
+  //   after the seller approved the remembered place, called again with the seller's "my usual spot".
+  if (f.approval.chosen_from || f.approval.shown_from === "stored" || f.approval.shown_from === "prior_state") return f;
   if (!args || typeof args !== "object" || !(f.name in args)) return f;
   const said = args[f.name];
   if (said === undefined || said === null || said === "") return f;
@@ -2007,6 +2012,7 @@ async function readUserReplies(h, instruction, history) {
       } else if (c.answer === true) {
         out.userAnswers[q.slot] = q.candidate.value;
         out.valueApprovals[q.slot] = { answer: true, shown: { [q.slot]: q.candidate.value }, located_at: c.located_at,
+                                       shown_from: q.candidate.from ?? null,
                                        ...(q.disagrees ? { disagreed_with: q.disagrees.call_value } : {}) };
       }
     } else if (q.kind === "approve") {
@@ -3959,7 +3965,9 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.28",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.29",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.29: a value approval carries shown_from (where the shown value came from: model, approved, stored,
+    //        prior_state); [CALL DISAGREES] compares the call only with a value made from the user's words.
     //   1.28: a value from the user's words, in the field's form, that a stored value contradicts is not
     //        settled: the field carries lower_differs { said, other }, the value question carries choices
     //        [{ value, from, shown_text, from_text }], a reply names its choice, and the approval carries
