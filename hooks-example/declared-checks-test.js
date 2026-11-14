@@ -410,7 +410,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.25");
+    check("schema_version", persisted?.schema_version, "1.26");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -939,6 +939,36 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
       [{ time: SAT_2PM }, 1]);
     check("  a yes slipped in for a slot not asked does not count", [field(answered.r, "item_id").value, vc(answered.r, "value:item_id:answer")?.status], ["LST-2291", "rejected"]);
     check("  executes, with the item the seller named", [answered.r.execution_decision, answered.r.call_arguments?.item_id], ["execute", "LST-2291"]);
+
+    // [CALL DISAGREES] A smaller model proposed 2026-11-01 for "this Saturday", the seller's yes approved
+    //   it, the agent's model called with 2026-10-31, and the run executed on the Sunday.
+    {
+      const SUN_2PM = "2026-11-01T14:00:00+09:00";
+      const toolName = tool().name;
+      const sd = memStorage();
+      await run(o({ storage: sd, over: { proposeValue: f => (f === "time" ? { value: SUN_2PM } : undefined) } }));
+      const differs = await run(o({ storage: sd, noPriorAsk: true }),
+        { userAnswers: { time: SUN_2PM }, toolCall: { name: toolName, arguments: { time: SAT_2PM } } });
+      const dq = (differs.r.gate?.questions ?? []).find(q => q.target === "value:time") ?? {};
+      check("the user approved one value, the model's call says another: not executed, asked again with both shown",
+        [differs.r.execution_decision, field(differs.r, "time").status, field(differs.r, "time").call_disagrees?.call, dq.candidate?.value, dq.disagrees?.call_value,
+         (differs.r.gate?.question_block ?? []).some(l => l === "time = 2026-11-01 (Sun) 14:00 +09:00 — the assistant's call has 2026-10-31 (Sat) 14:00 +09:00")],
+        ["ask_user", "unknown", SAT_2PM, SUN_2PM, SAT_2PM, true]);
+      const again = await run(o({ storage: sd, noPriorAsk: true, instruction: [{ trust: "user", text: said }, { trust: "user", text: "yes" }] }),
+        { userAnswers: { time: SUN_2PM }, toolCall: { name: toolName, arguments: { time: SAT_2PM } } });
+      check("  a yes given with that shown settles it; the same difference is not asked again",
+        [again.r.execution_decision, field(again.r, "time").value, field(again.r, "time").approval?.disagreed_with], ["execute", SUN_2PM, SAT_2PM]);
+      const sSame = memStorage();
+      await run(o({ storage: sSame, over: { proposeValue: f => (f === "time" ? { value: SAT_2PM } : undefined) } }));
+      const sameInstant = await run(o({ storage: sSame, noPriorAsk: true }),
+        { userAnswers: { time: SAT_2PM }, toolCall: { name: toolName, arguments: { time: "2026-10-31T05:00:00Z" } } });
+      check("  the same moment written another way is not a difference", sameInstant.r.execution_decision, "execute");
+      const sNoise = memStorage();
+      await run(o({ storage: sNoise, over: { proposeValue: f => (f === "time" ? { value: SAT_2PM } : undefined) } }));
+      const noise = await run(o({ storage: sNoise, noPriorAsk: true }),
+        { userAnswers: { time: SAT_2PM }, toolCall: { name: toolName, arguments: { time: "this Saturday", location: "somewhere else" } } });
+      check("  a call value not in the field's form, or a field from the user's own words, asks nothing", noise.r.execution_decision, "execute");
+    }
 
     const badReading = await run(o({ over: { proposeValue: () => ({ value: "Saturday 2pm" }) } }));
     check("a reading not in the slot's format is not shown", [vc(badReading.r, "time:candidate")?.status, (badReading.r.gate?.questions ?? [])[0]?.candidate ?? null],
