@@ -355,6 +355,37 @@ function toolsForModel(tools) {
   }));
 }
 
+// [PRIOR EXECUTION] Where a later run finds the last execution to carry values over from (prior_state,
+//   5.2). The gate never looks the record up itself: the caller hands priorExecutionState in. These two
+//   functions are for the caller: one keeps an executed record where the next can find it, the other
+//   finds it. Per user and tool, under a key of its own, since each unit has its own action_key.
+//   keepForPrior keeps only a record that says it executed; loadPrior gives the latest of them, or
+//   { none: "absent" } when there is none (the caller looked: nothing executed, D3), or null when the
+//   storage cannot load (no report).
+const PRIOR_KEY = (userId, tool) => `__prior__:${userId ?? ""}:${tool ?? ""}`;
+async function keepForPrior(storage, record, { userId } = {}) {
+  if (!storage || typeof storage.persist !== "function") return null;
+  if (record?.execution_decision !== "executed") return null;
+  const tool = record?.tool_call?.name ?? record?.fixed?.c3_provider_action_name ?? null;
+  if (!tool) return null;
+  await storage.persist(PRIOR_KEY(userId, tool), record);
+  return PRIOR_KEY(userId, tool);
+}
+//   It reads the key's records with list when the storage has it, and otherwise load (the latest that
+//   executed, by the storage contract).
+async function loadPrior(storage, { userId, tool } = {}) {
+  if (!storage || !tool) return null;
+  const key = PRIOR_KEY(userId, tool);
+  let r;
+  if (typeof storage.list === "function") {
+    const all = await storage.list(key);
+    r = (Array.isArray(all) ? all : []).filter(x => x?.execution_decision === "executed").at(-1) ?? null;
+  } else if (typeof storage.load === "function") {
+    r = await storage.load(key);
+  } else return null;
+  return r && r.execution_decision === "executed" ? r : { none: "absent" };
+}
+
 // [STOP FACTS] Why a record does not execute, as facts for the user's side to put into words. Read
 //   from the record alone, along the same branch as its decision: a hold reports what prohibits it and
 //   not the routes still open beside it, since none of them can turn it met (4.5). No ids or hashes:
@@ -875,7 +906,10 @@ function getProviderConditions(mcpTool) {
 //   the value came from. No hook is asked whether it holds.
 //   BREAKS: check it after the lookup instead and an earlier source wins first — a contact the user
 //     typed is found before the platform's, and the condition can only fail, never send the lookup on.
-const USER_SOURCES = new Set(["user_answer", "instruction", "pre_set_data"]);
+//   prior_state is among them: it never settles a slot, and its value is shown to the user, counting
+//   only once approved, as user_answer (5.2) — the user giving it. Without it, a [Verify] slot never
+//   offered the last pickup's place for "same place as last time".
+const USER_SOURCES = new Set(["user_answer", "instruction", "pre_set_data", "prior_state"]);
 
 function valueSourceRule(cond) {
   const c = cond?.compare;
@@ -1050,6 +1084,10 @@ async function resolveField(h, fieldName, ctx) {
     //   is dropped once the slot settles (the user confirmed it, as user_answer, or chose otherwise).
     if (status === "unknown" && record.prior_candidate) out.prior_candidate = record.prior_candidate;
     else delete out.prior_candidate;
+    if (status === "unknown" && record.stored_candidate) out.stored_candidate = record.stored_candidate;
+    else delete out.stored_candidate;
+    if (record.source === "pre_set_data" && record.pre_set) out.pre_set = record.pre_set;
+    else if (out.source !== "pre_set_data") delete out.pre_set;
     // The two check results are the gate's facts too, written over anything a policy put there.
     delete out.limit_checks; delete out.format_check;
     if (record.limit_checks?.length) out.limit_checks = record.limit_checks;
@@ -1380,6 +1418,15 @@ async function lookupField(h, fieldName, ctx) {
   //   NOTE: old-schema input looks like every field being stuck at unknown. Check here first when migrating.
   // D3: the caller may write { none: "absent" } for a slot it looked up in the settings and found no
   //   entry for. An absent KEY stays no_report — the gate cannot tell "loaded, none" from "passed {}".
+  // [STORED APPROVAL] A setting the user approved is recorded with who approved it, when, and where,
+  //   as the store gives them (approved_by, approved_at, approved_in): the record of a verdict says which
+  //   settings it used and on whose approval (spec 4, 5.2). A store that gives none of them is recorded
+  //   as such (null), not filled in.
+  // [STORED CANDIDATE] A value stored without the user's approval — a model's memory, a routine that
+  //   saved it on its own — is not a setting (5.2: the system stores the approved value; the model does
+  //   not). It is shown to the user as a candidate, like prior_state, and counts as user_answer only once
+  //   approved. It does not settle the slot, and the search goes on. trust names who stored it.
+  let storedCandidate = null;
   if (allowed.has("pre_set_data")) {
     if (preSetData && fieldName in preSetData) {
       const entry = preSetData[fieldName];
@@ -1388,7 +1435,12 @@ async function lookupField(h, fieldName, ctx) {
         saw("pre_set_data", none);
       } else if (entry && typeof entry === "object" && "value" in entry && entry.trust === "user") {
         saw("pre_set_data", "found");
-        return fresh({ name: fieldName, value: entry.value, status: "known", source: "pre_set_data" });
+        return fresh({ name: fieldName, value: entry.value, status: "known", source: "pre_set_data",
+                       pre_set: { approved_by: entry.approved_by ?? null, approved_at: entry.approved_at ?? null,
+                                  approved_in: entry.approved_in ?? null } });
+      } else if (entry && typeof entry === "object" && "value" in entry && typeof entry.trust === "string" && entry.trust !== "") {
+        saw("pre_set_data", "candidate");
+        storedCandidate = { value: entry.value, stored_by: entry.trust };
       } else {
         saw("pre_set_data", "rejected");
       }
@@ -1449,7 +1501,8 @@ async function lookupField(h, fieldName, ctx) {
       return traced({ name: fieldName, value: undefined, status: "unknown", source: null, origin_source: null,
                       prior_candidate: { value: fromPriorState.value,
                                          origin_source: fromPriorState.origin_source ?? null,
-                                         action_key: priorExecutionState.action_key ?? null } });
+                                         action_key: priorExecutionState.action_key ?? null },
+                      ...(storedCandidate ? { stored_candidate: storedCandidate } : {}) });
     }
     saw("prior_state", priorNone ? priorNone
       : executed ? "absent"
@@ -1457,7 +1510,8 @@ async function lookupField(h, fieldName, ctx) {
   }
   // All empty → unknown. The allowed set rides along: the route is chosen from it (4.5), and a
   //   record that does not carry it cannot say why nothing was asked of the user.
-  return traced({ name: fieldName, value: undefined, status: "unknown", source: null, origin_source: null });
+  return traced({ name: fieldName, value: undefined, status: "unknown", source: null, origin_source: null,
+                  ...(storedCandidate ? { stored_candidate: storedCandidate } : {}) });
 }
 
 // Which of the five sources may be consulted for this slot (5.2, 4.5). Returning null or anything
@@ -2885,6 +2939,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
         .map(c => ({ id: c.id ?? null, label: c.label ?? null, text: c.description ?? null }));
       let proposal, from = null;
       if (f.call_disagrees) { proposal = f.call_disagrees.approved; from = "approved"; }
+      else if (f.stored_candidate) { proposal = f.stored_candidate.value; from = "stored"; }
       else if (f.prior_candidate) { proposal = f.prior_candidate.value; from = "prior_state"; }
       else {
         let failure = null;
@@ -3845,7 +3900,11 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.26",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.27",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.27: a field from pre_set_data carries pre_set { approved_by, approved_at, approved_in }, as the
+    //        store gave them ([STORED APPROVAL]). A stored value whose trust is not "user" is a candidate
+    //        shown to the user (stored_candidate { value, stored_by }; lookup_trace pre_set_data
+    //        "candidate"), never a setting ([STORED CANDIDATE]).
     //   1.26: a value the user approved as a proposal, which the model's call says otherwise, is asked again
     //        (field call_disagrees { approved, call, approval }; the value question carries disagrees
     //        { call_value, call_shown }); a yes given with that shown carries approval.disagreed_with
@@ -4163,7 +4222,7 @@ function createPreflight({ hooks = {}, storage, clock, strict = false, limits = 
   };
 }
 
-module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, labelledLines, toolsForModel, stopFacts, describeForm,
+module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, labelledLines, toolsForModel, stopFacts, keepForPrior, loadPrior, describeForm,
                    readTranslatedForms, renderValue };
 
 

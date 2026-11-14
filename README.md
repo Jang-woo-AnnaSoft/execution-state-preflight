@@ -200,6 +200,7 @@ The skeleton judges and records. What surrounds it belongs to the system that ad
 - **Retry.** A failed call is recorded, not retried.
 - **Which tools go through it.** No per-tool risk weighting. Apply it to irreversible executions (spec 1.2).
 - **Locking.** Two runs of one unit at the same time are not kept apart.
+- **Storing settings, consent included.** How a value comes to be kept for next time, and how the user agrees to it, is the adopting system's: a settings page, a "remember this?" in the agent, or a tool of its own, which can go through the gate like any other. The gate only reads. A value counts as a setting only when the store says the user approved it, and who approved it, when and where; a value a model remembered on its own is shown to the user as a candidate (spec 5.2).
 - **Execution across a boundary.** The gate writes the record; the executing party reads it and decides (spec 3.5). The examples do both in one process.
 - **What the model is told.** That the labeled lines are checked after the call, and what the gate said, as the call's result (spec 4.2.1, 6.2). Without it a model holds back the call, and the gate has nothing to judge.
 
