@@ -201,8 +201,9 @@ nothing said: a real run held on a `[Required]` line did.
 "user"` with `approved_by`, `approved_at` and `approved_in` is a setting, recorded with them; any other
 trust, a value a model remembered, is shown to the user and counts only once approved. When a call
 executes, `recordResult` keeps the record for this user and tool, and the next run offers its values
-when nothing else gives them ("same place as last time"), again only once approved. How settings come
-to be stored is yours.
+when nothing else gives them ("same place as last time"), again only once approved. When the user's
+words give a field one value and a stored setting holds another, both are shown and the user chooses.
+How settings come to be stored is yours.
 
 **Try it without blocking.** Because judging only records, you can call `judge.run` beside your
 agent as it is and read the records, before anything depends on them. Most first records will ask:

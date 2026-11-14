@@ -153,7 +153,11 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
       // Report the words even when they are not in the field's form: a model that read the form as a
       //   requirement on the quote found no time in "2pm this Saturday", and the time was never settled.
       "Report the user's words for a field even when they are not in the field's declared form (\"2pm this " +
-      "Saturday\" for a date-time): copy them as they are. Another step puts them into the form.\n\n" +
+      "Saturday\" for a date-time): copy them as they are. Another step puts them into the form.\n" +
+      // Words that point to a value kept elsewhere: a real model read "at my usual spot" as the place
+      //   "my usual spot", and "same place as last time" as a place, and the pickup ran with them.
+      "Words that point to a value given elsewhere are not the value: \"my usual spot\", \"same place as last " +
+      "time\", \"the usual\". For such a field report {\"found\": false}; the value is looked up where it is kept.\n\n" +
       `Reply as {${Object.keys(props).map(n => `"${n}": ...`).join(", ")}}`;
     return call(system, user, "extraction");
   }
@@ -347,7 +351,8 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
         `Questions:\n${JSON.stringify(shown, null, 2)}\n\nSegments:\n${JSON.stringify(segmentsOf(instruction), null, 2)}\n\n` +
         'For each question answered, one of\n' +
         '  {"target": "<target>", "answer": true|false, "quote": "<exact words>", "segment_index": <int>}\n' +
-        '  {"target": "<target>", "none": "absent", "quote": "<exact words>", "segment_index": <int>}  (a value question the user says has no value)\n\n' +
+        '  {"target": "<target>", "none": "absent", "quote": "<exact words>", "segment_index": <int>}  (a value question the user says has no value)\n' +
+        '  {"target": "<target>", "choice": <int>, "quote": "<exact words>", "segment_index": <int>}  (a question with choose_one: which one the user chose; a yes chooses none)\n\n' +
         'Reply as {"replies": [...]}',
         "replies");
       if (!Array.isArray(out?.replies)) throw new Error("replies reply unusable");
@@ -438,7 +443,9 @@ const QUESTION_SYSTEM =
 function aboutQuestion(q) {
   return {
     kind: q.kind,
-    ...(q.kind === "value" ? { field: q.slot, shown: q.candidate?.shown_text ?? null } : {}),
+    ...(q.kind === "value" ? { field: q.slot,
+      ...(Array.isArray(q.choices) ? { choose_one: q.choices.map((c, i) => ({ choice: i, value: c.shown_text, from: c.from_text })) }
+                                   : { shown: q.candidate?.shown_text ?? null }) } : {}),
     ...(q.kind === "approve" ? { item: q.description, for: q.shown_text } : {}),
     ...(q.kind === "confirm_form" ? { said: q.wording, checked_like_this: q.text } : {}),
     ...(q.kind === "withdraw" ? { remove_condition: q.stated_as, because_you_said: q.withdrawn_by } : {}),
