@@ -137,8 +137,9 @@ async function run(id, condition, replies = [], over = {}) {
       found?.user.includes("Report the user's words for a field even when they are not in the field's declared form"), true);
     check("  the proposal prompt: the value from the user's words, what the form needs beyond it from the other segments",
       [Boolean(proposed), /The value itself, which moment or which thing, comes only from the user's words/.test(proposed?.system ?? ""),
-       /such as the year, or the time zone the tool's description points to, may be taken from the other segments/.test(proposed?.system ?? "")],
-      [true, true, true]);
+       /such as the year, or the time zone the tool's description points to, may be taken from the other segments/.test(proposed?.system ?? ""),
+       /If the user named a day of the week, the date you write falls on that day/.test(proposed?.system ?? "")],
+      [true, true, true, true]);
     // A smaller model quoted the whole request as the action's name, and took the values for conditions.
     const named = g1.prompts.find(p => p.hook === "action_name"), conds = g1.prompts.find(p => p.hook === "user_conditions");
     check("  the action-name prompt: the few words that name the act, not the whole request",
