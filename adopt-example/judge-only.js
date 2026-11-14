@@ -149,7 +149,11 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
       "For each field return either\n" +
       '  {"found": true, "value": "<the exact words, copied from one trust:user segment>", "segment_index": <int>}\n' +
       'or {"found": false}\n\n' +
-      "value must be copied character for character. Do not derive, infer, convert or reformat.\n\n" +
+      "value must be copied character for character. Do not derive, infer, convert or reformat.\n" +
+      // Report the words even when they are not in the field's form: a model that read the form as a
+      //   requirement on the quote found no time in "2pm this Saturday", and the time was never settled.
+      "Report the user's words for a field even when they are not in the field's declared form (\"2pm this " +
+      "Saturday\" for a date-time): copy them as they are. Another step puts them into the form.\n\n" +
       `Reply as {${Object.keys(props).map(n => `"${n}": ...`).join(", ")}}`;
     return call(system, user, "extraction");
   }
@@ -305,9 +309,14 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
     async proposeValue(fieldName, instruction, schema) {
       const p = schema ?? {};
       const out = await call(
-        "You read what the user said and write the value of one field in the field's declared form. Use only " +
-        "the user's words (segments with \"trust\": \"user\") and the tool's description. If their words do not " +
-        "give one value, answer {\"value\": null}. The user will be shown your value to approve. Return JSON only.",
+        // The value is the user's; what the form needs beyond it may come from what the system gave. With
+        //   the user's words alone, a model that kept to them wrote no date-time: the year and the time zone
+        //   were only in the account context. The user approves what is shown either way (spec 5.2).
+        "You read what the user said and write the value of one field in the field's declared form. The value " +
+        "itself, which moment or which thing, comes only from the user's words (segments with \"trust\": \"user\"). " +
+        "What the form needs beyond it, such as the year, or the time zone the tool's description points to, may " +
+        "be taken from the other segments. If the user's words do not give one value, answer {\"value\": null}. " +
+        "The user will be shown your value to approve. Return JSON only.",
         `Tool: ${tool?.name}\n${String(tool?.description ?? "")}\n\nSegments:\n${JSON.stringify(segmentsOf(instruction), null, 2)}\n\n` +
         `Field: ${fieldName}: ${[p.type, p.format && `format ${p.format}`, p.pattern && `pattern ${p.pattern}`].filter(Boolean).join(", ")}\n\n` +
         'Reply as {"value": "<value>"} or {"value": null}',
