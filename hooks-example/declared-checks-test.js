@@ -410,7 +410,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.24");
+    check("schema_version", persisted?.schema_version, "1.25");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -683,6 +683,37 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
       const r4 = await run({ storage: sOnce, instruction: [{ trust: "user", text: two }, { trust: "user", text: "ok" }, { trust: "assistant", text: "One more thing?" }, { trust: "user", text: said4 }],
         extract: exTwo, measured: ALL_MEASURED, over: { extractUserConditions: extractOf([merged, C]), proposeComparableForm: proposeOnce } });
       check("new words with a new condition: it joins the carried ones", ids(r4), ["Nothing after 8pm", "public places only", "not on Sundays"]);
+    }
+
+    // [VALUE READ ONCE] Within a unit, a value read from the user's words is not read again from the same
+    //   words. A real model read one sentence as "the Hongdae station lockers", then "Hongdae station
+    //   lockers": the yes to "public places only", bound to the place shown, stopped counting each round.
+    {
+      const sv = "Pick up LST-2291 at 2026-10-31T14:00:00+09:00 at the Hongdae station lockers. Public places only.";
+      const pubV = { quote: "Public places only.", segment_index: 0, span: [sv.indexOf("Public"), sv.length], constrains: ["location"] };
+      const exWith = place => ({ item_id: at(sv, "LST-2291"), time: at(sv, SAT_2PM), location: at(sv, place) });
+      const noFormV = req => (req.declared_by === "user" ? null : undefined);
+      const over = { extractUserConditions: extract([pubV]), proposeComparableForm: noFormV };
+      const loc = r => (r.r.fields ?? []).find(f => f.name === "location") ?? {};
+      const sV = memStorage();
+      const v1 = await run({ storage: sV, instruction: [{ trust: "user", text: sv }], extract: exWith("the Hongdae station lockers"), measured: ALL_MEASURED, over });
+      check("round 1: the place read, how far the words were read, and the approval asked for that place",
+        [loc(v1).value, loc(v1).read_through, ((v1.r.gate?.questions ?? []).find(q => q.kind === "approve") ?? {}).shown?.location],
+        ["the Hongdae station lockers", 1, "the Hongdae station lockers"]);
+      const v2 = await run({ storage: sV, instruction: [{ trust: "user", text: sv }, { trust: "user", text: "yes" }], extract: exWith("Hongdae station lockers"), measured: ALL_MEASURED, over });
+      check("round 2: the same words read differently are set aside; the place is carried, the yes counts, executes",
+        [loc(v2).value, loc(v2).read_once?.set_aside?.value, loc(v2).source, v2.r.execution_decision],
+        ["the Hongdae station lockers", "Hongdae station lockers", "instruction", "execute"]);
+      const sN = memStorage();
+      await run({ storage: sN, instruction: [{ trust: "user", text: sv }], extract: exWith("the Hongdae station lockers"), measured: ALL_MEASURED, over });
+      const moved = "Make it Sinchon station instead.";
+      const exMoved = { ...exWith("the Hongdae station lockers"), location: { value: "Sinchon station", segment_index: 1, span: [8, 23] } };
+      const v3 = await run({ storage: sN, instruction: [{ trust: "user", text: sv }, { trust: "user", text: moved }], extract: exMoved, measured: ALL_MEASURED, over });
+      check("  the user says a new place in new words: it is taken, not carried, and the approval is asked for it",
+        [loc(v3).value, Boolean(loc(v3).read_once), ((v3.r.gate?.questions ?? []).find(q => q.kind === "approve") ?? {}).shown?.location, v3.r.execution_decision],
+        ["Sinchon station", false, "Sinchon station", "ask_user"]);
+      const v4 = await run({ storage: memStorage(), instruction: [{ trust: "user", text: sv }, { trust: "user", text: "yes" }], extract: exWith("Hongdae station lockers"), measured: ALL_MEASURED, over });
+      check("  a first round has nothing to carry: the value is read as it comes", [loc(v4).value, Boolean(loc(v4).read_once)], ["Hongdae station lockers", false]);
     }
 
     // [FORM DECLINED] The user says no to the proposed form: the condition is approved by the user for the
