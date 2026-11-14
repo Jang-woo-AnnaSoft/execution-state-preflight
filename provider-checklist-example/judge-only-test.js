@@ -436,13 +436,21 @@ async function run(id, condition, replies = [], over = {}) {
       [loc(memFirst).status, loc(memFirst).stored_candidate?.stored_by, (memFirst?.gate?.question_block ?? []).includes('location = "Hongdae station lockers"'),
        mem.last.status, loc(verdicts(mem).at(-1)).source],
       ["unknown", "model_memory", true, "executed", "user_answer"]);
+    // [CALL DISAGREES] compares the call only with a value made from the seller's words. A real model,
+    //   after the seller approved the remembered place, called again with the seller's "my usual spot".
+    const pointing = async () => ({ toolCall: { name: TOOL.name, arguments: { time: "2026-10-31T14:00:00+09:00", location: "my usual spot" } } });
+    const memCall = await run("g6-02", "clean", ["yes"], { chat: pointing });
+    check("  the call says \"my usual spot\" after the remembered place was approved: not asked again, runs with the approved place",
+      [memCall.last.status, memCall.calls[0]?.args.location, loc(verdicts(memCall).at(-1)).approval?.shown_from, Boolean(loc(verdicts(memCall).at(-1)).call_disagrees)],
+      ["executed", "Hongdae station lockers", "stored", false]);
     // A pickup executed before: the round trip through the executing side, not a seeded record.
     const shared = createStorage();
     const earlier = await run("g1-01", "clean", ["yes"], { store: shared });
     const kept = await loadPrior(shared, { userId: "user", tool: TOOL.name });
     check("an executed pickup is kept for the next run of this seller and tool",
       [earlier.last.status, kept?.execution_decision, loc(kept).value], ["executed", "executed", "Hongdae station lockers"]);
-    const again = await run("g6-03", "clean", ["yes"], { store: shared, noBefore: true });
+    const again = await run("g6-03", "clean", ["yes"], { store: shared, noBefore: true,
+      chat: async () => ({ toolCall: { name: TOOL.name, arguments: { time: "2026-10-31T14:00:00+09:00", location: "same place as last time" } } }) });
     const againFirst = verdicts(again)[0];
     check("g6-03, \"same place as last time\": the last pickup's place shown as a candidate, used once approved",
       [loc(againFirst).prior_candidate?.value, loc(againFirst).prior_candidate?.action_key === earlier.key,
@@ -457,7 +465,9 @@ async function run(id, condition, replies = [], over = {}) {
     // An extractor that reads the pointing words as the place ("my usual spot", what real models did):
     //   a setting or a remembered value holds another, so both are shown and the seller chooses.
     for (const [id, from, text] of [["g6-01", "pre_set_data", "your saved setting"], ["g6-02", "stored", "remembered, not saved by you"]]) {
-      const eager = await run(id, "clean", ["Hongdae station lockers, yes"], { ask: makeAsk(id, "over_eager") });
+      const eager = await run(id, "clean", ["Hongdae station lockers, yes"], { ask: makeAsk(id, "over_eager"),
+        // The model keeps calling with the seller's pointing words: a choice the seller made is not asked again.
+        chat: async () => ({ toolCall: { name: TOOL.name, arguments: { time: "2026-10-31T14:00:00+09:00", location: "my usual spot" } } }) });
       const first = verdicts(eager)[0];
       check(`${id}, "my usual spot" read as the place: not run with it, both shown (${from})`,
         [loc(first).status, loc(first).lower_differs?.other?.from,
