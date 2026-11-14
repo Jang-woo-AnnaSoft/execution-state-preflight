@@ -139,6 +139,13 @@ async function run(id, condition, replies = [], over = {}) {
       [Boolean(proposed), /The value itself, which moment or which thing, comes only from the user's words/.test(proposed?.system ?? ""),
        /such as the year, or the time zone the tool's description points to, may be taken from the other segments/.test(proposed?.system ?? "")],
       [true, true, true]);
+    // A smaller model quoted the whole request as the action's name, and took the values for conditions.
+    const named = g1.prompts.find(p => p.hook === "action_name"), conds = g1.prompts.find(p => p.hook === "user_conditions");
+    check("  the action-name prompt: the few words that name the act, not the whole request",
+      /Quote only the few words that name the act/.test(named?.system ?? ""), true);
+    check("  the conditions prompt: words that give a field its value are values, not conditions, with an example of each",
+      [/words that give a field its value \(a time, a place, a way to reach someone\) are values/.test(conds?.system ?? ""),
+       /"nothing after 8pm" and "public places only" do/.test(conds?.system ?? "")], [true, true]);
     // The gate's question goes back to the model as its call's result, and the messages are ones the
     //   model library takes as a call and its result.
     const heard = g1.heard[1] ?? [];
