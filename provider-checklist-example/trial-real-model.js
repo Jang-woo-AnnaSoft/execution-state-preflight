@@ -29,6 +29,7 @@ const path = require("path");
 const ADOPT = path.join(__dirname, "..", "adopt-example");
 const { createMain, systemPrompt } = require(path.join(ADOPT, "judge-only-example"));
 const { createStorage } = require(path.join(ADOPT, "judge-only"));
+const { keepForPrior } = require(path.join(__dirname, "..", "execution-state-preflight"));
 const real = require(path.join(ADOPT, "connect"));
 const { measuredFor, measurePort, MEASUREMENTS } = require("./arm");
 const { buildUserTurn } = require("./prompts");
@@ -101,10 +102,23 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
     },
     callTool: async (name, args) => { calls.push({ name, args }); return { ok: true }; },
     store,
+    // The seller's settings, when the scenario has them (pre_set): a setting the seller approved, or a
+    //   value a model remembered on its own (spec 5.2).
+    readPreSet: async () => instruction.pre_set ?? {},
     MEASUREMENTS: Object.fromEntries(MEASUREMENTS.map(n => [n, async () => undefined])),
     MODEL_NAME: log.model,
   };
 
+  // A pickup executed before (before): kept for this seller and tool, as the executing side keeps one
+  //   (keepForPrior), so the run can carry its values over as candidates (prior_state).
+  if (instruction.before) {
+    const toolName = (await real.listTools())[0].name;
+    await keepForPrior(store, {
+      execution_decision: "executed", action_key: `user:${toolName}:earlier`, tool_call: { name: toolName, arguments: instruction.before },
+      fields: Object.entries(instruction.before).map(([name, value]) => ({ name, value, status: "known", source: "instruction", origin_source: "instruction" })),
+      reason: "an earlier pickup, executed", timestamp: "2026-10-23T10:00:00+09:00",
+    }, { userId: "user" });
+  }
   if (!["spec", "gated"].includes(PRINCIPLES)) throw new Error("--principles is spec or gated");
   const main = createMain({ connect, hideLines: !SHOW_LINES,
     system: systemPrompt(PRINCIPLES === "gated" ? "principles-gated.md" : "principles.md") });

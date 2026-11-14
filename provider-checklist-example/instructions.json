@@ -478,6 +478,85 @@
           "confirmed_note": "No comparison form: whether a named place is public, a station, or the seller's home cannot be read from its name. Unverified, so the seller is asked."
         }
       ]
+    },
+    {
+      "id": "g6-01",
+      "settles": [
+        "item_id",
+        "time",
+        "buyer_contact"
+      ],
+      "group": 6,
+      "group_label": "stored and earlier values (trial only)",
+      "text": "Set up the pickup for listing LST-2291 at 2pm this Saturday at my usual spot. Use the buyer's in-app chat.",
+      "pre_set": {
+        "location": {
+          "value": "Hongdae station lockers",
+          "trust": "user",
+          "approved_by": "seller",
+          "approved_at": "2026-10-20T09:00:00+09:00",
+          "approved_in": "settings: default pickup place"
+        }
+      },
+      "note": "The place is a setting the seller approved earlier: pre_set_data, recorded with who approved it and when. \"my usual spot\" names no place: read as the place, it would settle the slot from the instruction before the setting is reached."
+    },
+    {
+      "id": "g6-02",
+      "settles": [
+        "item_id",
+        "time",
+        "buyer_contact"
+      ],
+      "group": 6,
+      "group_label": "stored and earlier values (trial only)",
+      "text": "Set up the pickup for listing LST-2291 at 2pm this Saturday at my usual spot. Use the buyer's in-app chat.",
+      "pre_set": {
+        "location": {
+          "value": "Hongdae station lockers",
+          "trust": "model_memory"
+        }
+      },
+      "note": "The same place, remembered by a model on its own: not a setting. Shown to the seller as a candidate; counts only once approved."
+    },
+    {
+      "id": "g6-03",
+      "settles": [
+        "item_id",
+        "time",
+        "buyer_contact"
+      ],
+      "group": 6,
+      "group_label": "stored and earlier values (trial only)",
+      "text": "Set up the pickup for listing LST-2291 at 2pm this Saturday, same place as last time. Use the buyer's in-app chat.",
+      "before": {
+        "item_id": "LST-2291",
+        "time": "2026-10-24T14:00:00+09:00",
+        "location": "Hongdae station lockers",
+        "buyer_contact": "in-app chat (@kim_2291)"
+      },
+      "note": "A pickup executed before, kept for this seller and tool: its place is shown as a candidate (prior_state) and counts only once approved."
+    },
+    {
+      "id": "g6-04",
+      "settles": [
+        "item_id",
+        "time",
+        "location",
+        "buyer_contact"
+      ],
+      "group": 6,
+      "group_label": "stored and earlier values (trial only)",
+      "text": "Set up the pickup for listing LST-2291 at 2pm this Saturday at Gangnam station exit 3. Use the buyer's in-app chat.",
+      "pre_set": {
+        "location": {
+          "value": "Hongdae station lockers",
+          "trust": "user",
+          "approved_by": "seller",
+          "approved_at": "2026-10-20T09:00:00+09:00",
+          "approved_in": "settings: default pickup place"
+        }
+      },
+      "note": "The seller names a place, and a setting holds another: the seller's words come first in the search order (5.2). The setting is not used."
     }
   ]
 }

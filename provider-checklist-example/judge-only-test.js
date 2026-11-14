@@ -22,6 +22,7 @@ const { runArm, measuredFor, measurePort, MEASUREMENTS } = require("./arm");
 const TOOL = require("./tool.json");
 const { buildUserTurn } = require("./prompts");
 const { makeAsk, makeChat } = require("./stub");
+const { keepForPrior, loadPrior } = require(path.join(__dirname, "..", "execution-state-preflight"));
 const S = require("./instructions.json");
 
 let failed = 0;
@@ -39,9 +40,9 @@ function standIn(id, condition, over = {}) {
   const calls = [], shown = [], prompts = [], heard = [];
   const chatInner = makeChat();
   const askInner = over.ask ?? makeAsk(id);
-  const text = S.instructions.find(i => i.id === id).text;
+  const ins = S.instructions.find(i => i.id === id), text = ins.text;
   let first = true;
-  const store = createStorage();
+  const store = over.store ?? createStorage();
   return {
     calls, store, shown, prompts, heard,
     connect: {
@@ -59,6 +60,8 @@ function standIn(id, condition, over = {}) {
       },
       callTool: over.callTool ?? (async (name, args) => { calls.push({ name, args }); return { ok: true }; }),
       store,
+      // The seller's settings, when the scenario has them (spec 5.2).
+      readPreSet: async () => ins.pre_set ?? {},
       MEASUREMENTS: Object.fromEntries(MEASUREMENTS.map(n => [n, async () => undefined])),
       MODEL_NAME: "stub",
     },
@@ -66,6 +69,12 @@ function standIn(id, condition, over = {}) {
 }
 async function run(id, condition, replies = [], over = {}) {
   const s = standIn(id, condition, over);
+  // A pickup executed before (the scenario's before), kept as the executing side keeps one.
+  const before = S.instructions.find(i => i.id === id).before;
+  if (before && !over.noBefore) {
+    await keepForPrior(s.store, { execution_decision: "executed", action_key: `user:${TOOL.name}:earlier`, tool_call: { name: TOOL.name, arguments: before },
+      fields: Object.entries(before).map(([name, value]) => ({ name, value, status: "known", source: "instruction", origin_source: "instruction" })) }, { userId: "user" });
+  }
   const main = createMain({ connect: s.connect, ...(over.hideLines === false ? { hideLines: false } : {}) });
   const threadId = `j${++thread}`;
   const userChecklist = over.userChecklist ?? S.instructions.find(i => i.id === id).user_checklist ?? [];
@@ -407,6 +416,48 @@ async function run(id, condition, replies = [], over = {}) {
     const statuses = [];
     for (const typed of ["x", "again", "again", "again"]) statuses.push((await main.turn({ threadId: "intent-1", message: { typed } })).status);
     check("what is wanted is never named: asked to restate twice, then it stops", [statuses.slice(0, 3), s.calls.length], [["waiting", "waiting", "not_executed"], 0]);
+  }
+
+  console.log("\n--- 1-i. stored and earlier values: pre_set_data and prior_state reach the gate (5.2) ---");
+  {
+    const loc = rec => (rec?.fields ?? []).find(f => f.name === "location") ?? {};
+    const verdicts = r => r.records.filter(x => VERDICTS.includes(x.execution_decision));
+    // A setting the seller approved: it settles the place, recorded with who approved it and when.
+    const set = await run("g6-01", "clean", ["yes"]);
+    check("g6-01, a setting the seller approved: executes with it, recorded with who approved it, when and where",
+      [set.last.status, set.calls[0]?.args.location, loc(verdicts(set).at(-1)).source, loc(verdicts(set).at(-1)).pre_set],
+      ["executed", "Hongdae station lockers", "pre_set_data", S.instructions.find(i => i.id === "g6-01").pre_set.location && { approved_by: "seller", approved_at: "2026-10-20T09:00:00+09:00", approved_in: "settings: default pickup place" }]);
+    // The same place, remembered by a model on its own: shown, and used only once the seller approves it.
+    const mem = await run("g6-02", "clean", ["yes"]);
+    const memFirst = verdicts(mem)[0];
+    check("g6-02, a value a model remembered: not a setting, shown to the seller, used once approved",
+      [loc(memFirst).status, loc(memFirst).stored_candidate?.stored_by, (memFirst?.gate?.question_block ?? []).includes('location = "Hongdae station lockers"'),
+       mem.last.status, loc(verdicts(mem).at(-1)).source],
+      ["unknown", "model_memory", true, "executed", "user_answer"]);
+    // A pickup executed before: the round trip through the executing side, not a seeded record.
+    const shared = createStorage();
+    const earlier = await run("g1-01", "clean", ["yes"], { store: shared });
+    const kept = await loadPrior(shared, { userId: "user", tool: TOOL.name });
+    check("an executed pickup is kept for the next run of this seller and tool",
+      [earlier.last.status, kept?.execution_decision, loc(kept).value], ["executed", "executed", "Hongdae station lockers"]);
+    const again = await run("g6-03", "clean", ["yes"], { store: shared, noBefore: true });
+    const againFirst = verdicts(again)[0];
+    check("g6-03, \"same place as last time\": the last pickup's place shown as a candidate, used once approved",
+      [loc(againFirst).prior_candidate?.value, loc(againFirst).prior_candidate?.action_key === earlier.key,
+       (againFirst?.gate?.question_block ?? []).includes('location = "Hongdae station lockers"'), again.last.status, loc(verdicts(again).at(-1)).source],
+      ["Hongdae station lockers", true, "unknown" === "unknown", "executed", "user_answer"]);
+    const none = await loadPrior(createStorage(), { userId: "user", tool: TOOL.name });
+    check("  nothing executed before: the caller looked, none (not \"no report\")", none, { none: "absent" });
+    const failedStore = createStorage();
+    const failing = await run("g1-01", "clean", ["yes"], { store: failedStore, callTool: async () => { throw new Error("down"); } });
+    check("  a call that failed is not kept to carry from", [failing.last.status === "executed", await loadPrior(failedStore, { userId: "user", tool: TOOL.name })],
+      [false, { none: "absent" }]);
+    // The seller names a place and a setting holds another: the seller's words come first (5.2).
+    const named = await run("g6-04", "clean", ["yes"]);
+    const namedLoc = loc(verdicts(named).at(-1));
+    check("g6-04, the seller names a place, a setting holds another: the seller's words, the setting not reached",
+      [named.calls[0]?.args.location, namedLoc.source, (namedLoc.lookup_trace ?? []).some(e => e.source === "pre_set_data")],
+      ["Gangnam station exit 3", "instruction", false]);
   }
 
   console.log("\n--- 2. what judge.run returns cannot be executed from ---");

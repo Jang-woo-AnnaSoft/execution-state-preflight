@@ -107,8 +107,10 @@ async function run(id, condition, over = {}) {
   check("the definition read is in the record", [m.tool_definition?.name, typeof m.tool_definition?.schema_hash], ["schedule_pickup", "string"]);
 
   console.log("\n--- 3. who gives each value comes from the provider's lines; its form from the schema ---");
-  check("item_id: the seller's only", field(g1, "item_id").allowed_sources, ["user_answer", "instruction", "pre_set_data"]);
-  check("location: the seller's only", field(g1, "location").allowed_sources, ["user_answer", "instruction", "pre_set_data"]);
+  // The seller's only: what they said, answered or saved, and a value from an earlier pickup, which counts
+  //   only once they approve it (prior_state, 5.2).
+  check("item_id: the seller's only", field(g1, "item_id").allowed_sources, ["user_answer", "instruction", "pre_set_data", "prior_state"]);
+  check("location: the seller's only", field(g1, "location").allowed_sources, ["user_answer", "instruction", "pre_set_data", "prior_state"]);
   check("buyer_contact: measured only", field(g1, "buyer_contact").allowed_sources, ["measured_data"]);
   check("  each says which line narrowed it", field(g1, "buyer_contact").source_rule_ids?.length, 1);
   const raw = await run("g1-01", "clean");

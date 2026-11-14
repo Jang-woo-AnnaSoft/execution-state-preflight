@@ -53,6 +53,7 @@ const ACTION = {
   "g3-01": "sort out the pickup", "g3-02": "handle the rest",
   "g4-01": "Arrange the pickup", "g4-02": "Set up a time", "g4-03": "Get the pickup sorted",
   "g5-01": "Sort out the pickup", "g5-02": "Handle the LST-2291 pickup",
+  "g6-01": "Set up the pickup", "g6-02": "Set up the pickup", "g6-03": "Set up the pickup", "g6-04": "Set up the pickup",
 };
 
 // What each extractor quotes from the seller's instruction. A field not listed is reported found:false.
@@ -60,6 +61,8 @@ const FAITHFUL = {
   "g1-01": { time: "2pm this Saturday", location: "Hongdae station lockers" },
   "g1-02": { time: "Saturday 14:00", location: "Hongdae station lockers" },
   "g1-03": { time: "Saturday afternoon at 2", location: "Hongdae station lockers" },
+  "g6-01": { time: "2pm this Saturday" }, "g6-02": { time: "2pm this Saturday" }, "g6-03": { time: "2pm this Saturday" },
+  "g6-04": { time: "2pm this Saturday", location: "Gangnam station exit 3" },
 };
 const OVER_EAGER = {
   ...FAITHFUL,
