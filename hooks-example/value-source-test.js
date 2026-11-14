@@ -224,10 +224,18 @@ const slotOf = state => (state.fields ?? []).find(f => f.name === SLOT) ?? {};
 
     const { state: b } = await run({
       instruction: ins.segments, locate: ins.locate,
-      preSetData: { [SLOT]: { value: "SOMETHING-ELSE", trust: "user" } },
+      preSetData: { [SLOT]: { value: ACCOUNT, trust: "user" } },
     });
     check("instruction over pre_set_data: source", slotOf(b).source, "instruction");
     check("instruction over pre_set_data: value", slotOf(b).value, ACCOUNT);
+    // [LOWER DIFFERS] A setting that holds another value for the slot: the user's words do not settle it
+    //   alone; both are shown and the user chooses (5.2).
+    const { state: bDiff } = await run({
+      instruction: ins.segments, locate: ins.locate,
+      preSetData: { [SLOT]: { value: "SOMETHING-ELSE", trust: "user" } },
+    });
+    check("instruction against a different setting: not settled, both kept for the user to choose",
+      [slotOf(bDiff).status, slotOf(bDiff).lower_differs?.said?.value, slotOf(bDiff).lower_differs?.other], ["unknown", ACCOUNT, { value: "SOMETHING-ELSE", from: "pre_set_data" }]);
     // The instruction seat records WHERE, not just that it was the instruction, so a third party
     //   can re-check it without taking the gate's word (5.2 / 2.4).
     check("and it records where in the text", JSON.stringify(slotOf(b).located_at?.span),
