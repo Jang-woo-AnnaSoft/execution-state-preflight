@@ -70,6 +70,9 @@ const OVER_EAGER = {
   "g2-02": { location: "my place" },
   "g5-01": { time: "this Saturday between 1pm and 6pm", location: "a subway station" },
   "g5-02": { time: "this Saturday from 1pm to 6pm", location: "a station" },
+  // Words that point to a place kept elsewhere, read as the place (what real models did).
+  "g6-01": { time: "2pm this Saturday", location: "my usual spot" }, "g6-02": { time: "2pm this Saturday", location: "my usual spot" },
+  "g6-03": { time: "2pm this Saturday", location: "same place as last time" },
 };
 const EXTRACTORS = { faithful: FAITHFUL, over_eager: OVER_EAGER };
 
@@ -179,6 +182,16 @@ function makeAsk(instructionId, extractor = "faithful") {
       const qs = JSON.parse(user.slice(user.indexOf("["), user.indexOf("\n\nSegments:")));
       const replies = [];
       for (const q of qs) {
+        // A question with choices: the choice whose value the user's words name.
+        if (Array.isArray(q.choose_one)) {
+          for (let i = segs.length - 1; i > q.asked_after_segment; i--) {
+            const s = segs[i];
+            if (s.trust !== "user") continue;
+            const c = q.choose_one.find(x => s.text.includes(String(x.value).replace(/^"|"$/g, "")));
+            if (c) { replies.push({ target: q.target, choice: c.choice, quote: String(c.value).replace(/^"|"$/g, ""), segment_index: s.index }); break; }
+          }
+          continue;
+        }
         for (let i = segs.length - 1; i > q.asked_after_segment; i--) {
           const s = segs[i];
           if (s.trust !== "user") continue;

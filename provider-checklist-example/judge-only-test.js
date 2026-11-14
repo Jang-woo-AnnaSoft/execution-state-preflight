@@ -61,7 +61,7 @@ function standIn(id, condition, over = {}) {
       callTool: over.callTool ?? (async (name, args) => { calls.push({ name, args }); return { ok: true }; }),
       store,
       // The seller's settings, when the scenario has them (spec 5.2).
-      readPreSet: async () => ins.pre_set ?? {},
+      readPreSet: async () => over.preSet ?? ins.pre_set ?? {},
       MEASUREMENTS: Object.fromEntries(MEASUREMENTS.map(n => [n, async () => undefined])),
       MODEL_NAME: "stub",
     },
@@ -144,6 +144,8 @@ async function run(id, condition, replies = [], over = {}) {
     const found = g1.prompts.find(p => p.hook === "extraction"), proposed = g1.prompts.find(p => p.hook === "propose_value");
     check("the extraction prompt: report the user's words for a field even when they are not in its form",
       found?.user.includes("Report the user's words for a field even when they are not in the field's declared form"), true);
+    check("  and words that point to a value kept elsewhere are not the value",
+      found?.user.includes('Words that point to a value given elsewhere are not the value: "my usual spot", "same place as last time", "the usual". For such a field report {"found": false}'), true);
     check("  the proposal prompt: the value from the user's words, what the form needs beyond it from the other segments",
       [Boolean(proposed), /The value itself, which moment or which thing, comes only from the user's words/.test(proposed?.system ?? ""),
        /such as the year, or the time zone the tool's description points to, may be taken from the other segments/.test(proposed?.system ?? ""),
@@ -452,12 +454,59 @@ async function run(id, condition, replies = [], over = {}) {
     const failing = await run("g1-01", "clean", ["yes"], { store: failedStore, callTool: async () => { throw new Error("down"); } });
     check("  a call that failed is not kept to carry from", [failing.last.status === "executed", await loadPrior(failedStore, { userId: "user", tool: TOOL.name })],
       [false, { none: "absent" }]);
-    // The seller names a place and a setting holds another: the seller's words come first (5.2).
-    const named = await run("g6-04", "clean", ["yes"]);
-    const namedLoc = loc(verdicts(named).at(-1));
-    check("g6-04, the seller names a place, a setting holds another: the seller's words, the setting not reached",
-      [named.calls[0]?.args.location, namedLoc.source, (namedLoc.lookup_trace ?? []).some(e => e.source === "pre_set_data")],
-      ["Gangnam station exit 3", "instruction", false]);
+    // An extractor that reads the pointing words as the place ("my usual spot", what real models did):
+    //   a setting or a remembered value holds another, so both are shown and the seller chooses.
+    for (const [id, from, text] of [["g6-01", "pre_set_data", "your saved setting"], ["g6-02", "stored", "remembered, not saved by you"]]) {
+      const eager = await run(id, "clean", ["Hongdae station lockers, yes"], { ask: makeAsk(id, "over_eager") });
+      const first = verdicts(eager)[0];
+      check(`${id}, "my usual spot" read as the place: not run with it, both shown (${from})`,
+        [loc(first).status, loc(first).lower_differs?.other?.from,
+         (first?.gate?.question_block ?? []).includes(`location: "my usual spot" (your words) or "Hongdae station lockers" (${text}) — which one?`)],
+        ["unknown", from, true]);
+      check(`  the seller chooses the saved place, and it runs with it`,
+        [eager.last.status, eager.calls[0]?.args.location, loc(verdicts(eager).at(-1)).approval?.chosen_from?.[1]?.from], ["executed", "Hongdae station lockers", from]);
+    }
+    // A yes to a question with choices chooses none: the claim is set aside, and it does not run.
+    {
+      const base = makeAsk("g6-01", "over_eager");
+      const yesAsk = async (m, s, u, hook) => {
+        const out = await base(m, s, u, hook);
+        if (hook !== "replies") return out;
+        const seg = (out?.replies ?? [])[0]?.segment_index;
+        return { replies: [...(out?.replies ?? []), { target: "value:location", answer: true, quote: "yes", segment_index: seg }] };
+      };
+      const yes = await run("g6-01", "clean", ["yes"], { ask: yesAsk });
+      const second = verdicts(yes)[1];
+      check("  a yes to a choice question chooses none: set aside, not run",
+        [yes.last.status === "executed", yes.calls.length, loc(second).status, Boolean(loc(second).lower_differs)], [false, 0, "unknown", true]);
+    }
+    // The seller typed the place after being shown the two: those words settle it, not asked again.
+    {
+      const after = await run("g6-01", "clean", ["neither, make it Gangnam station exit 3", "yes"], { ask: makeAsk("g6-01", "over_eager") });
+      const last = verdicts(after).at(-1);
+      check("  words typed after the two were shown settle it as they are",
+        [after.calls[0]?.args.location, loc(last).source, loc(last).lower_differs ?? null], ["Gangnam station exit 3", "instruction", null]);
+    }
+    // Words not yet in the field's form are not compared with a setting: they go to the proposal, which
+    //   the seller sees anyway ("2pm this Saturday" against a saved time).
+    {
+      const t = await run("g1-01", "clean", ["yes"], { preSet: { time: { value: "2026-10-31T10:00:00+09:00", trust: "user" } } });
+      const first = verdicts(t)[0], time = (first?.fields ?? []).find(f => f.name === "time") ?? {};
+      check("  words not in the field's form: not compared with the setting, proposed as before",
+        [Boolean(time.lower_differs), (first?.gate?.question_block ?? []).some(l => l.startsWith("time = 2026-10-31 (Sat) 14:00")), t.last.status],
+        [false, true, "executed"]);
+    }
+    // The seller names a place and a setting holds another: both are shown, and the seller chooses
+    //   ([LOWER DIFFERS], 5.2). A real model read "my usual spot" as a place, and it ran.
+    const named = await run("g6-04", "clean", ["Gangnam station exit 3, yes"]);
+    const namedFirst = verdicts(named)[0];
+    check("g6-04, the seller names a place, a setting holds another: not settled, both shown, the seller chooses",
+      [loc(namedFirst).status, loc(namedFirst).lower_differs?.other?.from,
+       (namedFirst?.gate?.question_block ?? []).includes('location: "Gangnam station exit 3" (your words) or "Hongdae station lockers" (your saved setting) — which one?')],
+      ["unknown", "pre_set_data", true]);
+    check("  the seller's choice settles it, bound to what was shown, and it runs",
+      [named.last.status, named.calls[0]?.args.location, loc(verdicts(named).at(-1)).source, loc(verdicts(named).at(-1)).approval?.chosen_from?.map(c => c.from)],
+      ["executed", "Gangnam station exit 3", "user_answer", ["instruction", "pre_set_data"]]);
   }
 
   console.log("\n--- 2. what judge.run returns cannot be executed from ---");
