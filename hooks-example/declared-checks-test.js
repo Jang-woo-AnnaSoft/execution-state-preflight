@@ -30,7 +30,7 @@
  * (ports.js answerRound), read by a stand-in for the model (readReplies).
  */
 
-const { createPreflight, ruleHash, describeForm, readTranslatedForms, renderValue, stopFacts } = require("../execution-state-preflight");
+const { createPreflight, ruleHash, describeForm, readTranslatedForms, renderValue, stopFacts, keepForPrior, loadPrior } = require("../execution-state-preflight");
 const { locatedActionName } = require("./c2-stub");
 const { withPorts, askRound, answerRound, hasAnswers, REPLY } = require("./ports");
 
@@ -410,7 +410,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.26");
+    check("schema_version", persisted?.schema_version, "1.27");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -970,6 +970,36 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
       check("  a call value not in the field's form, or a field from the user's own words, asks nothing", noise.r.execution_decision, "execute");
     }
 
+    // [STORED CANDIDATE] [STORED APPROVAL] A value stored without the user's approval (a model's memory)
+    //   is shown as a candidate and counts only once approved; a setting the user approved settles the
+    //   slot, recorded with who approved it and when.
+    {
+      const noTime = "Set up the pickup for LST-2291, Hongdae station lockers.";
+      const exNoTime = { item_id: at(noTime, "LST-2291"), location: at(noTime, "Hongdae station lockers") };
+      const on = (extra = {}) => ({ text: noTime, extract: exNoTime, measured: ALL_MEASURED, ...extra });
+      const remembered = { time: { value: SAT_2PM, trust: "model_memory" } };
+      const sm = memStorage();
+      const shownStored = await run(on({ storage: sm }), { preSetData: remembered });
+      const sq = (shownStored.r.gate?.questions ?? []).find(q => q.target === "value:time") ?? {};
+      check("a value a model stored: not a setting; the slot stays unknown, the value shown as a candidate",
+        [field(shownStored.r, "time").status, field(shownStored.r, "time").stored_candidate, (field(shownStored.r, "time").lookup_trace ?? []).find(e => e.source === "pre_set_data")?.result,
+         sq.candidate?.value, sq.candidate?.from, shownStored.r.execution_decision],
+        ["unknown", { value: SAT_2PM, stored_by: "model_memory" }, "candidate", SAT_2PM, "stored", "ask_user"]);
+      const approvedStored = await run(on({ storage: sm, noPriorAsk: true }), { preSetData: remembered, userAnswers: { time: SAT_2PM } });
+      check("  the user's yes to it: user_answer, bound to the value shown; executes",
+        [field(approvedStored.r, "time").source, field(approvedStored.r, "time").approval?.shown, approvedStored.r.execution_decision],
+        ["user_answer", { time: SAT_2PM }, "execute"]);
+      const setting = await run(on(), { preSetData: { time: { value: SAT_2PM, trust: "user", approved_by: "u", approved_at: "2026-11-01T10:00:00+09:00", approved_in: "settings:pickup" } } });
+      check("a setting the user approved: settles the slot, recorded with who approved it, when and where",
+        [field(setting.r, "time").source, field(setting.r, "time").pre_set, setting.r.execution_decision],
+        ["pre_set_data", { approved_by: "u", approved_at: "2026-11-01T10:00:00+09:00", approved_in: "settings:pickup" }, "execute"]);
+      const bareSetting = await run(on(), { preSetData: { time: { value: SAT_2PM, trust: "user" } } });
+      check("  a store that gives no approval record: recorded as such, not filled in",
+        field(bareSetting.r, "time").pre_set, { approved_by: null, approved_at: null, approved_in: null });
+      const persistedSetting = lastRecord(setting.storage)?.fields?.find(f => f.name === "time")?.pre_set;
+      check("  and kept in the record as persisted", persistedSetting?.approved_by, "u");
+    }
+
     const badReading = await run(o({ over: { proposeValue: () => ({ value: "Saturday 2pm" }) } }));
     check("a reading not in the slot's format is not shown", [vc(badReading.r, "time:candidate")?.status, (badReading.r.gate?.questions ?? [])[0]?.candidate ?? null],
       ["rejected", null]);
@@ -1157,6 +1187,22 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     check("a record that executes, asks or already ran: nothing to report as a stop",
       ["execute", "ask_user", "executed", "failed"].map(d => stopFacts({ execution_decision: d, gate: {} }).items), [[], [], [], []]);
     check("no record: no decision, no items", stopFacts(null), { decision: null, items: [] });
+  }
+
+  heading("13. where a later run finds the last execution to carry from [PRIOR EXECUTION] (5.2)");
+  {
+    const sp = memStorage();
+    const ran = { execution_decision: "executed", action_key: "u:schedule_pickup:a", tool_call: { name: "schedule_pickup" }, fields: [] };
+    const ran2 = { ...ran, action_key: "u:schedule_pickup:b" };
+    check("only a record that executed is kept",
+      [await keepForPrior(sp, { ...ran, execution_decision: "execute" }, { userId: "u" }), await keepForPrior(sp, { ...ran, execution_decision: "failed" }, { userId: "u" })], [null, null]);
+    check("  nothing kept yet: the caller looked, none", await loadPrior(sp, { userId: "u", tool: "schedule_pickup" }), { none: "absent" });
+    await keepForPrior(sp, ran, { userId: "u" });
+    await keepForPrior(sp, ran2, { userId: "u" });
+    check("the latest execution for this user and tool", (await loadPrior(sp, { userId: "u", tool: "schedule_pickup" }))?.action_key, "u:schedule_pickup:b");
+    check("  another user, or another tool, finds none of it",
+      [await loadPrior(sp, { userId: "v", tool: "schedule_pickup" }), await loadPrior(sp, { userId: "u", tool: "cancel_pickup" })], [{ none: "absent" }, { none: "absent" }]);
+    check("  a storage that cannot load: no report, not none", await loadPrior({ persist: async () => {} }, { userId: "u", tool: "schedule_pickup" }), null);
   }
 
   console.log(failures ? `\n${failures} FAILED` : "\nall ok");
