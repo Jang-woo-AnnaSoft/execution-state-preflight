@@ -348,7 +348,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 
 ### 5.2 탐색 순서 (Lookup Cascade)
 
-아래는 신뢰 순위(Trust Tier)가 아니라 조회 순서(Search Order)다. 앞선 소스에서 값이 확인되면 그 지점에서 조회를 종료하며, 소스별 신뢰도 가중치는 계산하지 않는다. 소스가 "없음"을 보고하면 조회는 종료되지 않고 다음 소스로 가되, 그 소스를 확인했다는 사실은 기록에 남는다. 보고가 없는 것과 없음의 보고는 다르다. 앞은 확인하지 않은 것이다.
+아래는 신뢰 순위(Trust Tier)가 아니라 조회 순서(Search Order)다. 앞선 소스에서 값이 확인되면 그 지점에서 조회를 종료하며, 소스별 신뢰도 가중치는 계산하지 않는다. 다만 지시(instruction)에서 확인된 값과 같은 필드의 다른 값이 미리 저장된 데이터(pre_set_data)에 있으면 종료하지 않고, 두 값을 함께 보여 주어 사용자가 고르게 한다. 소스가 "없음"을 보고하면 조회는 종료되지 않고 다음 소스로 가되, 그 소스를 확인했다는 사실은 기록에 남는다. 보고가 없는 것과 없음의 보고는 다르다. 앞은 확인하지 않은 것이다.
 
 user_answer → instruction → pre_set_data → measured_data → prior_state
 

@@ -1086,6 +1086,8 @@ async function resolveField(h, fieldName, ctx) {
     else delete out.prior_candidate;
     if (status === "unknown" && record.stored_candidate) out.stored_candidate = record.stored_candidate;
     else delete out.stored_candidate;
+    if (status === "unknown" && record.lower_differs) out.lower_differs = record.lower_differs;
+    else delete out.lower_differs;
     if (record.source === "pre_set_data" && record.pre_set) out.pre_set = record.pre_set;
     else if (out.source !== "pre_set_data") delete out.pre_set;
     // The two check results are the gate's facts too, written over anything a policy put there.
@@ -1388,6 +1390,28 @@ async function lookupField(h, fieldName, ctx) {
       }
       if (supported) {
         saw("instruction", "found");
+        // [LOWER DIFFERS] The lookup stops at the user's words, but not when a value the user stored
+        //   holds another for this field (5.2). Words that point to a value kept
+        //   elsewhere are easily read as the value: a real model read "at my usual spot" as the place
+        //   "my usual spot", and "same place as last time" as a place, and both ran, the saved place
+        //   never reached. Both are shown and the user chooses. Words the user typed after being shown
+        //   the two settle it as they are.
+        //   Only a value the user stored: the last execution's values change from one run to the next (a
+        //   time, an amount), and comparing with them would ask every time the user gave a new one. And only
+        //   a value already in the field's form: one that is not is shown to the user as a proposal anyway.
+        const schemaHere = ctx.fieldSchemas?.[fieldName];
+        const inForm = schemaHere === undefined || schemaHere === null ? true
+          : (await safeHook(h.validateFieldSchema, [fromInstruction.value, schemaHere, ctx, fieldName], () => "unreadable")) == null;
+        const lower = inForm ? lowerValue(fieldName, ctx, allowed) : null;
+        const asked = ctx.choicesAsked?.[fieldName];
+        const typedAfter = Number.isInteger(asked?.asked_through) && fromInstruction.segment_index >= asked.asked_through;
+        if (lower && !typedAfter && JSON.stringify(lower.value) !== JSON.stringify(fromInstruction.value) &&
+            !(typeof lower.value === "string" && typeof fromInstruction.value === "string" && lower.value.trim() === fromInstruction.value.trim())) {
+          return traced({ name: fieldName, value: undefined, status: "unknown", source: null, origin_source: null,
+                          lower_differs: { said: { value: fromInstruction.value, segment_index: fromInstruction.segment_index, span: [sp[0], sp[1]] },
+                                           other: lower },
+                          note: `the user's words give ${JSON.stringify(fromInstruction.value)}; ${lower.from} has ${JSON.stringify(lower.value)}: the user chooses` });
+        }
         return fresh({
           name: fieldName, value: fromInstruction.value, status: "known", source: "instruction",
           // WHERE, not just "instruction". A record that names a source without
@@ -1817,6 +1841,17 @@ async function unitHistory(h, actionKey, phase) {
   return out;
 }
 
+// The value a lower source holds for a field, without settling anything ([LOWER DIFFERS]): a value the
+//   user stored: pre_set_data, or one stored by someone else ("stored"). Read from the map the caller
+//   handed in; nothing is measured here.
+function lowerValue(fieldName, ctx, allowed) {
+  const entry = ctx.preSetData?.[fieldName];
+  if (allowed.has("pre_set_data") && entry && typeof entry === "object" && "value" in entry && typeof entry.trust === "string" && entry.trust !== "") {
+    return entry.trust === "user" ? { value: entry.value, from: "pre_set_data" } : { value: entry.value, from: "stored", stored_by: entry.trust };
+  }
+  return null;
+}
+
 // [CALL DISAGREES] A value the user approved, shown to them as a proposal, and the model's call says
 //   another. The call's arguments are never a value (5.2), so the call does not change what runs; but the
 //   two differing is a reason to ask once more before running. A real run: a smaller model proposed
@@ -1924,7 +1959,13 @@ async function readUserReplies(h, instruction, history) {
     if (!a) { reject(`${JSON.stringify(target)} was not asked in this unit`); continue; }
     const q = a.question;
     const isNone = c?.none === "absent";
-    if (!isNone && typeof c?.answer !== "boolean") { reject("not an answer: { answer: true|false } or { none: \"absent\" }"); continue; }
+    // A question with choices is answered by which one ([LOWER DIFFERS]): a yes says neither.
+    const isChoice = q.kind === "value" && Array.isArray(q.choices);
+    if (isChoice && !isNone) {
+      if (!Number.isInteger(c?.choice) || c.choice < 0 || c.choice >= q.choices.length) {
+        reject("a question with choices is answered by which one: { choice: <index> }"); continue;
+      }
+    } else if (!isNone && typeof c?.answer !== "boolean") { reject("not an answer: { answer: true|false } or { none: \"absent\" }"); continue; }
     if (isNone && q.kind !== "value") { reject("only a value question can be answered with \"there is none\""); continue; }
     if (!isNone && c.answer === true && q.kind === "value" && !q.candidate) { reject("nothing was shown to approve for this value"); continue; }
     const loc = checkLocatedQuote(c, instruction, a.asked_through);
@@ -1937,13 +1978,14 @@ async function readUserReplies(h, instruction, history) {
       reject(`segment ${loc.located_at.segment_index} comes after a later question (asked at ${next}), so it answers that one`);
       continue;
     }
-    valid.set(target, [...(valid.get(target) ?? []), { target, q, answer: isNone ? null : c.answer, none: isNone, located_at: loc.located_at }]);
+    valid.set(target, [...(valid.get(target) ?? []), { target, q, answer: isNone ? null : (isChoice ? true : c.answer), none: isNone,
+                                                        ...(isChoice && !isNone ? { choice: c.choice } : {}), located_at: loc.located_at }]);
   }
   const accepted = new Map();
   for (const [target, claims] of valid) {
     const last = Math.max(...claims.map(c => c.located_at.segment_index));
     const atLast = claims.filter(c => c.located_at.segment_index === last);
-    const same = atLast.every(c => c.answer === atLast[0].answer && c.none === atLast[0].none);
+    const same = atLast.every(c => c.answer === atLast[0].answer && c.none === atLast[0].none && c.choice === atLast[0].choice);
     accepted.set(target, same ? atLast[0] : { conflict: true, located_at: atLast[0].located_at, q: atLast[0].q });
   }
   for (const [target, c] of accepted) {
@@ -1957,7 +1999,12 @@ async function readUserReplies(h, instruction, history) {
       answer: c.none ? "none" : c.answer }));
     if (q.kind === "value") {
       if (c.none) out.userAnswers[q.slot] = { none: "absent" };
-      else if (c.answer === true) {
+      else if (Array.isArray(q.choices) && Number.isInteger(c.choice)) {
+        const chosen = q.choices[c.choice];
+        out.userAnswers[q.slot] = chosen.value;
+        out.valueApprovals[q.slot] = { answer: true, shown: { [q.slot]: chosen.value }, located_at: c.located_at,
+                                       chosen_from: q.choices.map(x => ({ value: x.value, from: x.from })) };
+      } else if (c.answer === true) {
         out.userAnswers[q.slot] = q.candidate.value;
         out.valueApprovals[q.slot] = { answer: true, shown: { [q.slot]: q.candidate.value }, located_at: c.located_at,
                                        ...(q.disagrees ? { disagreed_with: q.disagrees.call_value } : {}) };
@@ -2913,6 +2960,9 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
                 sourceRules,
                 valueApprovals: replies.valueApprovals,   // the user's yes to a value shown, bound to it
                 readValues: history.values,               // values read in earlier rounds of the unit ([VALUE READ ONCE])
+                choicesAsked: Object.fromEntries([...history.asked.values()]
+                  .filter(a => a.question?.kind === "value" && Array.isArray(a.question.choices))
+                  .map(a => [a.question.slot, { asked_through: a.asked_through }])),   // [LOWER DIFFERS]
                 measure: name => measureNow(name, settledValues),
                 mcpTool };
 
@@ -2937,6 +2987,15 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
         .filter(c => c && typeof c === "object" &&
           (valueSourceRule(c)?.slot === f.name || (Array.isArray(c.constrains) && c.constrains.includes(f.name))))
         .map(c => ({ id: c.id ?? null, label: c.label ?? null, text: c.description ?? null }));
+      if (f.lower_differs) {
+        const FROM = { instruction: "your words", pre_set_data: "your saved setting", stored: "remembered, not saved by you", prior_state: "the last time" };
+        const choices = [{ value: f.lower_differs.said.value, from: "instruction" },
+                         { value: f.lower_differs.other.value, from: f.lower_differs.other.from }]
+          .map(c => ({ ...c, shown_text: renderValue(c.value, schema), from_text: FROM[c.from] ?? c.from }));
+        questions.push({ target: `value:${f.name}`, kind: "value", slot: f.name, schema: schema ?? null, lines, choices });
+        block.push(`${f.name}: ${choices.map(c => `${c.shown_text} (${c.from_text})`).join(" or ")} — which one?`);
+        continue;
+      }
       let proposal, from = null;
       if (f.call_disagrees) { proposal = f.call_disagrees.approved; from = "approved"; }
       else if (f.stored_candidate) { proposal = f.stored_candidate.value; from = "stored"; }
@@ -3900,7 +3959,11 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.27",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.28",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.28: a value from the user's words, in the field's form, that a stored value contradicts is not
+    //        settled: the field carries lower_differs { said, other }, the value question carries choices
+    //        [{ value, from, shown_text, from_text }], a reply names its choice, and the approval carries
+    //        chosen_from ([LOWER DIFFERS]).
     //   1.27: a field from pre_set_data carries pre_set { approved_by, approved_at, approved_in }, as the
     //        store gave them ([STORED APPROVAL]). A stored value whose trust is not "user" is a candidate
     //        shown to the user (stored_candidate { value, stored_by }; lookup_trace pre_set_data

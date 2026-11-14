@@ -348,7 +348,7 @@ Items are counted the same way, but resolve differently when unconfirmed. An imp
 
 ### 5.2 Lookup cascade
 
-The order below is a search order, not a trust tier. Once a value is confirmed at an earlier source, the lookup stops there. No per-source trust weights are computed. When a source reports "nothing," the lookup does not stop — it moves to the next source, and the fact that this source was checked stays on the record. No report and a report of nothing are different things: the first means the source was not checked.
+The order below is a search order, not a trust tier. Once a value is confirmed at an earlier source, the lookup stops there. No per-source trust weights are computed. But when a value confirmed in the instruction differs from a value stored for the same field in pre_set_data, the lookup does not stop there: both values are shown, and the user chooses. When a source reports "nothing," the lookup does not stop — it moves to the next source, and the fact that this source was checked stays on the record. No report and a report of nothing are different things: the first means the source was not checked.
 
 user_answer → instruction → pre_set_data → measured_data → prior_state
 
