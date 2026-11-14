@@ -410,7 +410,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.23");
+    check("schema_version", persisted?.schema_version, "1.24");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -619,6 +619,29 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const pa2 = await run({ storage: sA, instruction: [{ trust: "user", text: saidPub }, { trust: "user", text: "yes" }], extract: exPub, measured: ALL_MEASURED,
       over: { extractUserConditions: extract([pubClaim]), proposeComparableForm: asApprovalUser } });
     check("    one yes: verified, executes", [((pa2.r.user_checklist ?? []).find(i => i.extracted) ?? {}).status, pa2.r.execution_decision], ["verified", "execute"]);
+    // [UNFIT FORM] A form no user's condition can take is not put to the user to confirm: taken as no form,
+    //   the proposal kept beside it. A real model proposed value_source for "Use the buyer's in-app chat",
+    //   and the seller was shown "a value_source form that does not fit its label".
+    const unfitForms = {
+      value_source: { compare: { kind: "value_source", slot: "location" }, constrains: ["location"] },
+      unnamed_measure: { compare: { source: "measured_data", schema: { const: true } }, constrains: [] },
+      no_value: { compare: { const: "Hongdae station lockers" }, constrains: [] },
+    };
+    const unfitSeen = [];
+    for (const [name, form] of Object.entries(unfitForms)) {
+      const uf = await run({ storage: memStorage(), text: saidPub, extract: exPub, measured: ALL_MEASURED,
+        over: { extractUserConditions: extract([pubClaim]), proposeComparableForm: req => (req.declared_by === "user" ? form : undefined) } });
+      const ui = (uf.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+      const qs = uf.r.gate?.questions ?? [];
+      unfitSeen.push([name, Boolean(ui.form_pending), qs.map(q => q.kind), /does not fit a user's condition/.test(ui.form_none?.why ?? ""),
+        JSON.stringify(ui.form_none?.proposed?.compare) === JSON.stringify(form.compare), (uf.r.gate?.question_block ?? []).some(l => /does not fit/.test(l))]);
+    }
+    check("  a form no user's condition can take: not asked to confirm, approved for the value shown, the proposal kept",
+      unfitSeen, Object.keys(unfitForms).map(n => [n, false, ["approve"], true, true, false]));
+    const fitting = await run({ storage: memStorage(), text: saidPub, extract: exPub, measured: ALL_MEASURED,
+      over: { extractUserConditions: extract([pubClaim]), proposeComparableForm: req => (req.declared_by === "user" ? { compare: { const: "Hongdae station lockers" }, constrains: ["location"] } : undefined) } });
+    check("    a schema on the value it constrains still fits: asked to confirm, as before",
+      (fitting.r.gate?.questions ?? []).map(q => q.kind), ["confirm_form"]);
     const standingApproval = { id: "pref_pub", stated_as: "Public places only.", constrains: ["location"], compare: { kind: "user_approval" } };
     let verifyCalls = 0;
     const sp = await run({ storage: memStorage(), text: saidPub, extract: exPub, measured: ALL_MEASURED,
