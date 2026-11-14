@@ -1916,6 +1916,20 @@ async function withConfirmedForm(h, item, { declared_by, tool, userId, mcpTool }
       form_none: { why: "no form fits: the condition cannot be compared by code, so the user approves it for the values shown" },
     };
   }
+  // [UNFIT FORM] A proposal no user's condition can take (who gives a value is a provider's line; a
+  //   measurement with no name; a check on no value) is not put to the user to confirm: its words
+  //   would be an error message, and a real model's were ("a value_source form that does not fit its
+  //   label"), shown to the seller. Taken as no form ([NO FORM]): the user approves the condition for the
+  //   values shown. The proposal is kept beside it, for whoever reads the record.
+  const unfit = declared_by === "user" && proposal ? unfitUserForm(proposal) : null;
+  if (unfit) {
+    return {
+      ...item,
+      compare: null,
+      form_none: { why: `the form proposed does not fit a user's condition (${unfit}), so the user approves it for the values shown`,
+                   proposed: { compare: proposal.compare ?? null, constrains: proposal.constrains ?? null } },
+    };
+  }
   formRequests.push({
     item_id: item.id ?? null, declared_by, tool, user_id: declared_by === "user" ? (userId ?? null) : null,
     label: keyLabel, wording, key, proposal,
@@ -1990,6 +2004,19 @@ function alsoMeasuredReview(label, form, names) {
 async function measurableNames(h, mcpTool) {
   const out = await safeHook(h.getMeasurableNames ?? (() => []), [mcpTool], () => []);
   return Array.isArray(out) ? out.filter(n => typeof n === "string") : [];
+}
+
+// Why a proposed form cannot stand for a user's condition, or null when it can ([UNFIT FORM]). A user's
+//   condition is compared as a measurement, as the adopter's own kind, or as a schema on the value of a
+//   field it constrains; user_approval is [NO FORM], handled before this.
+function unfitUserForm(form) {
+  const c = form?.compare;
+  if (!c || typeof c !== "object" || Array.isArray(c)) return "no comparison";
+  if (c.kind === "value_source") return "who gives a value is a provider's line";
+  if (c.source === "measured_data") return typeof c.measure === "string" && c.measure ? null : "a measurement with no name";
+  if (typeof c.kind === "string") return null;   // the adopter's own kind, compared by its validator
+  const on = Array.isArray(form.constrains) ? form.constrains.filter(n => typeof n === "string" && n) : [];
+  return on.length ? null : "a check on no value";
 }
 
 // [FORM IN WORDS] What a form checks, written from the form alone, for whoever confirms it (3.3: shown
@@ -3740,7 +3767,9 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.23",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.24",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.24: a user's condition may carry form_none.proposed: a form proposed that no user's condition can
+    //        take, kept beside the no-form approval ([UNFIT FORM]).
     //   1.23: a provider line's form_translation may carry review ({ also_measured, why }): a [Verify] line
     //        about a value the system can also measure, marked for whoever reads the kept forms. It changes
     //        no verdict ([ALSO MEASURED]).
