@@ -78,6 +78,9 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
   const judge = createJudge({
     ask: connect.ask, measure: connect.measure, readToolDefinition: connect.readToolDefinition,
     measurements: Object.keys(connect.MEASUREMENTS ?? {}), storage: connect.store, userId, model,
+    // The user's settings for a tool, from your store, if connect.js has one (spec 5.2). How they come to
+    //   be stored, and the user's consent, is yours.
+    readPreSet: connect.readPreSet,
   });
   // Your agent's own state: each conversation, in order, with who wrote each part.
   const conversations = new Map();

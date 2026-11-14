@@ -179,7 +179,7 @@ function buildGraph({ ask, say, chat, listTools, readToolDefinition, measure, ca
                conversation: [afterCall(state.toolCall, "not_executed", stop.message)] };
     }
     const name = record.tool_call.name, args = record.call_arguments;
-    const deps = { ask, model, runId: `${runId}-result`, measure, readToolDefinition, measurements, storage };
+    const deps = { ask, model, runId: `${runId}-result`, measure, readToolDefinition, measurements, storage, userId };
     let result;
     // A call that fails is reported, not retried: whether the tool did anything is for the caller to
     //   find out from the tool's side.

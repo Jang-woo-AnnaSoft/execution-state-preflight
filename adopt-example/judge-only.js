@@ -37,7 +37,7 @@
  */
 
 // The skeleton: one file, copied beside this folder (the repository layout) or into it.
-const { createPreflight, labelledLines, toolsForModel, stopFacts, readTranslatedForms, renderValue } = (() => {
+const { createPreflight, labelledLines, toolsForModel, stopFacts, keepForPrior, loadPrior, readTranslatedForms, renderValue } = (() => {
   try { return require("./execution-state-preflight"); }
   catch (e) { if (e.code !== "MODULE_NOT_FOUND") throw e; return require("../execution-state-preflight"); }
 })();
@@ -526,12 +526,19 @@ async function writeStop({ ask, say, model = "model" }, { record, conversation }
 //   intentAttempt: how many times this conversation was already asked to restate what it wants done.
 //   The caller carries it (the skeleton's contract): those records have no key to count them under.
 //   How often the tool was asked about, the skeleton counts itself, from the unit's records.
+//   preSetData: the user's settings for this tool, from your store: { field: { value, trust, approved_by,
+//   approved_at, approved_in } } (spec 5.2). trust "user" is a setting the user approved; any other trust
+//   (a model's memory) is shown to the user as a candidate, never used as a setting.
+//   priorExecutionState: the last execution to carry values over from. Left out, it is the last one kept
+//   for this user and tool (loadPrior); pass null to carry nothing.
 async function judgeRound({ ask, model = "model", runId = "run", unitKey = null, measure, readToolDefinition, measurements = [],
-                            storage, userId = "user", conversation, toolCall, userChecklist, intentAttempt = 0 }) {
+                            storage, userId = "user", conversation, toolCall, userChecklist, intentAttempt = 0,
+                            preSetData = {}, priorExecutionState }) {
   const hooks = createHooks({ ask, model, runId, unitKey, measure, readToolDefinition, measurements });
   const preflight = createPreflight({ hooks, storage });
+  const prior = priorExecutionState === undefined ? await loadPrior(storage, { userId, tool: toolCall?.name }) : priorExecutionState;
   const st = await preflight.runPreflight({
-    userId, instruction: conversation, toolCall, preSetData: {},
+    userId, instruction: conversation, toolCall, preSetData: preSetData ?? {}, priorExecutionState: prior,
     userChecklist, intent_attempt: intentAttempt, tool_attempt: 0,
   });
   await preflight.recordExecutionState(st);
@@ -539,17 +546,20 @@ async function judgeRound({ ask, model = "model", runId = "run", unitKey = null,
 }
 
 // The executing side reports what happened, onto the record it executed from. Only an executed record
-//   is what a later run may carry values over from (spec 5.2, prior_state).
-async function writeResult({ ask, model = "model", runId = "result", measure, readToolDefinition, measurements = [], storage }, record, { ok, error } = {}) {
+//   is what a later run may carry values over from (spec 5.2, prior_state): it is kept where the next
+//   run for this user and tool finds it (keepForPrior).
+async function writeResult({ ask, model = "model", runId = "result", measure, readToolDefinition, measurements = [], storage, userId = "user" }, record, { ok, error } = {}) {
   if (!record || typeof record !== "object" || !record.action_key) throw new Error("recordResult: a decision record read from storage is required");
   const hooks = createHooks({ ask, model, runId, measure, readToolDefinition, measurements });
   const preflight = createPreflight({ hooks, storage });
-  return preflight.recordExecutionState({
+  const written = await preflight.recordExecutionState({
     ...record,
     execution_decision: ok ? "executed" : "failed",
     reason: `${record.reason} / ${ok ? "call succeeded" : `call failed: ${error ?? "unknown"}`}`,
     timestamp: new Date().toISOString(),
   });
+  if (ok) await keepForPrior(storage, written ?? { ...record, execution_decision: "executed" }, { userId });
+  return written;
 }
 
 /**
@@ -557,7 +567,10 @@ async function writeResult({ ask, model = "model", runId = "result", measure, re
  * @param measurements   the names your system can measure (for comparable forms)
  * storage needs persist, load and list. Keep it append-only, where the agent cannot rewrite it (spec 8.2).
  */
-function createJudge({ ask, measure, readToolDefinition, measurements = [], storage, userId = "user", model = "model", runId = "judge" }) {
+// readPreSet: (userId, toolName) → the user's settings for the tool (preSetData, see judgeRound), from
+//   your store. Optional: without it there are none. How a setting comes to be stored, and the user's
+//   consent to it, is yours (README, "What this doesn't do").
+function createJudge({ ask, measure, readToolDefinition, measurements = [], storage, userId = "user", model = "model", runId = "judge", readPreSet }) {
   for (const [n, f] of Object.entries({ ask, readToolDefinition })) {
     if (typeof f !== "function") throw new Error(`createJudge: ${n} is required`);
   }
@@ -570,11 +583,15 @@ function createJudge({ ask, measure, readToolDefinition, measurements = [], stor
 
   // unitKey: the same for every turn of one conversation. A reply counts only for a question asked in it.
   // conversation: every segment so far, each with who wrote it ("user" only for what the user typed).
-  async function run({ unitKey, conversation, toolCall, userChecklist = [] }) {
+  // preSetData, priorExecutionState: as judgeRound takes them; left out, read through readPreSet and loadPrior.
+  async function run({ unitKey, conversation, toolCall, userChecklist = [], preSetData, priorExecutionState }) {
     round += 1;
+    const settings = preSetData !== undefined ? preSetData
+      : typeof readPreSet === "function" ? ((await readPreSet(userId, toolCall?.name)) ?? {}) : {};
     const st = await judgeRound({ ask, model, runId: `${runId}-${round}`, unitKey, measure, readToolDefinition, measurements,
                                   storage, userId, conversation, toolCall, userChecklist,
-                                  intentAttempt: intentAttempts.get(unitKey) ?? 0 });
+                                  intentAttempt: intentAttempts.get(unitKey) ?? 0,
+                                  preSetData: settings, priorExecutionState });
     // Raised only while the gate keeps asking for a restatement; anything else starts the count again.
     const next = st.gate?.next_intent_attempt;
     if (Number.isInteger(next)) intentAttempts.set(unitKey, next); else intentAttempts.delete(unitKey);
@@ -595,7 +612,7 @@ function createJudge({ ask, measure, readToolDefinition, measurements = [], stor
   }
 
   const recordResult = (record, outcome) =>
-    writeResult({ ask, model, runId: `${runId}-result`, measure, readToolDefinition, measurements, storage }, record, outcome);
+    writeResult({ ask, model, runId: `${runId}-result`, measure, readToolDefinition, measurements, storage, userId }, record, outcome);
 
   return { run, recordResult, toolsForModel };
 }

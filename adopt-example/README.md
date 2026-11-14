@@ -196,6 +196,14 @@ Your model writes the message from those alone; without its words there is still
 The example shows it, and gives it to the model as its call's result. Without this, a hold ends with
 nothing said: a real run held on a `[Required]` line did.
 
+**Settings and the last execution** (spec 5.2). Give `createJudge` a `readPreSet(userId, toolName)`
+(`connect.js` has a starting point) and the gate reads the user's settings for the tool: `trust:
+"user"` with `approved_by`, `approved_at` and `approved_in` is a setting, recorded with them; any other
+trust, a value a model remembered, is shown to the user and counts only once approved. When a call
+executes, `recordResult` keeps the record for this user and tool, and the next run offers its values
+when nothing else gives them ("same place as last time"), again only once approved. How settings come
+to be stored is yours.
+
 **Try it without blocking.** Because judging only records, you can call `judge.run` beside your
 agent as it is and read the records, before anything depends on them. Most first records will ask:
 whether a run reaches execution shows only once the asking is wired in. Each round calls the model.

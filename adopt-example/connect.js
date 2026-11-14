@@ -274,12 +274,23 @@ const store = {
   },
 };
 
+// ── readPreSet: the user's settings for a tool ─────────────────────────────────────────────────
+// (userId, toolName) → { field: { value, trust, approved_by, approved_at, approved_in } } (spec 5.2).
+//   trust "user": a setting the user approved; keep who approved it, when, and where, so the record can
+//   say so. Any other trust (a value a model remembered on its own) is shown to the user as a candidate,
+//   never used as a setting. How settings come to be stored, and the user's consent, is yours: a
+//   settings page, a "remember this?" in your agent, or a tool of its own that goes through the gate.
+//   This starting point has none.
+async function readPreSet(userId, toolName) {
+  return {};
+}
+
 // ── checkpointer: where a conversation waits ───────────────────────────────────────────────────
 // MemorySaver loses waiting conversations on restart. For a real system use a persistent one, for
 //   example PostgresSaver from @langchain/langgraph-checkpoint-postgres.
 const checkpointer = new MemorySaver();
 
-module.exports = { ask, say, chat, listTools, readToolDefinition, measure, labelInput, callTool, store, checkpointer,
+module.exports = { ask, say, chat, listTools, readToolDefinition, measure, labelInput, callTool, store, readPreSet, checkpointer,
                    MEASUREMENTS, TOOLS, MODEL_NAME, readToolFile, readJsonReply };
 // With the MCP connection above uncommented:
 //   listTools: mcpListTools, readToolDefinition: mcpReadToolDefinition, callTool: mcpCallTool
