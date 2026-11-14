@@ -129,6 +129,16 @@ async function run(id, condition, replies = [], over = {}) {
     const reviewed = (verdict?.provider_checklist ?? []).filter(c => c.form_translation?.review).map(c => [c.label, c.form_translation.review.also_measured]);
     check("  the [Verify] lines on time and location are marked for review; the item, not measured, and [Required] lines are not",
       reviewed, [["Verify", ["time"]], ["Verify", ["location"]]]);
+    // Finding and writing a value. With a stricter model the time was never settled: it found no time in
+    //   "2pm this Saturday" because the field's form is a date-time, and would not write one because the
+    //   year and time zone were only in the context the system gave.
+    const found = g1.prompts.find(p => p.hook === "extraction"), proposed = g1.prompts.find(p => p.hook === "propose_value");
+    check("the extraction prompt: report the user's words for a field even when they are not in its form",
+      found?.user.includes("Report the user's words for a field even when they are not in the field's declared form"), true);
+    check("  the proposal prompt: the value from the user's words, what the form needs beyond it from the other segments",
+      [Boolean(proposed), /The value itself, which moment or which thing, comes only from the user's words/.test(proposed?.system ?? ""),
+       /such as the year, or the time zone the tool's description points to, may be taken from the other segments/.test(proposed?.system ?? "")],
+      [true, true, true]);
     // The gate's question goes back to the model as its call's result, and the messages are ones the
     //   model library takes as a call and its result.
     const heard = g1.heard[1] ?? [];
