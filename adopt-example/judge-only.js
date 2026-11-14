@@ -190,8 +190,10 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
     async extractUserActionName(instruction) {
       const segments = segmentsOf(instruction).filter(s => s.trust === "user");
       const out = await call(
+        // A few words: a smaller model quoted the whole request once, and the name was refused as too long.
         "You report what the speaker calls the action they are asking for, quoting their own words exactly. " +
-        "Do not paraphrase or use tool names. Return JSON only.",
+        "Quote only the few words that name the act (\"Set up the pickup\"), not the whole request or the " +
+        "details in it. Do not paraphrase or use tool names. Return JSON only.",
         "Segments:\n" + JSON.stringify(segments, null, 2) +
         '\n\nReply as {"action_name": "<exact words>", "segment_index": <int>} or {"action_name": null}.', "action_name");
       if (out && "action_name" in out && out.action_name === null) return { none: "absent" };
@@ -283,8 +285,13 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
     async extractUserConditions(instruction, mcpTool) {
       const props = mcpTool?.inputSchema?.properties ?? {};
       const out = await call(
+        // Values are not conditions: a smaller model reported "at 2pm this Saturday", "at the Hongdae
+        //   station lockers" and "Use the buyer's in-app chat" as conditions, each then asked about.
         "You find the conditions the USER set on a task: limits, ranges, things they never or only accept. " +
-        "A value they gave is not a condition. Quote their own words exactly, from segments with \"trust\": " +
+        "A value they gave is not a condition: words that give a field its value (a time, a place, a way to " +
+        "reach someone) are values. \"At 2pm this Saturday at the station lockers\" sets no condition; " +
+        "\"nothing after 8pm\" and \"public places only\" do: they limit which values are acceptable. " +
+        "Quote their own words exactly, from segments with \"trust\": " +
         "\"user\" only. Report every condition the user set, also one they later took back: never leave it " +
         "out. For one taken back, also quote the user's words that take it back, in withdrawn_by. Return JSON only.",
         `Tool: ${mcpTool?.name}\nFields: ${Object.keys(props).join(", ")}\n\nSegments:\n${JSON.stringify(segmentsOf(instruction), null, 2)}\n\n` +
