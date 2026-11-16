@@ -5,7 +5,7 @@
  * this file is to be read and adapted, unlike judge-only.js, which you leave as it is.
  *
  * Your agent keeps its loop and executes the tool itself. judge-only.js judges and writes the record, and
- * nothing else. Six things are yours to keep, and nothing checks them for you:
+ * nothing else. Seven things are yours to keep, and nothing checks them for you:
  *
  *   1. Label who wrote each part of a message when it arrives, before the model sees it (labelInput).
  *      Only what the user typed is the user's.
@@ -15,11 +15,13 @@
  *      unitKey.
  *   4. Execute from the record, never from what judge.run returned or from the model's own arguments.
  *      Read the record from storage, decide for yourself (readyToExecute), and send its call_arguments.
- *   5. Keep the record where the agent cannot rewrite it, and write what happened back onto it
- *      (judge.recordResult).
+ *   5. Keep the record where the agent cannot rewrite it, and write your own decision back as a record
+ *      of its own (judge.recordResult): executed, failed, or read and not run.
  *   6. Tell your model how its calls are judged, and what happened to each: principles-gated.md as its
  *      system prompt, and the gate's answer as its call's result (messagesFor, afterCall). Where you
  *      hand it the tool list, you may also take the labelled lines out (judge.toolsForModel, hideLines).
+ *   7. Show the provider's notices to the user before the tool runs (spec 3.3). They go with every
+ *      question; when nothing was asked, show them before the call (judge.notices, connect.notify).
  *
  *   const { createMain } = require("./judge-only-example");
  *   const main = createMain();
@@ -54,18 +56,21 @@ function systemPrompt(file = "principles-gated.md") {
 //     it is for the tool about to be called, and it carries the arguments to send
 //   call_arguments alone is not a sign of readiness: a record that still asks carries the values known
 //   so far.
-function readyToExecute(record, toolName) {
-  if (!record || typeof record !== "object") return false;
-  if (record.execution_decision === "executed" || record.execution_decision === "failed") return false;
-  if (record.phase !== "at_trigger") return false;
-  if (record.unknown_count !== 0) return false;
+//   whyNotReady says which of these failed, for the executing side's own record; null when ready.
+function whyNotReady(record, toolName) {
+  if (!record || typeof record !== "object") return "no record was read";
+  if (record.actor === "executor" || ["executed", "failed", "not_executed"].includes(record.execution_decision)) return "the record is a result, not a verdict";
+  if (record.phase !== "at_trigger") return "the verdict is not one made for this moment";
+  if (!record.gate) return "the record carries no verdict";
+  if (record.gate.kind) return `the verdict is ${record.gate.kind}`;
+  if (record.unknown_count !== 0) return "a value is not confirmed";
   if (record.unverified_checklist_count !== 0 || record.unverified_provider_count !== 0 ||
-      record.unverified_value_check_count !== 0) return false;
-  if (!record.gate || record.gate.kind) return false;
-  if (!record.tool_call || record.tool_call.name !== toolName) return false;
+      record.unverified_value_check_count !== 0) return "a condition or a check is not confirmed";
+  if (!record.tool_call || record.tool_call.name !== toolName) return "the verdict is for another tool";
   const args = record.call_arguments;
-  return Boolean(args) && typeof args === "object" && !Array.isArray(args);
+  return Boolean(args) && typeof args === "object" && !Array.isArray(args) ? null : "the record carries no arguments";
 }
+const readyToExecute = (record, toolName) => whyNotReady(record, toolName) === null;
 
 // How the conversation is shown to your model is messagesFor (judge-only.js): what the gate said after a
 //   call goes back as that call's result.
@@ -127,11 +132,25 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
     const record = r.key ? (await connect.store.list(r.key)).filter(x => x && "execution_decision" in x).at(-1) : null;
     // Not ready: the user is told why, from the record this round wrote (writeStop). The words go into the
     //   conversation as the call's result, so the next turn starts from what the user was told.
-    if (!readyToExecute(record, toolCall.name)) {
+    //   The decision is the executing side's own, so it is recorded as its own (spec 6.4), executed or not.
+    const notRun = async (why, extra = {}) => {
       const stop = r.message ? { message: r.message, facts: null }
         : await writeStop({ ask: connect.ask, say: connect.say, model }, { record, conversation });
+      if (record?.action_key) await judge.recordResult(record, { executed: false, why, ...extra });      // 5
       conversation.push(afterCall(toolCall, "not_executed", stop.message));
       return { status: "not_executed", reason: record?.reason ?? r.reason, message: stop.message, stop: stop.facts, notices: r.notices };
+    };
+    const why = whyNotReady(record, toolCall.name);
+    if (why !== null) return notRun(why);
+    // 7. The provider's notices are told to the user before the tool runs (spec 3.3). One that went with
+    //   a question of this unit has been shown; the rest are shown now (connect.notify), and then the
+    //   tool runs: a notice is told, not acknowledged. With no way to show one, the tool does not run.
+    const notice = await judge.notices(record);
+    const told = notice.shown.map(d => ({ id: d.id, description: d.description, when: "with_question" }));
+    if (notice.toShow.length > 0) {
+      if (typeof connect.notify !== "function") return notRun("a notice could not be shown to the user before the call: connect.notify is not connected", { told });
+      await connect.notify(notice.toShow.map(d => d.description));
+      told.push(...notice.toShow.map(d => ({ id: d.id, description: d.description, when: "before_call" })));
     }
     const name = record.tool_call.name, args = record.call_arguments;
     let result;
@@ -140,26 +159,26 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
     try { result = await connect.callTool(name, args); }
     catch (e) {
       const error = String(e?.message ?? e);
-      await judge.recordResult(record, { ok: false, error });                                  // 5
+      await judge.recordResult(record, { ok: false, error, told });                            // 5
       conversation.push(afterCall(toolCall, "failed", error));
       return { status: "call_failed", callError: error };
     }
     if (result && typeof result === "object" && (result.isError === true || result.inputRequired)) {
       const error = result.inputRequired ? "the tool asked for more input instead of completing"
         : ((result.content ?? []).map(c => c?.text ?? "").join(" ").trim() || "the tool reported an error");
-      await judge.recordResult(record, { ok: false, error });
+      await judge.recordResult(record, { ok: false, error, told });
       conversation.push(afterCall(toolCall, "failed", error));
       return { status: "tool_error", callError: error };
     }
-    await judge.recordResult(record, { ok: true });                                            // 5
+    await judge.recordResult(record, { ok: true, told });                                      // 5
     conversation.push(afterCall(toolCall, "executed"));
-    return { status: "executed", executedWith: args, notices: r.notices };
+    return { status: "executed", executedWith: args, notices: r.notices, told };
   }
 
   return { turn };
 }
 
-module.exports = { createMain, readyToExecute, systemPrompt };
+module.exports = { createMain, readyToExecute, whyNotReady, systemPrompt };
 
 if (require.main === module) {
   const readline = require("readline");
@@ -178,7 +197,8 @@ if (require.main === module) {
     rl.close();
     if (r.reply) console.log(`\n${r.reply}`);
     if (r.message) console.log(`\n${r.message}`);
-    for (const n of r.notices ?? []) console.log(`Note: ${n}`);
+    // A run that executed has shown its notices already, with a question or before the call (connect.notify).
+    if (r.status !== "executed") for (const n of r.notices ?? []) console.log(`Note: ${n}`);
     console.log(`\n${r.status}`, r.executedWith ? JSON.stringify(r.executedWith) : (r.reason ?? r.callError ?? ""));
   })().catch(e => { console.error(e.message); process.exit(1); });
 }

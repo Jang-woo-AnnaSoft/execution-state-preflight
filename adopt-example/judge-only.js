@@ -18,7 +18,9 @@
  *   // r.block      the values as code wrote them, and the provider's notices: show them unchanged
  *   // r.notices    the provider's notices on their own, for a round that asks nothing
  *   // r.reason     why, in words
+ *   await judge.notices(record);                       // the provider's notices not shown yet: show them before the call
  *   await judge.recordResult(record, { ok, error });   // after YOUR agent executed, or failed to
+ *   await judge.recordResult(record, { executed: false, why });   // or read the record and did not run it
  *   judge.toolsForModel(tools)   // the library's: the tools as your model is given them, without the labelled lines
  *
  * What run returns carries no arguments for the call and no decision to execute. Both are in the record,
@@ -558,21 +560,47 @@ async function judgeRound({ ask, model = "model", runId = "run", unitKey = null,
   return st;
 }
 
-// The executing side reports what happened, onto the record it executed from. Only an executed record
-//   is what a later run may carry values over from (spec 5.2, prior_state): it is kept where the next
-//   run for this user and tool finds it (keepForPrior).
-async function writeResult({ ask, model = "model", runId = "result", measure, readToolDefinition, measurements = [], storage, userId = "user" }, record, { ok, error } = {}) {
+// The executing side's own record (spec 6.4): it read a verdict, decided, and says what it did. Written
+//   as the verdict it read with its decision on it, and actor "executor".
+//     { ok: true }                  it ran the tool: executed. Only an executed record is what a later run
+//                                   may carry values over from (spec 5.2, prior_state): it is kept where
+//                                   the next run for this user and tool finds it (keepForPrior)
+//     { ok: false, error }          it ran the tool and the call failed
+//     { executed: false, why }      it read the verdict and did not run it
+//   told: the provider's notices it showed the user before the call ([{ id, description, when }]).
+async function writeResult({ ask, model = "model", runId = "result", measure, readToolDefinition, measurements = [], storage, userId = "user" }, record, { ok, error, executed, why, told } = {}) {
   if (!record || typeof record !== "object" || !record.action_key) throw new Error("recordResult: a decision record read from storage is required");
   const hooks = createHooks({ ask, model, runId, measure, readToolDefinition, measurements });
   const preflight = createPreflight({ hooks, storage });
+  const notRun = executed === false;
   const written = await preflight.recordExecutionState({
     ...record,
-    execution_decision: ok ? "executed" : "failed",
-    reason: `${record.reason} / ${ok ? "call succeeded" : `call failed: ${error ?? "unknown"}`}`,
+    actor: "executor",
+    execution_decision: notRun ? "not_executed" : ok ? "executed" : "failed",
+    reason: `${record.reason} / ${notRun ? `not executed: ${why ?? "the record does not read as ready"}` : ok ? "call succeeded" : `call failed: ${error ?? "unknown"}`}`,
+    told: Array.isArray(told) ? told : [],
     timestamp: new Date().toISOString(),
   });
-  if (ok) await keepForPrior(storage, written ?? { ...record, execution_decision: "executed" }, { userId });
+  if (ok && !notRun) await keepForPrior(storage, written ?? { ...record, execution_decision: "executed" }, { userId });
   return written;
+}
+
+// [NOTICE] The provider's notices on a verdict that the user has not been shown yet in this unit (spec
+//   3.3: a [Notice] is told to the user before execution). A notice goes with every question (the block
+//   under it), so one the unit already asked a question with has been shown; a round that asks nothing
+//   has shown none, and the executing side shows these before it calls the tool. Read from the unit's
+//   records: the gate's verdicts since the last execution that asked something.
+//   → { shown: [{ id, description }], toShow: [{ id, description }] }
+async function noticesFor(storage, record) {
+  const all = Array.isArray(record?.gate?.disclosures) ? record.gate.disclosures : [];
+  if (all.length === 0 || !record?.action_key) return { shown: [], toShow: all };
+  const recs = (await storage.list(record.action_key)) ?? [];
+  let start = 0;
+  for (let i = recs.length - 1; i >= 0; i--) if (recs[i]?.execution_decision === "executed") { start = i + 1; break; }
+  const seen = new Set(recs.slice(start)
+    .filter(r => r && r.actor !== "executor" && r.execution_decision === "ask_user" && (r.gate?.questions ?? []).length > 0)
+    .flatMap(r => (r.gate?.disclosures ?? []).map(d => d.id)));
+  return { shown: all.filter(d => seen.has(d.id)), toShow: all.filter(d => !seen.has(d.id)) };
 }
 
 /**
@@ -630,10 +658,13 @@ function createJudge({ ask, measure, readToolDefinition, measurements = [], stor
   const recordResult = (record, outcome) =>
     writeResult({ ask, model, runId: `${runId}-result`, measure, readToolDefinition, measurements, storage, userId }, record, outcome);
 
-  return { run, recordResult, toolsForModel };
+  // The notices on a verdict the user has not been shown yet: show them before the call ([NOTICE]).
+  const notices = record => noticesFor(storage, record);
+
+  return { run, recordResult, notices, toolsForModel };
 }
 
 module.exports = {
-  createJudge, judgeRound, writeResult, writeQuestion, writeStop, stopFacts, toolsForModel, messagesFor, afterCall, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
+  createJudge, judgeRound, writeResult, noticesFor, writeQuestion, writeStop, stopFacts, toolsForModel, messagesFor, afterCall, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
   createPreflight, labelledLines, readTranslatedForms, renderValue,
 };

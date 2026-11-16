@@ -25,7 +25,7 @@
 
 const { StateGraph, Annotation, interrupt, Command, MemorySaver, START, END } = require("@langchain/langgraph");
 
-const { judgeRound, writeResult, writeQuestion, writeStop, toolsForModel, messagesFor, afterCall, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
+const { judgeRound, writeResult, noticesFor, writeQuestion, writeStop, toolsForModel, messagesFor, afterCall, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
         createPreflight, labelledLines, readTranslatedForms, renderValue } = require("./judge-only");
 
 const last = (a, b) => (b === undefined ? a : b);
@@ -60,29 +60,34 @@ const State = Annotation.Root({
 // The executing side's own decision, read from the record (spec 3.5): the same reading as
 //   judge-only-example.js, where each line of it is explained. It does not follow the gate's
 //   execution_decision.
-function readyToExecute(record, toolName) {
-  if (!record || typeof record !== "object") return false;
-  if (record.execution_decision === "executed" || record.execution_decision === "failed") return false;
-  if (record.phase !== "at_trigger") return false;
-  if (record.unknown_count !== 0) return false;
+function whyNotReady(record, toolName) {
+  if (!record || typeof record !== "object") return "no record was read";
+  if (record.actor === "executor" || ["executed", "failed", "not_executed"].includes(record.execution_decision)) return "the record is a result, not a verdict";
+  if (record.phase !== "at_trigger") return "the verdict is not one made for this moment";
+  if (!record.gate) return "the record carries no verdict";
+  if (record.gate.kind) return `the verdict is ${record.gate.kind}`;
+  if (record.unknown_count !== 0) return "a value is not confirmed";
   if (record.unverified_checklist_count !== 0 || record.unverified_provider_count !== 0 ||
-      record.unverified_value_check_count !== 0) return false;
-  if (!record.gate || record.gate.kind) return false;
-  if (!record.tool_call || record.tool_call.name !== toolName) return false;
+      record.unverified_value_check_count !== 0) return "a condition or a check is not confirmed";
+  if (!record.tool_call || record.tool_call.name !== toolName) return "the verdict is for another tool";
   const args = record.call_arguments;
-  return Boolean(args) && typeof args === "object" && !Array.isArray(args);
+  return Boolean(args) && typeof args === "object" && !Array.isArray(args) ? null : "the record carries no arguments";
 }
+const readyToExecute = (record, toolName) => whyNotReady(record, toolName) === null;
 
 /**
  * @param ask, chat, listTools, readToolDefinition, measure, callTool, checkpointer, storage   from connect.js
  * @param measurements   the names connect.js can measure (for comparable forms)
  * @param system         the agent's system prompt (principles.md goes here)
+ * @param notify         (lines) => shows the provider's notices to the user, before the tool runs
+ * @param readPreSet     (userId, toolName) => the user's settings for the tool (spec 5.2); optional
  * storage defaults to an in-memory store and checkpointer to MemorySaver. Both are for trying the
  *   example. A real system passes its own: the record append-only, where the agent cannot rewrite it
  *   (spec 8.2), and a checkpointer that survives a restart. Kept translations are in storage too.
  */
 function buildGraph({ ask, say, chat, listTools, readToolDefinition, measure, callTool, measurements = [], system = "",
-                      model = "model", checkpointer = new MemorySaver(), storage = createStorage(), userId = "user", runId = "graph" }) {
+                      model = "model", checkpointer = new MemorySaver(), storage = createStorage(), userId = "user", runId = "graph",
+                      notify, readPreSet }) {
   for (const [n, f] of Object.entries({ ask, chat, listTools, readToolDefinition, callTool })) {
     if (typeof f !== "function") throw new Error(`buildGraph: ${n} is required`);
   }
@@ -110,9 +115,11 @@ function buildGraph({ ask, say, chat, listTools, readToolDefinition, measure, ca
   async function gate(state, config) {
     round += 1;
     const unitKey = config?.configurable?.thread_id ?? runId;
+    // The user's settings for the tool, from the adopter's store when it has one (spec 5.2), as in judge-only.js.
+    const preSetData = typeof readPreSet === "function" ? ((await readPreSet(userId, state.toolCall?.name)) ?? {}) : {};
     const st = await judgeRound({ ask, model, runId: `${runId}-${round}`, unitKey, measure, readToolDefinition, measurements,
                                   storage, userId, conversation: state.conversation, toolCall: state.toolCall,
-                                  userChecklist: state.userChecklist, intentAttempt: state.intentAttempt ?? 0 });
+                                  userChecklist: state.userChecklist, intentAttempt: state.intentAttempt ?? 0, preSetData });
     const next = st.gate?.next_intent_attempt;
     return { intentAttempt: Number.isInteger(next) ? next : 0, verdict: {
       decision: st.execution_decision,
@@ -169,39 +176,52 @@ function buildGraph({ ask, say, chat, listTools, readToolDefinition, measure, ca
   async function execute(state) {
     const v = state.verdict;
     const record = v.key ? (await storage.list(v.key)).filter(x => x && "execution_decision" in x).at(-1) : null;
-    if (!readyToExecute(record, state.toolCall?.name)) {
-      // Not ready: nothing runs, and the user is told why, from this record (writeStop). Were the gate to
-      //   say execute over a record that does not read as ready, the same.
+    const deps = { ask, model, runId: `${runId}-result`, measure, readToolDefinition, measurements, storage, userId };
+    // Not ready: nothing runs, and the user is told why, from this record (writeStop). Were the gate to
+    //   say execute over a record that does not read as ready, the same. The executing step's decision is
+    //   its own record (spec 6.4), executed or not.
+    const notRun = async (why, extra = {}) => {
       const stop = v.user_message ? { message: v.user_message, facts: null }
         : await writeStop({ ask, say, model }, { record, conversation: state.conversation });
+      if (record?.action_key) await writeResult(deps, record, { executed: false, why, ...extra });
       // The run's end stays the gate's decision (hold, definition_repair, …); not_executed only when the
       //   gate said execute.
       return { ...(v.decision === "execute" ? { ended: "not_executed" } : {}), stop,
                conversation: [afterCall(state.toolCall, "not_executed", stop.message)] };
+    };
+    const why = whyNotReady(record, state.toolCall?.name);
+    if (why !== null) return notRun(why);
+    // The provider's notices are told to the user before the tool runs (spec 3.3): those not shown with a
+    //   question of this unit are shown now (notify), and then the tool runs. No way to show one: not run.
+    const notice = await noticesFor(storage, record);
+    const told = notice.shown.map(d => ({ id: d.id, description: d.description, when: "with_question" }));
+    if (notice.toShow.length > 0) {
+      if (typeof notify !== "function") return notRun("a notice could not be shown to the user before the call: notify is not connected", { told });
+      await notify(notice.toShow.map(d => d.description));
+      told.push(...notice.toShow.map(d => ({ id: d.id, description: d.description, when: "before_call" })));
     }
     const name = record.tool_call.name, args = record.call_arguments;
-    const deps = { ask, model, runId: `${runId}-result`, measure, readToolDefinition, measurements, storage, userId };
     let result;
     // A call that fails is reported, not retried: whether the tool did anything is for the caller to
     //   find out from the tool's side.
     try { result = await callTool(name, args); }
     catch (e) {
       const error = String(e?.message ?? e);
-      await writeResult(deps, record, { ok: false, error });
+      await writeResult(deps, record, { ok: false, error, told });
       return { ended: "call_failed", callError: error, conversation: [afterCall(state.toolCall, "failed", error)] };
     }
     if (result && typeof result === "object" && result.inputRequired) {
-      await writeResult(deps, record, { ok: false, error: "the tool asked for more input instead of completing" });
+      await writeResult(deps, record, { ok: false, error: "the tool asked for more input instead of completing", told });
       return { ended: "input_required", serverRequests: result.inputRequired };
     }
     // The tool ran and reported a failure (MCP's isError). Not "executed": what was asked did not happen.
     if (result && typeof result === "object" && result.isError === true) {
       const text = (result.content ?? []).map(c => c?.text ?? "").join(" ").trim();
-      await writeResult(deps, record, { ok: false, error: text || "the tool reported an error" });
+      await writeResult(deps, record, { ok: false, error: text || "the tool reported an error", told });
       return { ended: "tool_error", callError: text || "the tool reported an error",
                conversation: [afterCall(state.toolCall, "failed", text || "the tool reported an error")] };
     }
-    await writeResult(deps, record, { ok: true });
+    await writeResult(deps, record, { ok: true, told });
     return { ended: "executed", executedWith: args, conversation: [afterCall(state.toolCall, "executed")] };
   }
 
@@ -226,6 +246,6 @@ function buildGraph({ ask, say, chat, listTools, readToolDefinition, measure, ca
 }
 
 module.exports = {
-  createHooks, createStorage, buildGraph, readyToExecute, readTranslatedForms, renderValue,
+  createHooks, createStorage, buildGraph, readyToExecute, whyNotReady, readTranslatedForms, renderValue,
   labelledLines, checkAgainst, messagesFor, State, FORM_KINDS, WHEN_CASES, Command, MemorySaver, createPreflight,
 };

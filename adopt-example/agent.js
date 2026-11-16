@@ -48,6 +48,7 @@ function createAgent({ connect = defaultConnect, userId = "user", system = syste
     ask: connect.ask, say: connect.say, chat: connect.chat, listTools: connect.listTools, readToolDefinition: connect.readToolDefinition,
     measure: connect.measure, callTool: connect.callTool, measurements: Object.keys(connect.MEASUREMENTS ?? {}),
     model: connect.MODEL_NAME ?? "model", system, checkpointer: connect.checkpointer, storage: connect.store, userId,
+    notify: connect.notify, readPreSet: connect.readPreSet,
   });
 
   async function report(state, config) {
@@ -109,7 +110,8 @@ if (require.main === module) {
     rl.close();
     if (r.reply) console.log(`\n${r.reply}`);
     if (r.stop?.message) console.log(`\n${r.stop.message}`);
-    for (const d of r.disclosures) console.log(`Note: ${d}`);
+    // A run that executed has shown its notices already, with a question or before the call (connect.notify).
+    if (r.status !== "executed") for (const d of r.disclosures) console.log(`Note: ${d}`);
     console.log(`\n${r.status}`, r.executedWith ? JSON.stringify(r.executedWith) : (r.verdict?.reason ?? ""));
   })().catch(e => { console.error(e.message); process.exit(1); });
 }

@@ -147,8 +147,12 @@ if (r.questions.length > 0) {
 } else {
   const record = (await storage.list(r.key)).at(-1);       // the record this round wrote
   if (readyToExecute(record, toolCall.name)) {              // your own reading of it
+    const { toShow } = await judge.notices(record);         // the provider's notices not shown with a question
+    if (toShow.length) await notify(toShow.map(d => d.description));   // told before the tool runs
     const result = await callTool(record.tool_call.name, record.call_arguments);
     await judge.recordResult(record, { ok: true });
+  } else {
+    await judge.recordResult(record, { executed: false, why: "not ready" });   // your decision, recorded too
   }
 }
 ```
@@ -177,8 +181,9 @@ breaking one leaves a record that is right about an execution that was not.
    counted (nothing unconfirmed, nothing that prohibits, this tool, made for this moment) and does not
    follow the gate's `execution_decision`. A record that still asks also carries `call_arguments`, the
    values known so far: arguments alone are not a sign of readiness.
-5. **Keep the record where the agent cannot rewrite it** (spec 8.2), **and write what happened back**
-   with `judge.recordResult`. Only an executed record is what a later run may carry values from.
+5. **Keep the record where the agent cannot rewrite it** (spec 8.2), **and write your own decision
+   back** with `judge.recordResult`, as a record of its own (spec 6.4): executed, failed, or read and
+   not run. Only an executed record is what a later run may carry values from.
 6. **Tell your model how its calls are judged, and what happened to each.** Give it
    `principles-gated.md` as its system prompt, and keep the line in the description that says when
    the labelled lines are checked (section 1). A model that does not know the labels reads them as
@@ -270,9 +275,11 @@ else means it did not: the gate's own reasons (`hold`, `definition_repair`, `exh
 - **Records the agent cannot rewrite** (spec 8.2). Keep `store` outside the agent's reach.
 - **Trust labels are set on arrival** (spec 5.2). Your input path decides what the user typed, never
   the model.
-- **A notice is shown, not acknowledged.** The provider's `[Notice]` lines go with every question and
-  come back in the result (`disclosures`). The gate does not wait for the user to acknowledge one; if
-  your tool needs that, ask for it before the call.
+- **A notice is shown, not acknowledged.** The provider's `[Notice]` lines go with every question. When
+  a run asks nothing, the executing side shows them before it calls the tool (`notify` in `connect.js`,
+  spec 3.3), and its record says which were told and when (`told`). Nothing waits for the user to
+  acknowledge one; if your tool needs that, ask for it before the call. With no `notify` connected, a
+  run that has a notice to show and no question to show it with does not execute.
 
 ## What the library does that you do not write
 

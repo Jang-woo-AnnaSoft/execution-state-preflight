@@ -10,6 +10,7 @@
  *   readToolDefinition  one tool's definition, from that list: the gate reads it itself
  *   measure             your system's values, read when the gate asks, with the values it has settled
  *   labelInput          who wrote each part of an incoming message
+ *   notify              the provider's notices, shown to the user before the tool runs
  *   callTool            the real tool call: your own tool; or the MCP server's
  *   store               where decision records and kept translations go
  *   checkpointer        where a conversation waits while the user answers
@@ -258,6 +259,15 @@ function labelInput({ typed, context = [] }) {
   ];
 }
 
+// ── notify: the provider's notices ─────────────────────────────────────────────────────────────
+// A [Notice] line is told to the user before the tool runs (spec 3.3). The notices go under every
+//   question; when a run asks nothing, they are shown through here, and then the tool runs. Nothing is
+//   waited for: a notice is told, not acknowledged. Put your own way to reach the user here. Without
+//   this function, a run that has a notice to show and no question to show it with does not execute.
+async function notify(lines) {
+  for (const l of lines) console.log(`Note: ${l}`);
+}
+
 // ── store: decision records ────────────────────────────────────────────────────────────────────
 // Append-only. load returns the latest record that executed, for the key (spec 5.2). list returns every
 //   record under the key, oldest first: the gate reads what a conversation was asked, and the kept
@@ -298,7 +308,7 @@ async function readPreSet(userId, toolName) {
 //   example PostgresSaver from @langchain/langgraph-checkpoint-postgres.
 const checkpointer = new MemorySaver();
 
-module.exports = { ask, say, chat, listTools, readToolDefinition, measure, labelInput, callTool, store, readPreSet, checkpointer,
+module.exports = { ask, say, chat, listTools, readToolDefinition, measure, labelInput, notify, callTool, store, readPreSet, checkpointer,
                    MEASUREMENTS, TOOLS, MODEL_NAME, readToolFile, readJsonReply };
 // With the MCP connection above uncommented:
 //   listTools: mcpListTools, readToolDefinition: mcpReadToolDefinition, callTool: mcpCallTool
