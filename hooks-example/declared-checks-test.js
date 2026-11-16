@@ -441,7 +441,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.34");
+    check("schema_version", persisted?.schema_version, "1.35");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -1234,6 +1234,59 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     check("  another user, or another tool, finds none of it",
       [await loadPrior(sp, { userId: "v", tool: "schedule_pickup" }), await loadPrior(sp, { userId: "u", tool: "cancel_pickup" })], [{ none: "absent" }, { none: "absent" }]);
     check("  a storage that cannot load: no report, not none", await loadPrior({ persist: async () => {} }, { userId: "u", tool: "schedule_pickup" }), null);
+  }
+
+  // ══ 14 ═══════════════════════════════════════════════════════════════════════
+  heading("14. optional arguments: on the record, and asked about when the user gave one that did not settle [SAID OPTIONAL]");
+  {
+    const base = tool();
+    const OPT_TOOL = tool(base.description, { ...base.inputSchema, properties: { ...base.inputSchema.properties,
+      note: { type: "string" }, ready_by: { type: "string", format: "date-time" } } });
+    const T = `${TEXT} Leave it with the guard. Ready by 2pm this Saturday.`;
+    const core = { item_id: at(T, "LST-2291"), time: at(T, SAT_2PM), location: at(T, "Hongdae station lockers") };
+    const opts = extract => ({ measured: ALL_MEASURED, tool: OPT_TOOL, text: T, extract: { ...core, ...extract } });
+    const names = list => (list ?? []).map(f => f.name);
+
+    const none = await run(opts({}));
+    check("optional arguments nobody gave: not asked, not counted, not sent",
+      [none.r.execution_decision, none.r.unknown_count, Object.keys(none.r.call_arguments).sort(), names(none.r.extra_fields).sort()],
+      ["execute", 0, ["buyer_contact", "item_id", "location", "time"], ["note", "ready_by"]]);
+
+    const noted = await run(opts({ note: at(T, "Leave it with the guard") }));
+    const note = (noted.persisted.extra_fields ?? []).find(f => f.name === "note") ?? {};
+    check("one the user gave in its form: sent", [noted.r.execution_decision, noted.r.call_arguments.note], ["execute", "Leave it with the guard"]);
+    check("  and the record says where it came from, though it is not a slot",
+      [names(noted.persisted.fields).includes("note"), note.status, note.source, note.located_at?.span, vc(noted.r, "note:format")?.status],
+      [false, "known", "instruction", at(T, "Leave it with the guard").span, "checked"]);
+
+    // The words are the user's, and not in the field's form. Before 1.35: not asked, not sent, executed.
+    const said = await run(opts({ ready_by: at(T, "2pm this Saturday") }));
+    const slot = field(said.r, "ready_by");
+    check("one the user gave in words that are not its form: a slot of this run, asked about, nothing executed",
+      [said.r.execution_decision, said.r.unknown_count, slot.optional, slot.route, said.r.gate.questions.map(q => q.target)],
+      ["ask_user", 1, true, "ask_user", ["value:ready_by"]]);
+    check("  its format check is on the record", [vc(said.r, "ready_by:format")?.status, "ready_by" in said.r.call_arguments], ["rejected", false]);
+    const approved = await run(opts({ ready_by: at(T, "2pm this Saturday") }), { userAnswers: { ready_by: SAT_2PM } });
+    check("  the user approves the value shown: sent", [approved.r.execution_decision, approved.r.call_arguments.ready_by,
+       (approved.r.extra_fields ?? []).find(f => f.name === "ready_by")?.source, names(approved.r.fields).includes("ready_by")],
+      ["execute", SAT_2PM, "user_answer", false]);
+    const dropped = await run(opts({ ready_by: at(T, "2pm this Saturday") }), { userAnswers: { ready_by: { none: "absent" } } });
+    check("  the user says there is none: taken back, not a slot, not sent",
+      [dropped.r.execution_decision, names(dropped.r.fields).includes("ready_by"), "ready_by" in dropped.r.call_arguments], ["execute", false, false]);
+
+    // A user's condition about an optional argument only. With no value for it, nothing is sent and
+    //   nothing is compared; with one, it is compared like any other.
+    const NOTE_RULE = { id: "chk_note", stated_as: "Notes must be short.", constrains: ["note"], compare: { type: "string", maxLength: 10 } };
+    const byLength = (item, ctx) => {
+      const f = [...ctx.fields, ...ctx.extra_fields].find(x => x.name === "note");
+      return f?.status !== "known" ? { ...item, status: "unverified", source: null }
+        : f.value.length <= item.compare.maxLength ? { ...item, status: "verified", source: f.source } : { ...item, status: "unmet", source: f.source, note: "too long" };
+    };
+    const idle = await run({ ...opts({}), over: { verifyUserChecklistItem: byLength } }, { userChecklist: [NOTE_RULE] });
+    check("a user's condition on an optional argument that is not sent: nothing to compare, not counted",
+      [idle.r.user_checklist[0].status, idle.r.unverified_checklist_count, idle.r.execution_decision], ["pending_on_slot", 0, "execute"]);
+    const long = await run({ ...opts({ note: at(T, "Leave it with the guard") }), over: { verifyUserChecklistItem: byLength } }, { userChecklist: [NOTE_RULE] });
+    check("  with a value it is compared: too long is unmet, held", [long.r.user_checklist[0].status, long.r.execution_decision], ["unmet", "hold"]);
   }
 
   console.log(failures ? `\n${failures} FAILED` : "\nall ok");

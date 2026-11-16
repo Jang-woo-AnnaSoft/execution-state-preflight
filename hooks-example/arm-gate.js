@@ -154,8 +154,16 @@ function project(state, preflight, tool) {
       // An approval the user's later words replaced ([SAID AFTER]): the value it had approved, and where
       //   the later words are. Left out, a slot read from the instruction after a yes shows no trace of the yes.
       answer_superseded: f.answer_superseded ?? null,
+      // An optional argument the user gave a value for that did not settle: a slot all the same.
+      optional: f.optional ?? false,
       // A NULL slot has no value; only a known one is projected.
       value: f.status === "known" ? f.value : undefined
+    })),
+    // The optional arguments looked up (library 1.35): sent when known, never counted. Without them a
+    //   value in args that is not a slot has no source in the results file.
+    extra_fields: (state.extra_fields ?? []).map(f => ({
+      name: f.name, status: f.status, source: f.source ?? null, located_at: f.located_at ?? null,
+      note: f.note ?? null, value: f.status === "known" ? f.value : undefined,
     })),
     user_checklist: (state.user_checklist ?? []).map(i => ({
       id: i.id, status: i.status, source: i.source ?? null, note: i.note ?? null,
