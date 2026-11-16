@@ -112,6 +112,9 @@ async function run(id, condition, replies = [], over = {}) {
       [forModel.description.split("\n").filter(l => /^\s*\[/.test(l)), forModel.description.includes("The lines below are checked after this tool is called")], [[], true]);
     check("a label the gate does not know is taken out too: the gate holds it, the model does not judge it",
       toolsForModel([{ name: "t", description: "Does a thing.\n[Requried] Must be agreed.\n  [Beta] Indented." }])[0].description, "Does a thing.");
+    check("lines written as a list, or with the label in bold, are taken out the same way; a task-list box is prose and stays",
+      toolsForModel([{ name: "t", description: "Does a thing.\n- [Required] Must be agreed.\n1. **[Verify]** The place.\n**[Notice] Told.**\n- [x] shipped" }])[0].description,
+      "Does a thing.\n- [x] shipped");
     check("a tool with no description is left as it is", toolsForModel([{ name: "t" }]), [{ name: "t", description: "" }]);
     const seen = g1.shown.flat().map(t => t?.description ?? "");
     check("in the run, every list the model was given had no labelled line", [g1.shown.length > 0, seen.some(d => /^\[(Required|Verify|Notice)\]/m.test(d))], [true, false]);

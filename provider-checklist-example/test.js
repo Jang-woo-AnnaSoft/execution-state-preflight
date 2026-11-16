@@ -53,6 +53,15 @@ async function run(id, condition, over = {}) {
     Object.values(TOOL.inputSchema.properties).flatMap(p => Object.keys(p).filter(k => k === "description" || k.startsWith("x-"))), []);
   check("prose is not a condition", labelledLines("Does a thing.\nNo label here.").length, 0);
   check("any bracketed word is read as a label, typos included", labelledLines("[Requried] X.").map(l => l.label), ["Requried"]);
+  // How a description is laid out is not part of the rule: a list marker or emphasis before the label.
+  //   Read as prose, every condition of a provider who wrote the lines as a list was dropped, unseen.
+  check("a list marker or emphasis before the label: the same line",
+    ["- [Required] X.", "* [Required] X.", "+ [Required] X.", "\u2022 [Required] X.", "1. [Required] X.", "2) [Required] X.",
+     "**[Required]** X.", "- **[Required]** X.", "**[Required] X.**", "`[Required]` X.", "  - [Required] X."]
+      .map(l => labelledLines(l)), Array(11).fill([{ label: "Required", text: "X." }]));
+  check("a label with nothing after it is a line, with no words", labelledLines("[Required]"), [{ label: "Required", text: "" }]);
+  check("a task-list box is not a label; a label in the middle of a line is prose",
+    labelledLines("- [ ] todo\n- [x] done\n* [X] done\nNote: [Required] later in the line"), []);
   check("the stand-in model has a form for every line but the notice", labelledLines(TOOL.description)
     .filter(l => l.label !== "Notice").every(l => PROVIDER_FORMS.some(([s]) => l.text.startsWith(s))), true);
 
@@ -85,6 +94,27 @@ async function run(id, condition, over = {}) {
   typo.description = typo.description.replace("[Required] The sale", "[Requried] The sale");
   const ty = await run("g1-01", "clean", { tool: typo, userAnswers: SAT_2PM });
   check("a typo in the label: held, not dropped", [line(ty, SALE).route, ty.outcome], ["definition_repair", "definition_repair"]);
+
+  // The same declaration written as a list, as tool descriptions on MCP servers often are.
+  const listed = clone(TOOL);
+  listed.description = listed.description.split("\n").map((l, i) => (/^\[/.test(l) ? `${i % 2 ? "-" : `${i}.`} **${l.replace("] ", "]** ")}` : l)).join("\n");
+  const li = await run("g1-01", "clean", { tool: listed, userAnswers: SAT_2PM });
+  check("the lines written as a list: all seven read, the same ids, executed as before",
+    [li.provider_checklist.length, li.provider_checklist.map(c => c.id), li.outcome], [7, g1.provider_checklist.map(c => c.id), g1.outcome]);
+  const liCancelled = await run("g1-01", "order_cancelled", { tool: listed, userAnswers: SAT_2PM });
+  check("  and a cancelled order is held on the [Required] line, as with the plain lines",
+    [liCancelled.outcome, liCancelled.provider_checklist.find(c => c.status === "unmet")?.description], ["hold", line(g1, SALE).description]);
+  const bare = clone(TOOL);
+  bare.description += "\n[Required]";
+  const ba = await run("g1-01", "clean", { tool: bare, userAnswers: SAT_2PM });
+  check("a label with no words: held for definition repair, not dropped",
+    [ba.provider_checklist.length, ba.provider_checklist.at(-1).route, ba.outcome], [8, "definition_repair", "definition_repair"]);
+  // The label's case does not change what it is: the review mark for a value the system also measures.
+  const lower = clone(TOOL);
+  lower.description = lower.description.replace("[Verify] The location", "[verify] The location");
+  const lo = await run("g1-01", "clean", { tool: lower, userAnswers: SAT_2PM });
+  check("a label in lower case is the same label: its line is marked for review too",
+    lo.provider_checklist.find(c => /^The location/.test(c.description))?.form_translation?.review?.also_measured, ["location"]);
 
   const pending = await run("g1-01", "clean", { ctx: { order_status: "pending" }, userAnswers: SAT_2PM });
   check("order not agreed: unmet, held", [line(pending, SALE).status, pending.outcome], ["unmet", "hold"]);
