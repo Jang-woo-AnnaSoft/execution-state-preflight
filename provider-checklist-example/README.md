@@ -42,7 +42,7 @@ either: there is no date parser.
 | A value's form | `tool.js` `FIELD_FORMATS` + a regex in a hook | The input schema: `type`, `format: date-time`, `pattern` for the listing number. Every value's form is a check of its own |
 | Time words ("2pm this Saturday") | Converted to a date in code (`datetime.js`) | Not converted. They fail the format; a model's reading is shown, and the seller approves it |
 | What a user item means | `hooks.js` rules table: `violatesEvening`, `violatesPublicPlace`, `violatesStation` | `compare` on the item, a JSON Schema ([`instructions.json`](./instructions.json)), or the seller's approval where nothing can be compared |
-| Who runs a comparison | The example's own code | The skeleton for who gave a value and for approvals; Ajv with ajv-formats for a measured fact or a value's schema. Strict: a keyword it does not know makes the check unverified, not passed |
+| Who runs a comparison | The example's own code | The library for who gave a value and for approvals; Ajv with ajv-formats for a measured fact or a value's schema. Strict: a keyword it does not know makes the check unverified, not passed |
 | What the hooks do | Locate words, decide what the rules mean, convert time words | Locate words, write forms, read a value in its declared form for the seller to approve, read the seller's replies, hand the schemas to the validator |
 | Where the definition and the measurements come from | Handed in by the arm | Read by the gate through its ports: the definition once the tool is called, each measurement with the values the gate settled |
 
@@ -66,7 +66,7 @@ ask: the model asks, and code holds the answer to what was shown.
 | `[Notice]` The buyer sees the time and location immediately … | none: a disclosure |
 
 **Reading the lines.** A line that starts with a bracketed word is a condition, and the word is its
-label. This is matching, not interpretation. A word the skeleton does not know, such as a typo like
+label. This is matching, not interpretation. A word the library does not know, such as a typo like
 `[Requried]`, is held for definition repair, not dropped as prose.
 
 **How a line is checked.** A sentence cannot be compared as it stands (spec 3.3). The first time the
@@ -146,7 +146,7 @@ over-eager one also quotes the seller's limits.
 - that the outcome changes are exactly these;
 - that a schema the validator cannot run leaves the check unverified;
 - that the gate's code (`adopt-example/judge-only.js` and `gate.js`) names no slot, condition or item,
-  holds no comparison keyword of its own, and loads nothing but LangGraph, the skeleton and the validator.
+  holds no comparison keyword of its own, and loads nothing but LangGraph, the library and the validator.
 
 `adopt-test.js` checks `adopt-example/` itself, from here, so that folder holds no test files:
 
@@ -171,7 +171,7 @@ over-eager one also quotes the seller's limits.
 ## In a LangGraph graph
 
 The gate runs in a [LangGraph](https://docs.langchain.com/oss/javascript/langgraph/interrupts.md) graph
-(`buildGraph` in `adopt-example/gate.js`), without changing the skeleton. It runs as an agent does in
+(`buildGraph` in `adopt-example/gate.js`), without changing the library. It runs as an agent does in
 use: the model calls a tool, and the gate stands between that call and the server.
 
 ```
@@ -205,7 +205,7 @@ START → agent ─ tool call ─→ gate ─ something to ask ─→ ask_user �
 `graph-test.js` checks each of these. It also checks that the graph's first verdict equals the arm's
 in all 35 runs. The validator and LangGraph are installed in `adopt-example/` (pinned: ajv 8.20.0,
 ajv-formats 3.0.1, @langchain/langgraph 1.5.2, @langchain/core 1.2.20, zod 4.6.7, langchain 1.5.19,
-@modelcontextprotocol/client 2.4.0). The skeleton still has none.
+@modelcontextprotocol/client 2.4.0). The library still has none.
 
 ## What this folder does not do yet
 
@@ -214,7 +214,7 @@ ajv-formats 3.0.1, @langchain/langgraph 1.5.2, @langchain/core 1.2.20, zod 4.6.7
   move here once the declarations are settled.
 - **No real model for the forms, the readings or the replies.** The forms a model writes for each line
   and condition, its reading of time words, and where a reply says yes come from the stand-in
-  (`stub.js`). What the gate does with them is the real skeleton.
+  (`stub.js`). What the gate does with them is the real library.
 - **No real MCP server.** The MCP connection in `adopt-example/connect.js` is kept as comments and is
   checked only for syntax here.
 - **Model judgments the gate does not check.** Two remain, as the specification states. Whether to

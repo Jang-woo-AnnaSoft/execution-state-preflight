@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * The LangGraph flow around the unchanged skeleton (adopt-example/gate.js). No API calls; the models are
+ * The LangGraph flow around the unchanged library (adopt-example/gate.js). No API calls; the models are
  * stub.js.
  *
  *   npm install && node graph-test.js

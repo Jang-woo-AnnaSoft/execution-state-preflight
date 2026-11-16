@@ -200,7 +200,7 @@ async function run(id, condition, over = {}) {
   check("no item id appears in judge-only.js or gate.js code", [...new Set(ids)].filter(id => src.includes(id)), []);
   check("no measurement name appears in judge-only.js or gate.js code", ["order_status", "listing_owned_by_seller"].filter(n => src.includes(n)), []);
   const requires = text => [...text.matchAll(/require\("([^"]+)"\)/g)].map(m => m[1]);
-  check("judge-only.js loads the skeleton and a validator, nothing else", requires(judgeSrc),
+  check("judge-only.js loads the library and a validator, nothing else", requires(judgeSrc),
     ["./execution-state-preflight", "../execution-state-preflight", "ajv", "ajv-formats"]);
   check("gate.js loads LangGraph and judge-only.js, nothing else", requires(gateSrc), ["@langchain/langgraph", "./judge-only"]);
   // pattern and format appear only as keys passed through from the schema to the question form.

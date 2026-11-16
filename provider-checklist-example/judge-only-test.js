@@ -103,7 +103,7 @@ async function run(id, condition, replies = [], over = {}) {
   {
     const lines = TOOL.description.split("\n");
     const forModel = toolsForModel([TOOL])[0];
-    check("it is the skeleton's function: judge-only.js only hands it on",
+    check("it is the library's function: judge-only.js only hands it on",
       [toolsForModel === require("../execution-state-preflight").toolsForModel, createJudge({ ask() {}, readToolDefinition() {}, storage: createStorage() }).toolsForModel === toolsForModel], [true, true]);
     check("the tool has labelled lines, and the gate read all of them", [lines.filter(l => /^\[/.test(l)).length, verdict?.provider_checklist?.length], [7, 7]);
     check("what the model is given keeps the prose and the input schema", [forModel.description, forModel.inputSchema, forModel.name],
@@ -133,7 +133,7 @@ async function run(id, condition, replies = [], over = {}) {
       [Boolean(place), place?.user.includes("Measurements this system can read: order_status, listing_owned_by_seller, buyer_contact, time, location"),
        place?.user.includes("A line that says who gives a field's value is this kind, also for a field that is also a measurement"),
        place?.user.includes("Not for a line that only says who gives a value")], [true, true, true, true]);
-    // And the kept translations of those lines are marked for review: judge-only.js hands the skeleton
+    // And the kept translations of those lines are marked for review: judge-only.js hands the library
     //   the names connect.js can measure ([ALSO MEASURED]).
     const reviewed = (verdict?.provider_checklist ?? []).filter(c => c.form_translation?.review).map(c => [c.label, c.form_translation.review.also_measured]);
     check("  the [Verify] lines on time and location are marked for review; the item, not measured, and [Required] lines are not",
@@ -357,7 +357,7 @@ async function run(id, condition, replies = [], over = {}) {
     const stops = r.prompts.filter(p => p.hook === "stop");
     check("  the seller is told why, in the model's words: one writer call each time it stops",
       [r.first.message, stops.length], ["I did not schedule it.", 2]);
-    check("  the writer is given the skeleton's facts: the condition's words, whose, what was found",
+    check("  the writer is given the library's facts: the condition's words, whose, what was found",
       r.first.stop, { decision: "hold", items: [{ why: "not_allowed", condition: agreed.description, set_by: "provider", found: 'order_status = "cancelled": data must be equal to constant' }] });
     check("  no ids or hashes in what the writer is given", [stops[0].user.includes("The sale must be agreed"), /schedule_pickup:\d|\d+-[0-9a-z]{8,}/.test(stops[0].user)], [true, false]);
     check("  what the seller was told is in the conversation the next turn starts from",
@@ -407,7 +407,7 @@ async function run(id, condition, replies = [], over = {}) {
     check("the tool is not matched: waiting, with the gate's own words and no values",
       [once.first.status, once.first.question?.message, once.first.question?.block], ["waiting", "I could not tell which action this maps to. Please describe what you want done, in your own words.", []]);
     check("  the user says it again: the run goes on to the values, and executes on yes", [once.last.status, once.calls.length, once.calls[0]?.args.time], ["executed", 1, SAT_2PM]);
-    // Never matched: the skeleton counts the asks from the unit's records and stops.
+    // Never matched: the library counts the asks from the unit's records and stops.
     const never = await run("g1-01", "clean", ["again", "again", "again"],
       { ask: (m, s, u, h) => (h === "tool_match" ? { approved: false, reason: "stand-in" } : stub(m, s, u, h)) });
     check("  never matched: it stops asking, nothing runs, and the gate's last words are passed on",
