@@ -433,9 +433,31 @@ async function run(id, condition, replies = [], over = {}) {
     const mem = await run("g6-02", "clean", ["yes"]);
     const memFirst = verdicts(mem)[0];
     check("g6-02, a value a model remembered: not a setting, shown to the seller, used once approved",
-      [loc(memFirst).status, loc(memFirst).stored_candidate?.stored_by, (memFirst?.gate?.question_block ?? []).includes('location = "Hongdae station lockers"'),
+      [loc(memFirst).status, loc(memFirst).stored_candidate?.stored_by, (memFirst?.gate?.question_block ?? []).includes('location = "Hongdae station lockers" (remembered, not saved by you)'),
        mem.last.status, loc(verdicts(mem).at(-1)).source],
       ["unknown", "model_memory", true, "executed", "user_answer"]);
+    // A candidate made from the seller's words now carries no origin: it is their words, put in the form.
+    {
+      const g1 = await run("g1-01", "clean", ["yes"]);
+      check("  a proposal from the seller's words is shown without an origin",
+        (verdicts(g1)[0]?.gate?.question_block ?? []).includes("time = 2026-10-31 (Sat) 14:00 +09:00"), true);
+    }
+    // [SETTLED] What the gate already holds goes back to the model with its call's result. A real model,
+    //   its call saying "my usual spot" and the place settled from the seller's setting, asked the seller
+    //   where that was, outside the gate.
+    {
+      const usual = await run("g6-01", "clean", ["yes"], {
+        chat: async () => ({ toolCall: { name: TOOL.name, arguments: { item_id: "LST-2291", time: "2026-10-31T14:00:00+09:00", location: "my usual spot" } } }) });
+      const first = verdicts(usual)[0];
+      const told = JSON.stringify(usual.heard.at(-1) ?? []);
+      check("g6-01, the call says \"my usual spot\": the place settled from the setting is told to the model with the call's result",
+        [(first?.gate?.settled_block ?? []).includes('location = "Hongdae station lockers" (your saved setting)'),
+         told.includes('Already settled, not to be asked:\\n- location = \\"Hongdae station lockers\\" (your saved setting)')],
+        [true, true]);
+      check("  a value the call carries as it is is not listed; the user is not shown the list",
+        [(first?.gate?.settled_block ?? []).some(l => l.startsWith("item_id")), usual.first.question?.message?.includes("Already settled") ?? false],
+        [false, false]);
+    }
     // [CALL DISAGREES] compares the call only with a value made from the seller's words. A real model,
     //   after the seller approved the remembered place, called again with the seller's "my usual spot".
     const pointing = async () => ({ toolCall: { name: TOOL.name, arguments: { time: "2026-10-31T14:00:00+09:00", location: "my usual spot" } } });
@@ -454,8 +476,8 @@ async function run(id, condition, replies = [], over = {}) {
     const againFirst = verdicts(again)[0];
     check("g6-03, \"same place as last time\": the last pickup's place shown as a candidate, used once approved",
       [loc(againFirst).prior_candidate?.value, loc(againFirst).prior_candidate?.action_key === earlier.key,
-       (againFirst?.gate?.question_block ?? []).includes('location = "Hongdae station lockers"'), again.last.status, loc(verdicts(again).at(-1)).source],
-      ["Hongdae station lockers", true, "unknown" === "unknown", "executed", "user_answer"]);
+       (againFirst?.gate?.question_block ?? []).includes('location = "Hongdae station lockers" (the last time)'), again.last.status, loc(verdicts(again).at(-1)).source],
+      ["Hongdae station lockers", true, true, "executed", "user_answer"]);
     const none = await loadPrior(createStorage(), { userId: "user", tool: TOOL.name });
     check("  nothing executed before: the caller looked, none (not \"no report\")", none, { none: "absent" });
     const failedStore = createStorage();
@@ -527,8 +549,8 @@ async function run(id, condition, replies = [], over = {}) {
     const conversation = s.connect.labelInput({ typed: "x" });
     const toolCall = (await s.connect.chat()).toolCall;
     const r1 = await judge.run({ unitKey: "u1", conversation, toolCall });
-    check("it returns the key, what to ask, the gate's own words, the notices and the reason", Object.keys(r1),
-      ["key", "ask", "questions", "block", "message", "options", "notices", "reason"]);
+    check("it returns the key, what to ask, what is settled, the gate's own words, the notices and the reason", Object.keys(r1),
+      ["key", "ask", "questions", "block", "settled", "message", "options", "notices", "reason"]);
     conversation.push({ trust: "assistant", text: ["q", ...r1.block.map(l => `- ${l}`)].join("\n") }, ...realConnect.labelInput({ typed: "yes" }));
     const r2 = await judge.run({ unitKey: "u1", conversation, toolCall });
     const rec = (await s.store.list(r2.key)).at(-1);

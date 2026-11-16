@@ -90,6 +90,8 @@ const LOCKERS = "Hongdae station lockers";
 
   const g1 = await drive("g1-01", "clean", ["yes"]);
   check("g1-01: the first question shows the model's reading of '2pm this Saturday'", g1.questions[0]?.block?.[0], "time = 2026-10-31 (Sat) 14:00 +09:00");
+  check("  [SETTLED] the place the seller named, which the call left out, goes to the model with the call's result",
+    JSON.stringify(g1.turns[1]?.messages ?? []).includes('- location = \\"Hongdae station lockers\\" (your words)'), true);
   check("  yes: executed with that moment, and the location the seller named", [g1.state.ended, g1.calls[0]?.args.time, g1.calls[0]?.args.location],
     ["executed", SAT_2PM, LOCKERS]);
   const corrected = await drive("g1-01", "clean", ["no, Saturday 3pm", "yes"]);
