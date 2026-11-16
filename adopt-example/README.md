@@ -185,7 +185,9 @@ breaking one leaves a record that is right about an execution that was not.
    conditions to meet before calling: with a real model and the lines alone, it did not call, and
    asked the user for a fact only the system could check; with both, it called at once and left the
    asking to the gate. Show the gate's answer, a question, a stop or a run, as the result of the
-   model's call (`messagesFor`, `afterCall` in `judge-only.js`): a real model shown the gate's reason
+   model's call (`messagesFor`, `afterCall` in `judge-only.js`), with `r.settled` when it asks: the
+   values the gate already holds that the call does not carry as they are, so the model does not ask
+   for them itself: a real model shown the gate's reason
    as its own words took it back, on the next turn, as made up. Where you hand the model its tool
    list yourself you may also take the labelled lines out (`judge.toolsForModel`); a host that lists
    a server's tools itself shows the whole description. The gate reads the full definition either way.

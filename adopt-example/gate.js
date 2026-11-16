@@ -124,6 +124,7 @@ function buildGraph({ ask, say, chat, listTools, readToolDefinition, measure, ca
       tool: st.tool_call?.name ?? null,
       questions: st.gate?.questions ?? [],
       question_block: st.gate?.question_block ?? [],
+      settled_block: st.gate?.settled_block ?? [],
       disclosures: (st.gate?.disclosures ?? []).map(d => d.description),
       fields: (st.fields ?? []).map(f => ({ name: f.name, status: f.status, source: f.source ?? null, route: f.route ?? null })),
       user_checklist: (st.user_checklist ?? []).map(i => ({ id: i.id, status: i.status, source: i.source ?? null })),
@@ -147,7 +148,7 @@ function buildGraph({ ask, say, chat, listTools, readToolDefinition, measure, ca
     const words = text ?? "Before this can run, please answer:";
     const block = [...v.question_block, ...v.disclosures.map(d => `Note: ${d}`)];
     const message = [words, ...block.map(l => `- ${l}`)].join("\n");
-    return { question: { text: words, block, message }, conversation: [afterCall(state.toolCall, "waiting", message)] };
+    return { question: { text: words, block, message }, conversation: [afterCall(state.toolCall, "waiting", message, v.settled_block)] };
   }
 
   // Waits for the user's reply. Runs again from the top on resume, so nothing before interrupt() may

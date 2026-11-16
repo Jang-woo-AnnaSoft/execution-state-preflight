@@ -484,7 +484,11 @@ function messagesFor(conversation) {
   return (conversation ?? []).flatMap(s => {
     const c = s.after_call;
     if (c) {
-      const result = [CALL_RESULT[c.status] ?? c.status, s.text].filter(Boolean).join("\n");
+      // What the gate already holds, for the model to know it is not missing ([SETTLED]): read from the
+      //   record by the library, not written by a model.
+      const settled = Array.isArray(c.settled) && c.settled.length
+        ? ["Already settled, not to be asked:", ...c.settled.map(l => `- ${l}`)].join("\n") : "";
+      const result = [CALL_RESULT[c.status] ?? c.status, s.text, settled].filter(Boolean).join("\n");
       return [{ role: "assistant", content: "", tool_calls: [{ id: c.id, name: c.name, args: c.arguments ?? {} }] },
               { role: "tool", tool_call_id: c.id, name: c.name, content: result }];
     }
@@ -496,9 +500,11 @@ function messagesFor(conversation) {
 // The segment that ends a call's turn: the gate reads it as the assistant's words (text), the model as
 //   its call and the call's result (messagesFor). status: waiting, not_executed, executed, failed.
 let callSeq = 0;
-function afterCall(toolCall, status, text = "") {
+//   settled: the gate's settled_block when it asks (r.settled), told to the model only, not to the user.
+function afterCall(toolCall, status, text = "", settled = []) {
   return { trust: "assistant", text,
-           after_call: { id: toolCall?.id ?? `call_${++callSeq}`, name: toolCall?.name ?? null, arguments: toolCall?.arguments ?? null, status } };
+           after_call: { id: toolCall?.id ?? `call_${++callSeq}`, name: toolCall?.name ?? null, arguments: toolCall?.arguments ?? null, status,
+                         ...(Array.isArray(settled) && settled.length ? { settled } : {}) } };
 }
 
 // Why it did not run, told to the user. The facts are the library's (stopFacts), read from the record
@@ -609,6 +615,9 @@ function createJudge({ ask, measure, readToolDefinition, measurements = [], stor
       ask: asking,
       questions: asking ? (st.gate?.questions ?? []) : [],
       block: asking ? [...(st.gate?.question_block ?? []), ...(st.gate?.disclosures ?? []).map(d => `Note: ${d.description}`)] : [],
+      // What is already settled that the model's call does not carry as it is: for the model, with the
+      //   call's result (afterCall), so it does not ask for it again. Not shown to the user.
+      settled: asking ? (st.gate?.settled_block ?? []) : [],
       // The gate's own words, when it could not tell what is wanted, or which tool it maps to. Shown as
       //   they are: there is nothing yet for a model to ask about. options: what to choose between, if any.
       message: typeof st.gate?.user_message === "string" ? st.gate.user_message : null,

@@ -113,7 +113,7 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
     const r = await judge.run({ unitKey: threadId, conversation, toolCall, userChecklist });   // 3
     if (r.questions.length > 0) {
       const question = await askUser(conversation, r);                                         // 2
-      conversation.push(afterCall(toolCall, "waiting", question.message));
+      conversation.push(afterCall(toolCall, "waiting", question.message, r.settled));
       return { status: "waiting", question, notices: r.notices };
     }
     // The gate could not tell what is wanted, or which tool it maps to. Its own words are shown as they
