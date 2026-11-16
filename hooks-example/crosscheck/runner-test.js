@@ -2,11 +2,11 @@
 /**
  * Checks the cross-check runner's own wiring, with a case written here (none of theirs is vendored).
  *
- * What is checked: hooks.candidate_slots reaches the skeleton as getCandidateSlots, and cases in
+ * What is checked: hooks.candidate_slots reaches the library as getCandidateSlots, and cases in
  *   candidate_set_cases are run and compared. Without the wiring the narrowed case would run with the
- *   skeleton's default candidate set and execute — a match against a wrong expectation would then
+ *   library's default candidate set and execute — a match against a wrong expectation would then
  *   look like agreement. With it, the required slots the override leaves out are never looked up,
- *   and the skeleton routes them to definition_repair (gate-test case 16 covers the skeleton side).
+ *   and the library routes them to definition_repair (gate-test case 16 covers the library side).
  *
  *   node crosscheck/runner-test.js
  */
@@ -39,7 +39,7 @@ const base = (narrow) => ({
 });
 const variants = [{ name: "plain", provider_conditions: [] }];
 // A case that answers: amount is not in the extraction, so the asking round asks for it; account is,
-//   so an answer for it was never asked for and is refused (skeleton 1.18).
+//   so an answer for it was never asked for and is refused (library 1.18).
 const answering = () => {
   const b = base(false);
   delete b.hooks.extract.amount;

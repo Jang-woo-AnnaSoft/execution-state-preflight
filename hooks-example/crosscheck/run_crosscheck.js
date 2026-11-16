@@ -1,14 +1,14 @@
 "use strict";
 /**
- * Cross-check runner: someone else's cases, run through the actual skeleton.
+ * Cross-check runner: someone else's cases, run through the actual library.
  *
  * Built for the covenant project's case file (Hugging Face thread 183807): transaction cases written in
- * this skeleton's input shape, with every hook output given as case data, and their own expected
+ * this library's input shape, with every hook output given as case data, and their own expected
  * decision per case and variant, computed by a port they wrote from the text of this code.
  *
- * WHAT THIS TESTS: what the skeleton decides, given those claims. Hooks here are stand-ins that return
+ * WHAT THIS TESTS: what the library decides, given those claims. Hooks here are stand-ins that return
  *   the case data. hooks.js, extraction, and real measurement are not exercised. A match says the port
- *   and the skeleton agree on the decision logic; it says nothing about how good the claims are.
+ *   and the library agree on the decision logic; it says nothing about how good the claims are.
  *
  * SAFETY: the case files are read as data (JSON.parse). No code from the case file's authors is run.
  *
@@ -22,7 +22,7 @@
  *   measured_data[condition.measured_key] = {valid, value} and reports measured_data as the source.
  *   candidate_slots: string[] = an adopter's getCandidateSlots override (cases in candidate_set_cases).
  *
- * The case files were written for the skeleton's earlier input, which took the tool, the measurements and
+ * The case files were written for the library's earlier input, which took the tool, the measurements and
  *   the answers as input. The gate now reads them through its ports, so the runner hands the case data to
  *   the ports, unchanged: input.mcpTool is what readToolDefinition returns, measured_data what measure
  *   reads, and input.userAnswers / checklistAnswers the user's reply to the round that asked (see askFirst).
@@ -56,7 +56,7 @@ function compose(base, v) {
 function memStorage() {
   const m = new Map();
   return { persist: async (k, r) => { if (!m.has(k)) m.set(k, []); m.get(k).push(r); }, load: async k => m.get(k) ?? null,
-           // Every record under the key, oldest first. Since skeleton 1.18 the gate reads what the unit
+           // Every record under the key, oldest first. Since library 1.18 the gate reads what the unit
            //   was asked, and how often, this way.
            list: async k => [...(m.get(k) ?? [])] };
 }
@@ -68,7 +68,7 @@ function hooksFor(c, unitKey) {
     if (has(H, unsupported)) throw new Error(`case data "${unsupported}" is not wired in this runner yet`);
   }
   return {
-    // An adopter's getCandidateSlots override, as case data. Absent → the skeleton's own reference body.
+    // An adopter's getCandidateSlots override, as case data. Absent → the library's own reference body.
     ...(has(H, "candidate_slots") ? { getCandidateSlots: () => clone(val(H.candidate_slots)) } : {}),
     classifyWhenCase: () => val(H.c1),
     extractUserActionName: () => (has(H, "c2_claim") ? val(H.c2_claim) : undefined),
@@ -83,9 +83,9 @@ function hooksFor(c, unitKey) {
     },
     // One key per case run, the same in each of its rounds (the asking round, the run, the trigger re-run).
     buildActionKey: () => unitKey,
-    // Since skeleton 1.16 an unwired validator reads as unverified (definition_repair). The cases do not
+    // Since library 1.16 an unwired validator reads as unverified (definition_repair). The cases do not
     //   exercise validation (the port they were written against had none), so the runner reports values
-    //   checked unless a case asks for the skeleton's own defaults with hooks.validators: "default".
+    //   checked unless a case asks for the library's own defaults with hooks.validators: "default".
     ...(H.validators === "default" ? {} : { validateFieldSchema: () => null, validatePayload: () => null }),
     getProviderConditions: () => clone(c.provider_conditions ?? []),
     verifyProviderCondition: cond => {
@@ -109,7 +109,7 @@ function summarize(r) {
   const bits = [];
   for (const f of r.fields ?? []) bits.push(`${f.name}=${f.status}${f.source ? `(${f.source})` : f.route ? `->${f.route}` : ""}`);
   for (const p of r.provider_checklist ?? []) if (p && "status" in p) bits.push(`${p.id}:${p.status}${p.route ? `->${p.route}` : ""}`);
-  // The skeleton keeps the intent gate's issues under gate._diag.issues; their port reads gate.issues.
+  // The library keeps the intent gate's issues under gate._diag.issues; their port reads gate.issues.
   const issues = r.gate?.issues ?? r.gate?._diag?.issues;
   if (r.phase == null && issues?.length) bits.push("intent issues: " + issues.map(i => `${i.slot}:${i.code} ${i.detail ?? ""}`).join("; "));
   if (r.gate?.kind) bits.push(`kind=${r.gate.kind}`);
@@ -233,7 +233,7 @@ function spanWarnings(id, input, hooks) {
     console.log(`\nAgainst ${path.basename(EXPECTED)}: decision or phase differs in ${dd.length}, summary only in ${sd.length}.`);
     for (const r of [...dd, ...sd]) {
       console.log(`\n${r.id} / ${r.variant}${r.decision_differs ? "  [DECISION]" : "  [summary]"}`);
-      console.log(`  skeleton: ${r.ours.phase} ${r.ours.why}${r.ours.at_trigger_rerun ? `  | trigger: ${r.ours.at_trigger_rerun.why}` : ""}`);
+      console.log(`  library: ${r.ours.phase} ${r.ours.why}${r.ours.at_trigger_rerun ? `  | trigger: ${r.ours.at_trigger_rerun.why}` : ""}`);
       console.log(`  expected: ${r.theirs?.phase} ${r.theirs?.why}${r.theirs?.at_trigger_rerun ? `  | trigger: ${r.theirs.at_trigger_rerun.why}` : ""}`);
     }
   }
