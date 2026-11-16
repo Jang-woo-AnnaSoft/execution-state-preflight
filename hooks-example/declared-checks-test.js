@@ -280,14 +280,40 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const APPROVE = { id: "chk_public", label: "Verify", stated_as: "Public places only.", constrains: ["location"] };
     const approvedFromAnswers = (item, ctx) => (ctx?.checklistAnswers?.[item.id] === true
       ? { ...item, status: "verified", source: "user_answer" } : { ...item, status: "unverified", source: null });
-    const sched = await run({ measured: ALL_MEASURED, when: "scheduled", over: { verifyUserChecklistItem: approvedFromAnswers } },
-      { userChecklist: [APPROVE] });
+    // [APPROVED AT INSTRUCTION] 4.5: what is confirmed by asking the user is confirmed at instruction time.
+    //   The item is the seller's to approve, and the place is settled, so it is asked before scheduling.
+    //   Before 1.33 the run was scheduled unasked, and the first question came at the trigger.
+    const schedOver = { measured: ALL_MEASURED, when: "scheduled", over: { verifyUserChecklistItem: approvedFromAnswers } };
+    const asking = await run(schedOver, { userChecklist: [APPROVE] });
+    const q = (asking.r.gate?.questions ?? [])[0] ?? {};
+    check("scheduled, an item the seller approves: asked at instruction time, not scheduled unasked",
+      [asking.r.phase, asking.r.execution_decision, q.target, q.shown], ["at_instruction", "ask_user", "approve:chk_public", { location: "Hongdae station lockers" }]);
+    check("  the record says what was asked now", [asking.r.user_checklist[0].approval_asked_at, asking.r.gate.unverified_checklist.map(i => i.id)],
+      ["at_instruction", ["chk_public"]]);
+    const refused = await run(schedOver, { userChecklist: [APPROVE], checklistAnswers: { chk_public: false } });
+    check("  a no: held now, not scheduled to be held", [refused.r.execution_decision, refused.r.gate.kind, refused.r.gate.unmet.map(u => u.id), "deferred_input" in refused.r],
+      ["hold", "unmet", ["chk_public"], false]);
+    const store = memStorage();
+    const sched = await run({ ...schedOver, storage: store }, { userChecklist: [APPROVE], checklistAnswers: { chk_public: true } });
+    check("  a yes: scheduled, with the approval on the record", [sched.r.execution_decision, sched.r.user_checklist[0].approved_at, sched.r.user_checklist[0].approval?.shown],
+      ["deferred", "at_instruction", { location: "Hongdae station lockers" }]);
     const din = sched.r.deferred_input ?? {};
+    check("  the items the deferred run carries are as declared", "approval" in (din.userChecklist?.[0] ?? {}), false);
+    // The trigger runs on what was deferred, in the same unit. The yes is in the conversation it carries.
+    {
+      const h = hooks({ measured: ALL_MEASURED, over: { verifyUserChecklistItem: approvedFromAnswers }, tool: tool() });
+      const reply = answerRound(h, SAID, { userAnswers: {}, checklistAnswers: { chk_public: true } });
+      const atTrigger = await createPreflight({ hooks: reply.hooks, storage: store }).runPreflightAndRecord({ userId: "u", ...din });
+      check("  at the trigger nothing is asked: the yes given at instruction time counts, and it executes",
+        [atTrigger.phase, atTrigger.execution_decision, atTrigger.user_checklist[0].status, atTrigger.gate.questions ?? null],
+        ["at_trigger", "execute", "verified", null]);
+    }
     check("a deferred record carries the version it was scheduled under", din.checklist_digest_at_instruction, sched.r.checklist_digest);
     check("  and the tool call, for the trigger to run on", din.toolCall?.name, "schedule_pickup");
 
-    // At the trigger the seller is asked to approve, and replies. The question carries the item's version
-    //   and the place shown; the seller's yes is bound to both.
+    // A rule that changed in between is asked about again at the trigger: there the seller is asked to
+    //   approve, and replies. The question carries the item's version and the place shown; the seller's
+    //   yes is bound to both.
     const trigger = (asked, now) => run({ measured: ALL_MEASURED, over: { verifyUserChecklistItem: approvedFromAnswers },
         askInput: { userId: "u", instruction: SAID, toolCall: { name: "schedule_pickup" }, userChecklist: asked,
                     checklist_digest_at_instruction: din.checklist_digest_at_instruction } },
@@ -410,7 +436,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.32");
+    check("schema_version", persisted?.schema_version, "1.33");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
