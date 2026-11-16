@@ -1661,6 +1661,10 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 function weekdayOf(y, m, d) {
   return WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
 }
+// Where a value came from, in the user's terms: shown with a choice ([LOWER DIFFERS]), with a candidate
+//   that was not made from the user's words now, and with what is already settled ([SETTLED]).
+const FROM_TEXT = { instruction: "your words", user_answer: "your answer", pre_set_data: "your saved setting",
+                    stored: "remembered, not saved by you", prior_state: "the last time", measured_data: "from the system" };
 function renderValue(value, schema) {
   const fmt = schema && typeof schema === "object" ? schema.format : undefined;
   if (typeof value === "string" && fmt === "date-time") {
@@ -2994,10 +2998,9 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
           (valueSourceRule(c)?.slot === f.name || (Array.isArray(c.constrains) && c.constrains.includes(f.name))))
         .map(c => ({ id: c.id ?? null, label: c.label ?? null, text: c.description ?? null }));
       if (f.lower_differs) {
-        const FROM = { instruction: "your words", pre_set_data: "your saved setting", stored: "remembered, not saved by you", prior_state: "the last time" };
         const choices = [{ value: f.lower_differs.said.value, from: "instruction" },
                          { value: f.lower_differs.other.value, from: f.lower_differs.other.from }]
-          .map(c => ({ ...c, shown_text: renderValue(c.value, schema), from_text: FROM[c.from] ?? c.from }));
+          .map(c => ({ ...c, shown_text: renderValue(c.value, schema), from_text: FROM_TEXT[c.from] ?? c.from }));
         questions.push({ target: `value:${f.name}`, kind: "value", slot: f.name, schema: schema ?? null, lines, choices });
         block.push(`${f.name}: ${choices.map(c => `${c.shown_text} (${c.from_text})`).join(" or ")} — which one?`);
         continue;
@@ -3020,7 +3023,8 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
         const v = schema === undefined || schema === null ? null
           : await safeHook(h.validateFieldSchema, [proposal, schema, ctx, f.name], e => ({ unverified: e?.message ?? String(e) }));
         if (v === null || v === undefined) {
-          candidate = { value: proposal, from, shown_text: renderValue(proposal, schema) };
+          candidate = { value: proposal, from, shown_text: renderValue(proposal, schema),
+                        ...(FROM_TEXT[from] ? { from_text: FROM_TEXT[from] } : {}) };
           checks.push({ id: `${f.name}:candidate`, kind: "candidate", slot: f.name, status: "checked",
                         source: from === "prior_state" ? "prior_state" : null, note: "shown to the user to approve" });
         } else {
@@ -3035,7 +3039,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
       questions.push({ target: `value:${f.name}`, kind: "value", slot: f.name, schema: schema ?? null, lines,
                        ...(candidate ? { candidate } : {}), ...(disagrees ? { disagrees } : {}) });
       block.push(candidate
-        ? `${f.name} = ${candidate.shown_text}${disagrees ? ` — the assistant's call has ${disagrees.call_shown}` : ""}`
+        ? `${f.name} = ${candidate.shown_text}${candidate.from_text ? ` (${candidate.from_text})` : ""}${disagrees ? ` — the assistant's call has ${disagrees.call_shown}` : ""}`
         : `${f.name}: not given yet`);
     }
     for (const it of approveItems) {
@@ -3058,7 +3062,17 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
                        withdrawn_by: it.withdrawal.quote });
       block.push(`"${it.stated_as}" — remove this condition? (you said: "${it.withdrawal.quote}")`);
     }
-    return { questions, block, checks };
+    // [SETTLED] The values already settled that the model's call does not carry as they are: the model
+    //   reads its own call, and a real model, its call saying "my usual spot" and the place settled from
+    //   the seller's saved setting, asked the seller where that was, outside the gate. Not asked, not to
+    //   be approved: what the gate holds, for the model to know.
+    const askedNames = new Set(askFields.map(f => f.name));
+    const args = tool_call.arguments && typeof tool_call.arguments === "object" ? tool_call.arguments : {};
+    const settled = values
+      .filter(f => f?.status === "known" && !askedNames.has(f.name) && FROM_TEXT[f.source] &&
+                   !(f.name in args && sameCallValue(args[f.name], f.value, ctx.fieldSchemas?.[f.name])))
+      .map(f => `${f.name} = ${renderValue(f.value, ctx.fieldSchemas?.[f.name])} (${FROM_TEXT[f.source]})`);
+    return { questions, block, checks, settled };
   }
   // [FORM TRIED] What a proposed form says about the values shown with it, computed by code with the
   //   same comparison the gate will run (verifyUserChecklistItem). A form is code the user cannot read;
@@ -3292,7 +3306,8 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
           ...(decision === "exhausted" ? { kind: "exhausted",
             exhausted: [{ route: "ask_user", attempt: askAttempt, limit: h.limits.ask, names: blocking.map(f => f.name) }] } : {}),
           next_ask_attempt: decision === "ask_user" ? askAttempt + 1 : (askExhaustedNow ? null : askAttempt),
-          ...(asked ? { questions: asked.questions, question_block: asked.block, asked_through: askedThrough } : {}),
+          ...(asked ? { questions: asked.questions, question_block: asked.block, asked_through: askedThrough,
+                        ...(asked.settled.length ? { settled_block: asked.settled } : {}) } : {}),
           // Recorded, not blocking: these are answered at the trigger (see above).
           ...(systemNow.length ? { deferred_system_lookup: systemNow.map(f => f.name) } : {}),
           _diag: { phase, pending_at_trigger: pendingCount, lookup_failures: lookupFailures(fields) },
@@ -3858,6 +3873,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
     value_checks.push(...asked.checks);
     gate.questions = asked.questions;
     gate.question_block = asked.block;
+    if (asked.settled.length) gate.settled_block = asked.settled;
     gate.asked_through = askedThrough;
   }
   if (execution_decision === "exhausted") {
@@ -3965,7 +3981,10 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.29",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.30",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.30: a candidate not made from the user's words now carries from_text, and its block line says
+    //        where it came from; an asking gate carries settled_block, the settled values the model's
+    //        call does not carry as they are ([SETTLED]).
     //   1.29: a value approval carries shown_from (where the shown value came from: model, approved, stored,
     //        prior_state); [CALL DISAGREES] compares the call only with a value made from the user's words.
     //   1.28: a value from the user's words, in the field's form, that a stored value contradicts is not
