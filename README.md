@@ -138,6 +138,8 @@ Two lines came from running real models:
 - **The second line, without a label.** A model that does not know this specification reads the labelled lines as conditions to meet before calling. So the description says, in a line of its own, that they are checked after the call (spec 4.2.1).
 - **"not a place read from the platform."** For a value the user can give and the system can also read, the line says whether the system's value counts too. Without it, the same line takes a different form each time it is translated (spec 4.2.1).
 
+Alignment and governance stay as they are, and each decides its own rules in its own layer. To apply one to a tool at execution, write it here as a line: a transfer limit from governance, or a principle from alignment such as "a home address is not disclosed when a public place serves the same purpose." It is then checked and recorded like any other. A rule for one user goes in that user's checklist; a rule for every tool goes in the principles the model is given, and, where it needs checking, in the provider checklist of each tool it concerns (spec 7.2).
+
 ## Who does what
 
 | | Does |
