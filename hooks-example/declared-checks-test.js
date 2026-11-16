@@ -1234,6 +1234,19 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     check("  another user, or another tool, finds none of it",
       [await loadPrior(sp, { userId: "v", tool: "schedule_pickup" }), await loadPrior(sp, { userId: "u", tool: "cancel_pickup" })], [{ none: "absent" }, { none: "absent" }]);
     check("  a storage that cannot load: no report, not none", await loadPrior({ persist: async () => {} }, { userId: "u", tool: "schedule_pickup" }), null);
+    check("  a list that is not a list, or a storage that throws: no report either",
+      [await loadPrior({ list: async () => null }, { userId: "u", tool: "schedule_pickup" }),
+       await loadPrior({ list: async () => { throw new Error("down"); } }, { userId: "u", tool: "schedule_pickup" }),
+       await loadPrior({ load: async () => { throw new Error("down"); } }, { userId: "u", tool: "schedule_pickup" })], [null, null, null]);
+    check("  a storage that looked and has nothing: none", [await loadPrior({ list: async () => [] }, { userId: "u", tool: "schedule_pickup" }),
+       await loadPrior({ load: async () => null }, { userId: "u", tool: "schedule_pickup" })], [{ none: "absent" }, { none: "absent" }]);
+
+    // A measurement counts only when it says valid: true. The slot and the round's measurements list agree.
+    const truthy = await run({ over: { measure: f => (f === "buyer_contact" ? { valid: "yes", value: "made up" } : { none: "absent" }) } });
+    check("a measurement whose valid is not true: refused, the slot not settled",
+      [field(truthy.r, "buyer_contact").status, field(truthy.r, "buyer_contact").lookup_trace.find(t => t.source === "measured_data")?.result,
+       truthy.r.measurements.find(m => m.name === "buyer_contact")?.result, truthy.r.execution_decision !== "execute"],
+      ["unknown", "rejected", "rejected", true]);
   }
 
   // ══ 14 ═══════════════════════════════════════════════════════════════════════
