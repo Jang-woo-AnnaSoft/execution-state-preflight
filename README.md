@@ -305,7 +305,7 @@ The library judges and records. What surrounds it belongs to the system that ado
 - **Integrity of what it is handed.** Prior records and stored settings are taken as they come. Keep them where the agent cannot rewrite them (spec 8.2).
 - **Trust labels.** Set on arrival by the system, never by the model (spec 5.2).
 - **Retry.** A failed call is recorded, not retried.
-- **Which tools go through it.** No per-tool risk weighting. Apply it to irreversible executions (spec 1.2).
+- **Which tools go through it.** No per-tool risk weighting. Apply it to irreversible executions (spec 1.1).
 - **Locking.** Two runs of one unit at the same time are not kept apart.
 - **Scheduling.** A call for later is judged, asked about while the user is there, and recorded as deferred with what to run it on (`deferred_input`). Running it again when it is due is the adopting system's: its scheduler calls the gate again with that input, and the gate judges it as a call to make now.
 - **Storing settings, consent included.** How a value comes to be kept for next time, and how the user agrees to it, is the adopting system's: a settings page, a "remember this?" in the agent, or a tool of its own, which can go through the gate like any other. The gate only reads. A value counts as a setting only when the store says the user approved it, and who approved it, when and where; a value a model remembered on its own is shown to the user as a candidate (spec 5.2).

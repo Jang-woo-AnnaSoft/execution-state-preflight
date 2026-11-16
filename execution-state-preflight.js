@@ -131,7 +131,7 @@
  * @property {"value_gate"|"tool_undetermined"|"tool_undetermined_exhausted"
  *           |"intent_undetermined"|"intent_undetermined_exhausted"
  *           |"schema_unsupported"|"branch_unresolved"|"branch_conflict"|"payload_invalid"
- *           |"action_key_failed"|"lookup_failed"|"system_lookup"|"definition_repair"|"unmet"|"exhausted"} [kind]
+ *           |"action_key_failed"|"tool_definition_unread"|"lookup_failed"|"system_lookup"|"definition_repair"|"unmet"|"exhausted"} [kind]
  *   // Omitted means value_gate (the original shape).
  *   // intent_undetermined*: C1/C2 could not be settled. Carries user_message, never unknown_fields
  *   //   (requiredFields is not even read yet at that point).
@@ -139,7 +139,8 @@
  *   // branch_unresolved / branch_conflict: grounded state selects no branch / more than one.
  *   //   Carries user_message + branch_options, never unknown_fields (no slot list exists yet).
  *   // payload_invalid: every slot settled, complete object still fails inputSchema. hold.
- *   // action_key_failed: buildActionKey threw. hold, no lineage, lands under UNKEYED_RECORD_KEY.
+ *   // action_key_failed: buildActionKey threw. definition_repair, no lineage, lands under UNKEYED_RECORD_KEY.
+ *   // tool_definition_unread: readToolDefinition threw, returned nothing, or another tool's. definition_repair.
  * @property {{name: string, note: string|null}[]} [unknown_fields]        // Absent on tool_undetermined / branch_* / schema_unsupported
  * @property {string[][]} [branch_options]   // branch_* only. The alternative required sets, for rendering
  * @property {string} [payload_violation]    // payload_invalid only. Reason text from validatePayload
@@ -398,13 +399,20 @@ async function keepForPrior(storage, record, { userId } = {}) {
 async function loadPrior(storage, { userId, tool } = {}) {
   if (!storage || !tool) return null;
   const key = PRIOR_KEY(userId, tool);
+  //   A storage that throws, or a list that is not a list, did not report: null, never "none". Read as
+  //   "nothing executed", a storage that was down made every permitted source look checked (5.2: no
+  //   report is not a report of nothing).
   let r;
-  if (typeof storage.list === "function") {
-    const all = await storage.list(key);
-    r = (Array.isArray(all) ? all : []).filter(x => x?.execution_decision === "executed").at(-1) ?? null;
-  } else if (typeof storage.load === "function") {
-    r = await storage.load(key);
-  } else return null;
+  try {
+    if (typeof storage.list === "function") {
+      const all = await storage.list(key);
+      if (!Array.isArray(all)) return null;
+      r = all.filter(x => x?.execution_decision === "executed").at(-1) ?? null;
+    } else if (typeof storage.load === "function") {
+      r = await storage.load(key);
+      if (r === undefined) return null;
+    } else return null;
+  } catch { return null; }
   return r && r.execution_decision === "executed" ? r : { none: "absent" };
 }
 
@@ -1545,7 +1553,9 @@ async function lookupField(h, fieldName, ctx) {
   const measurementNone = noneReport(fromMeasurement);
   // BREAKS: `fromMeasurement.valid` without ?. — as this was — and a hook returning null throws here,
   //   outside safeHook, so one slot takes the whole run to the backstop with no record of which.
-  if (!measurementNone && fromMeasurement !== undefined && fromMeasurement?.valid) {
+  //   valid must be true itself: the contract's word, and the same test the round's measurements list
+  //   makes. A truthy stand-in ("yes", 1) used to settle the slot here while that list said rejected.
+  if (!measurementNone && fromMeasurement !== undefined && fromMeasurement?.valid === true) {
     saw("measured_data", "found");
     return fresh({ name: fieldName, value: fromMeasurement.value, status: "known", source: "measured_data" });
   }
@@ -4639,8 +4649,10 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, l
  *   (definition_repair, 4.5c). Intent and tool asks that reached their ceiling are routes that ended
  *   (exhausted, 4.5: "a route that reaches its ceiling has finished"). gate.kind names each one.
  *
- * POLICY (do NOT store): the raw instruction.
- *   BREAKS: stored, every ambiguous utterance accumulates in plaintext. 
+ * POLICY (do NOT store): the raw instruction. A record points into it (segment and span) and does not
+ *   carry it. The one exception is a deferred record: deferred_input holds the instruction until the
+ *   trigger, in plaintext (buildDeferredInput). Mask or encrypt it in the storage adapter.
+ *   BREAKS: stored with every record, every ambiguous utterance accumulates in plaintext.
  *
  * Background: turning forms into natural language erased the provenance of values, so there is no
  *       way to decide when to ask. This resembles a validator (Pydantic), except that questions about
