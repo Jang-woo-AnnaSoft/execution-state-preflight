@@ -191,21 +191,60 @@ What comes out is a record, and the record is the point:
 
 ## Where to read what
 
-This file is the overview. Each thing below is explained where it lives, not here.
+This file is the overview. **The specification is the standard; the adopt example is how it is applied.** The rest shows why each part is there. Each thing below is explained where it lives, not here.
 
 | | |
 |---|---|
-| [**The short version**](./model-reasons-agent-executes.en.md) | the goal, the two methods, how this differs from current practice |
-| [**The specification**](./spec.en.md) · [ko](./spec.ko.md) | **the standard.** What counts as confirmed, who judges, what is recorded. The problems this works through are §2; the three checklists are §4; the slot states and sources are §5 |
-| **The skeleton** ([`execution-state-preflight.js`](./execution-state-preflight.js)) | a reference skeleton, not a library. Hook contracts, the record shape, and where it falls short of the specification — in the source comments, beside the code they describe |
-| [**Hook examples**](./hooks-example/) | what has to be declared, and how much of this you have to keep — each shown by putting a piece in and taking it out |
-| [**Adopt example**](./adopt-example/) | the files you keep to use this, when you build the agent and its tools together: your declaration of each tool (the rules in words), the connections to your own model, tools and data, and the flow the gate runs in. The gate judges and records (`judge-only.js`), and your agent executes from the record; a whole agent to run is there as a demonstration. The MCP server connection is there too, as comments |
-| [**Provider checklist example**](./provider-checklist-example/) | the same tool with every rule moved out of code into declarations — the provider's checklist as labelled lines in a standard MCP description — and what that changes, run against the hook examples on the same inputs |
-| [**A case report**](./case-muse-marketplace.en.md) | a reported incident mapped onto the checklists |
+| **The standard** | |
+| [**The specification**](./spec.en.md) · [ko](./spec.ko.md) | What counts as confirmed, who judges, what is recorded. The problems this works through are §2; the three checklists are §4; the slot states and sources are §5 |
+| **Applying it** | |
+| [**Adopt example**](./adopt-example/) | **Start here.** The files you keep to use this, when you build the agent and its tools together: your declaration of each tool (the rules in words), the connections to your own model, tools and data, and the flow the gate runs in. The gate judges and records (`judge-only.js`), and your agent executes from the record. A whole agent to run is there as a demonstration, and the MCP server connection as comments |
+| **The library** ([`execution-state-preflight.js`](./execution-state-preflight.js)) | What the adopt example runs: one file, no dependencies. Hook contracts, the record shape, and where it departs from the specification are in the source comments, beside the code they describe. **Pre-release:** being tested against real models; the API may still change |
+| **Why each part is there** | |
+| [**The short version**](./model-reasons-agent-executes.en.md) | The goal, the two methods, how this differs from current practice |
+| [**Hook examples**](./hooks-example/) | What has to be declared, and how much of this you have to keep, each shown by putting a piece in and taking it out |
+| [**Provider checklist example**](./provider-checklist-example/) | The same tool with every rule moved out of code into declarations, the provider's checklist as labelled lines in a standard MCP description, and what that changes, run against the hook examples on the same inputs |
+| [**A case report**](./case-muse-marketplace.en.md) | A reported incident mapped onto the checklists |
 
 ---
 
 ## Quick start
+
+Start from [`adopt-example/`](./adopt-example/), with the library next to it.
+
+1. **Declare the tool** in [`tool.md`](./adopt-example/tool.md): what it does, each rule on a labelled line, and the input schema.
+2. **Connect** your model, your tool and your system's data in [`connect.js`](./adopt-example/connect.js).
+3. **Judge each tool call before it runs**, from your agent's own loop, and execute from the record:
+
+```js
+const { createJudge } = require("./judge-only");
+const judge = createJudge({ ask, measure, readToolDefinition, measurements, storage, userId });
+
+const r = await judge.run({ unitKey, conversation, toolCall, userChecklist });
+if (r.questions.length > 0) {
+  // show your model's words, then r.block exactly as it is; add the reply to the conversation; run again
+} else {
+  const record = (await storage.list(r.key)).at(-1);       // the record this round wrote
+  if (readyToExecute(record, toolCall.name)) {              // your own reading of it
+    await callTool(record.tool_call.name, record.call_arguments);
+    await judge.recordResult(record, { ok: true });
+  }
+}
+```
+
+To try it:
+
+```
+cd adopt-example
+npm install
+npm install --no-save @langchain/anthropic@1.5.13   # or your provider's package
+MODEL=anthropic:<model-name> node judge-only-example.js "Set up the pickup for LST-2291, 2pm this Saturday, Hongdae station lockers."
+```
+
+As shipped, nothing is connected: the `[Required]` lines are unverified, and nothing runs. The six things that stay yours, and the whole flow, are in the [adopt example](./adopt-example/#4-use-it-your-agent-executes-judge-onlyjs).
+
+<details>
+<summary>Calling the library directly</summary>
 
 ```js
 const { createPreflight } = require("./execution-state-preflight");
@@ -250,11 +289,13 @@ if (state.execution_decision === "execute") {
 }
 ```
 
+</details>
+
 ---
 
 ## What this doesn't do
 
-The skeleton judges and records. What surrounds it belongs to the system that adopts it, and is filled in there:
+The library judges and records. What surrounds it belongs to the system that adopts it, and is filled in there:
 
 - **Masking.** Values are recorded as given. Hide what must not be stored or shown, in the storage adapter.
 - **Integrity of what it is handed.** Prior records and stored settings are taken as they come. Keep them where the agent cannot rewrite them (spec 8.2).
@@ -266,7 +307,7 @@ The skeleton judges and records. What surrounds it belongs to the system that ad
 - **Execution across a boundary.** The gate writes the record; the executing party reads it and decides (spec 3.5). The examples do both in one process.
 - **What the model is told.** That the labeled lines are checked after the call, and what the gate said, as the call's result (spec 4.2.1, 6.2). Without it a model holds back the call, and the gate has nothing to judge.
 
-One is a limit of the skeleton itself:
+One is a limit of the library itself:
 
 - **Flat arguments assumed.** Branches at the top of the input schema are read; a value nested inside an argument is not a slot of its own.
 
@@ -280,7 +321,7 @@ A tool's input schema defines the shape of the values it needs. It does not say 
 
 So, a proposal for tool providers: declare conditions in the `description`, each on a labelled line ([Writing the provider's checklist](#writing-the-providers-checklist)). A hint the model may or may not follow becomes a condition checked before execution. It needs no protocol change and can be done today (spec 4.2.1).
 
-The first version of the argument was posted as [If unsure, ask. Never guess. — AI Agent Pre-Execution Checklist](https://discuss.huggingface.co/t/if-unsure-ask-never-guess-ai-agent-pre-execution-checklist/176632). The discussion continues in [Misalignment is not required for an agent to act without authorization](https://discuss.huggingface.co/t/misalignment-is-not-required-for-an-agent-to-act-without-authorization/180541) and [We gave AI a trust we never gave people — The third axis, after capability and permission](https://discuss.huggingface.co/t/we-gave-ai-a-trust-we-never-gave-people-the-third-axis-after-capability-and-permission/183807/), where a team running its own agent is cross-checking the skeleton against its cases ([`hooks-example/crosscheck/`](./hooks-example/crosscheck/)).
+The first version of the argument was posted as [If unsure, ask. Never guess. — AI Agent Pre-Execution Checklist](https://discuss.huggingface.co/t/if-unsure-ask-never-guess-ai-agent-pre-execution-checklist/176632). The discussion continues in [Misalignment is not required for an agent to act without authorization](https://discuss.huggingface.co/t/misalignment-is-not-required-for-an-agent-to-act-without-authorization/180541) and [We gave AI a trust we never gave people — The third axis, after capability and permission](https://discuss.huggingface.co/t/we-gave-ai-a-trust-we-never-gave-people-the-third-axis-after-capability-and-permission/183807/), where a team running its own agent is cross-checking the library against its cases ([`hooks-example/crosscheck/`](./hooks-example/crosscheck/)).
 
 Contact: [hello@anna.software](mailto:hello@anna.software)
 

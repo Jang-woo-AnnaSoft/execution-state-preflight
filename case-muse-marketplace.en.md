@@ -61,7 +61,7 @@ This is not a reproduction of the incident. It is a mock `schedule_pickup` tool 
 Two arms, same model, same system prompt, same tool:
 
 - **A, a plain tool call.** The model fills the arguments and calls.
-- **C, the gate.** The model only points at where each value is; the reference skeleton looks it up in a declared source and decides.
+- **C, the gate.** The model only points at where each value is; the library looks it up in a declared source and decides.
 
 Models: `claude-opus-5-5` and `claude-sonnet-5-5` on the Anthropic API, provider defaults, no sampling parameters sent. Twelve seller instructions under their conditions make 35 inputs; each ran 5 times, in both arms, on both models: 700 runs. I ran the whole thing twice, independently, on October 26 and 27, 2026. Between the two runs only an allowed-source declaration and the analyzer changed, and neither touches what an arm does. In every run the seller has said "It's Wednesday, October 28" earlier in the conversation.
 
@@ -111,14 +111,14 @@ The chat-only proposal is words a model read, not a measurement, so it does not 
 - Tool and intent matching. Whether "handle my messages" covers apologizing on his behalf can be compared against the execution units he stated or approved, but not proven in code (spec 8.1).
 - How Robb gets told. The spec ends at the decision record. Notification is outside it.
 
-**What has been validated: a repeated-run test on a mock tool shaped like this case (section 4), not the case itself.** I have not replayed this message sequence through the skeleton, and I have no access to Muse. The table in section 3 still describes what the design is meant to do with these particular messages, not observed behavior.
+**What has been validated: a repeated-run test on a mock tool shaped like this case (section 4), not the case itself.** I have not replayed this message sequence through the library, and I have no access to Muse. The table in section 3 still describes what the design is meant to do with these particular messages, not observed behavior.
 
-A useful next step would be to turn the reported message log into a test case and run it through the skeleton. Comments on the slot mapping in the table are welcome, especially from anyone who thinks one of those rows is wrong.
+A useful next step would be to turn the reported message log into a test case and run it through the library. Comments on the slot mapping in the table are welcome, especially from anyone who thinks one of those rows is wrong.
 
 ## Links
 
 - Specification: <https://github.com/Jang-woo-AnnaSoft/execution-state-preflight/blob/main/spec.en.md>
-- Repository (spec, design notes, reference skeleton): <https://github.com/Jang-woo-AnnaSoft/execution-state-preflight>
+- Repository (spec, design notes, library): <https://github.com/Jang-woo-AnnaSoft/execution-state-preflight>
 - Test harness, declarations and how to rerun it: <https://github.com/Jang-woo-AnnaSoft/execution-state-preflight/tree/main/hooks-example>
 - Raw results and analyzer output (section 4): <https://github.com/Jang-woo-AnnaSoft/execution-state-preflight/tree/main/hooks-example/results>
 

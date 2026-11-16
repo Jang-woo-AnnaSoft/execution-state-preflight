@@ -1,10 +1,10 @@
 /**
  * ============================================================================
- * [Execution State Preflight Architecture] — a verification skeleton that runs
+ * [Execution State Preflight Architecture] — a verification library that runs
  * before an MCP Tool call.
  *
  * Premise: Tool selection accuracy never reaches 100%.
- * This skeleton does not improve selection. It keeps a wrong one out of execution.
+ * This library does not improve selection. It keeps a wrong one out of execution.
  *
  * Three checks run in order, and each one writes a verdict rather than executing or blocking:
  *   intent gate (Step 1-a)  — was the action settled at all, in the user's own words
@@ -18,7 +18,7 @@
  * on the principle side. The Background, decision path, and principles are in the [APPENDIX].
  *
  * ASSUMPTION: one call is one execution unit (spec 1.1). What is gated is a state change left
- * outside, not a call, but this skeleton runs once per tool call and cannot see state changes.
+ * outside, not a call, but this library runs once per tool call and cannot see state changes.
  * A call that makes more than one state change must be split into units by the adopting system
  * before it reaches this gate; several calls that make one state change are the adopting system's
  * to group. Neither is detected here.
@@ -54,7 +54,7 @@
  *                                       //   Values inferred from conversation text do not belong here.
  * @property {string} [origin]           // Origin of the value. For records and questions.
  *   // preSetData[fieldName] = PreSetEntry.
- *   // POLICY: what counts as a "decision" is up to the adopting system. The skeleton only checks shape.
+ *   // POLICY: what counts as a "decision" is up to the adopting system. The library only checks shape.
  *
  * @typedef {Object} FieldRecord
  * @property {string} name
@@ -216,13 +216,13 @@
  */
 
 
-// 1-1. Skeleton defenses — "hooks must not throw" is a contract, not a guarantee.
+// 1-1. Library defenses — "hooks must not throw" is a contract, not a guarantee.
 const WHEN_CASES = ["immediate", "scheduled", "conditional", "recurring"];
 // The five sources of 5.2, in search order. Not a trust ranking.
 const SOURCES = ["user_answer", "instruction", "pre_set_data", "measured_data", "prior_state"];
 
 // A declared allowed set, normalized. Absent or malformed means all five — so an adopter who
-//   declares nothing gets the behavior this skeleton had before the field existed.
+//   declares nothing gets the behavior this library had before the field existed.
 //   BREAKS: default to the empty set and every slot dies closed with no route and no blank.
 function allowedSourceSet(declared) {
   if (!Array.isArray(declared)) return new Set(SOURCES);
@@ -242,7 +242,7 @@ const MSG_TOOL_UNDETERMINED =
 const MSG_TOOL_EXHAUSTED =
   "I still could not match this to an action I can perform. Let us sort it out in conversation.";
 
-// Re-ask ceilings. Two asks, then leave the skeleton and settle it in conversation.
+// Re-ask ceilings. Two asks, then leave the gate and settle it in conversation.
 // Counted separately: intent is recovered by restating, a Tool by reselecting upstream.
 //   Shared, a Tool reselection would spend the intent budget.
 // NOTE: the value_gate ceiling remains the adopting system's — see [Re-ask ceiling] in APPENDIX.
@@ -267,11 +267,11 @@ const MSG_INTENT_UNDETERMINED = {
   both: "I could not tell what you want done, or when. Please say it again.",
 };
 
-// Leaving message. The skeleton stops here; resolution moves to conversation outside this logic.
+// Leaving message. The library stops here; resolution moves to conversation outside this logic.
 const MSG_INTENT_EXHAUSTED =
   "I still could not tell what you want done. Stopping here — let's sort it out in conversation.";
 
-// POLICY (intent_attempt lifecycle) — stateless skeleton, so the caller enforces these:
+// POLICY (intent_attempt lifecycle) — stateless library, so the caller enforces these:
 //   1. Per REQUEST, judged by instruction change. Not elapsed time, not session (time is not an
 //      invalidation basis anywhere in this file — see the user_answer step).
 //   2. Carry-forward is the DEFAULT; reset needs an affirmative new-request signal.
@@ -675,7 +675,7 @@ function matchFromUserActionName(c2, toolName, record) {
 //   Choose how it blocks: answerable by the user → unknown in the value gate. Not answerable
 //   ("insufficient balance") → hold; asking cannot resolve it and re-asking only repeats.
 //   BREAKS: let it open and an upstream schema edit — an always-true condition — is a fail-open switch.
-// NOTE: how mcpTool was obtained is outside this skeleton — the caller hands it in, and whether the
+// NOTE: how mcpTool was obtained is outside this library — the caller hands it in, and whether the
 //   schema was fetched, cached, or never arrived is not visible here.
 //   What IS visible is the shape: a missing inputSchema and required: [] are not the same object.
 //   The first is an incomplete tool; the second is a tool that declares it takes no arguments.
@@ -794,7 +794,7 @@ function materializeSlots(mcpTool, groundedFieldNames) {
 }
 
 // [REQUIRED-SAFETY] Slot resolved is not the same fact as schema valid. Wire a validator here (for
-//   example AJV, 2020-12): the skeleton has none, so the comparison engine is the adopter's choice.
+//   example AJV, 2020-12): the library has none, so the comparison engine is the adopter's choice.
 // CONTRACT: null if the complete argument object satisfies inputSchema, a reason string if not,
 //   { unverified: "<why>" } if it could not be checked. Do not throw (a throw is read as unverified).
 // The default could not check, and says so. 6.3: a check that cannot be made stays unknown and goes to
@@ -1539,7 +1539,7 @@ async function lookupField(h, fieldName, ctx) {
 }
 
 // Which of the five sources may be consulted for this slot (5.2, 4.5). Returning null or anything
-//   malformed means all five, which is what this skeleton did before the hook existed.
+//   malformed means all five, which is what this library did before the hook existed.
 // CONTRACT: a subset of SOURCES, or null. Do not throw.
 // NOTE: this answers "may be consulted", not "may settle". applyFieldPolicy still judges whatever
 //   answered. prior_state never settles regardless (Source 5).
@@ -2199,7 +2199,7 @@ function unfitUserForm(form) {
 }
 
 // [FORM IN WORDS] What a form checks, written from the form alone, for whoever confirms it (3.3: shown
-//   with the original). Deterministic: the same form always reads the same, and a form this skeleton
+//   with the original). Deterministic: the same form always reads the same, and a form this library
 //   does not read says so instead of guessing. The kinds:
 //     value_source     who may give the slot's value ([VALUE SOURCE])
 //     user_approval    the user confirms it each time, for the values shown ([APPROVAL BINDING])
@@ -2572,7 +2572,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
   let lookupAttempt = Number.isInteger(lookup_attempt) && lookup_attempt >= 0 ? lookup_attempt : 0;
 
   // Asks already spent on the Fixed checklist. Absent or malformed = 0.
-  // NOTE: caller-supplied and the skeleton DOES read it, unlike input.tool_reselected_by_user.
+  // NOTE: caller-supplied and the library DOES read it, unlike input.tool_reselected_by_user.
   //   Direction is why: a larger value only brings "exhausted" forward, never produces "execute". Not a bypass.
   //   POLICY: the caller must carry it. These records have no action_key and pile under
   //     UNKEYED_RECORD_KEY, so storage cannot supply the count either.
@@ -2685,7 +2685,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
       },
       // ask_user re-entry: raise intent_attempt and call again with the new instruction. Not userAnswers —
       //   C1/C2 are not required fields and have no key to attach an answer to.
-      // exhausted: leave the skeleton; resolve in conversation. Re-entry is a NEW request at attempt 0.
+      // exhausted: leave the gate; resolve in conversation. Re-entry is a NEW request at attempt 0.
       //   POLICY: resetting the counter every turn restores the loop this ceiling exists to stop.
       // [LIMIT] These records are not linked to the request that follows. They have no action_key (no C2)
       //   and sit under UNKEYED_RECORD_KEY; the request settled afterwards in conversation is recorded
@@ -2858,7 +2858,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
       // ask_user re-entry: raise tool_attempt and call again with the model's NEW tool call. The user's
       //   restatement feeds the reselection; it is not an answer to attach to a field. A different tool is
       //   a different unit (its own key), and the records of this one stay as they are.
-      // exhausted: leave the skeleton; settle it in conversation. Re-entry is a NEW request at attempt 0.
+      // exhausted: leave the gate; settle it in conversation. Re-entry is a NEW request at attempt 0.
       //   POLICY: the caller carries the count. Resetting it every turn restores the loop this ceiling stops.
       execution_decision: toolExhausted ? "exhausted" : "ask_user",
       reason: `${toolExhausted ? "exhausted" : "ask_user"}: tool undetermined (${c3Reason}) attempt=${toolAttempt}/${TOOL_ATTEMPT_LIMIT}`,
@@ -4053,7 +4053,7 @@ async function recordExecutionState(h, executionState) {
     //        "definition_repair"; "hold" there now means only a finished check that prohibits. A 1.10
     //        record's "hold" may be any of the three — read its gate.kind.
     //   1.8: fixed.c3_match added. Older records record no approval, only refusals.
-    //   Pre-1.6 records may carry comparison_key fields; the skeleton neither writes nor reads them.
+    //   Pre-1.6 records may carry comparison_key fields; the library neither writes nor reads them.
     //   1.7: fields[] may carry lookup_failed / _diag_note; gate._diag may carry lookup_failures
     //   1.10: fields[] carry allowed_sources; gate may carry system_lookup (4.5b). On an older record
     //        a missing allowed_sources means the field did not exist, not that nothing was permitted.
@@ -4129,14 +4129,14 @@ async function getPriorExecutionState(h, actionKey) {
 //   one: where the agent binds a request to a server and tool, and how long that binding survives
 //   re-entry (tool_reselected_by_user) and the deferred wait.
 // POLICY: if decision and execution cross a trust boundary, signing/TTL/nonce belong to the adopting system.
-// [DEMONSTRATION ONLY — this function is where the skeleton departs from the specification]
+// [DEMONSTRATION ONLY — this function is where the library departs from the specification]
 //
 // The specification separates verdict from execution (3.5): the gate records slot states, the
 // routes taken, the count and the unmet items, and then the EXECUTING PARTY loads that record
 // by action_key + phase, decides for itself, and writes its own record. Nothing executes from
 // the gate's own record.
 //
-// This skeleton instead writes `execution_decision` into the gate's record and this function
+// This library instead writes `execution_decision` into the gate's record and this function
 // follows it. That is not the separation; it is a convenience so a single-process example runs
 // end to end. The branch `if (decision === "execute") executeIfReady(...)` reproduces inside one
 // call stack exactly what the specification asks to be two parties.
