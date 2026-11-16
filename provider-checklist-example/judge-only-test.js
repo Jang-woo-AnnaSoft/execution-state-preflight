@@ -629,6 +629,36 @@ function askAllGiven(id) {
       [["gate:ask_user", "gate:execute", "executor:failed", "gate:execute", "executor:executed"], 1]);
   }
 
+  console.log("\n--- 1-m. a call for later: what the seller approves is asked before it is scheduled (spec 4.5) ---");
+  {
+    // The call is to be made later (the classifier says scheduled), and one of the seller's conditions has
+    //   no form to compare it in: the seller approves it for the place. Asked now, while the seller is here.
+    //   Before 1.33 it was first asked when the call was due.
+    let when = "scheduled";
+    const inner = makeAsk("g2-01");
+    const s = standIn("g2-01", "clean", { ask: async (m, system, user, hook) => (hook === "when_case" ? { when_case: when } : inner(m, system, user, hook)) });
+    const main = createMain({ connect: s.connect });
+    const userChecklist = S.instructions.find(i => i.id === "g2-01").user_checklist;
+    const say = typed => main.turn({ threadId: "later", message: { typed }, userChecklist });
+    await say("(stand-in)");
+    const asked = await say("Saturday 3pm, Hongdae station lockers");
+    check("the time to approve and the condition to approve are asked together, before scheduling",
+      [asked.status, asked.question?.block], ["waiting", ["time = 2026-10-31 (Sat) 15:00 +09:00", "public places only — for location = \"Hongdae station lockers\""]]);
+    const scheduled = await say("yes");
+    const recs = () => s.store.list(`user:${TOOL.name}:later`);
+    const deferred = (await recs()).filter(x => x.actor === "gate").at(-1);
+    check("the seller's yes: scheduled, nothing run, the approval on the record",
+      [scheduled.status, deferred.execution_decision, s.calls.length, deferred.user_checklist.find(i => i.id === "chk_public")?.approved_at],
+      ["not_executed", "deferred", 0, "at_instruction"]);
+    // The call is due: the same conversation is judged again, as a call to make now.
+    when = "immediate";
+    const due = await say("(the scheduler runs it)");
+    const verdict = (await recs()).filter(x => x.actor === "gate").at(-1);
+    check("when it is due nothing is asked: the approval given then counts, and it runs",
+      [due.status, verdict.phase, verdict.user_checklist.find(i => i.id === "chk_public")?.status, s.calls.map(c => [c.args.time, c.args.location])],
+      ["executed", "at_trigger", "verified", [["2026-10-31T15:00:00+09:00", "Hongdae station lockers"]]]);
+  }
+
   console.log("\n--- 2. what judge.run returns cannot be executed from ---");
   {
     const s = standIn("g1-01", "clean");
