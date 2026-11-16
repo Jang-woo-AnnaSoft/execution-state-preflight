@@ -3362,6 +3362,10 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
         : { ...it, ...(a.b ? { approval_voided: a.b.why } : {}), approval_asked_at: "at_instruction" };
     });
     const approveList = declared_by => approveNow.filter(a => a.declared_by === declared_by).map(a => a.it);
+    // [Notice] lines go with what is asked now, too: the user is here now, and may not be when the call
+    //   is due. The same hand-off as at the trigger: stated, not checked, and it blocks nothing.
+    const disclosuresNow = providerConditions.filter(c => c && typeof c === "object" && normalizeProviderLabel(c.label) === "notice")
+      .map(c => ({ id: c.id ?? null, description: c.description, declared_by: "provider", required_before_execution: true }));
 
     if (declinedNow.length > 0) {
       const unmet = declinedNow.map(a => ({ id: a.it.id, description: a.it.description ?? a.it.stated_as ?? null,
@@ -3379,6 +3383,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
         checklist_digest, checklist_changed: checklistChangedNow(),
         call_arguments: null,
         gate: { kind: "unmet", unmet, unknown_fields: [], unverified_checklist: [],
+                ...(disclosuresNow.length ? { disclosures: disclosuresNow } : {}),
                 next_ask_attempt: askExhaustedNow ? null : askAttempt,
                 _diag: { phase, pending_at_trigger: pendingCount, lookup_failures: lookupFailures(fields) } },
         execution_decision: "hold",
@@ -3428,6 +3433,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
             ({ id: c.id, label: c.label, description: c.description, note: "the user approves it for the values shown",
                approve: approvalPrompt(c, fieldsNow) })) } : {}),
           ...(formRequests.length ? { form_approvals: formRequests } : {}),
+          ...(disclosuresNow.length ? { disclosures: disclosuresNow } : {}),
           ...(providerFormsNow.length ? {
             ...((failedNow.length || gapsNow.length) ? {} : { kind: "definition_repair" }),
             definition_repair: providerFormsNow.map(c => ({ id: c.id, label: c.label, description: c.description,
@@ -4127,7 +4133,9 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.33",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.34",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.34: the gate of an at_instruction record that asks or holds carries disclosures, as a trigger
+    //        record's does: the provider's notices go with what is asked at instruction time.
     //   1.33: an at_instruction record asks for the approvals the user can give now (a condition of the
     //        user's with no form, a [Verify] line approved by the user), for the values settled now:
     //        its gate carries them in questions, unverified_checklist / unverified_provider (with
