@@ -226,8 +226,12 @@ if (r.questions.length > 0) {
 } else {
   const record = (await storage.list(r.key)).at(-1);       // the record this round wrote
   if (readyToExecute(record, toolCall.name)) {              // your own reading of it
+    const { toShow } = await judge.notices(record);         // the provider's notices not shown with a question
+    if (toShow.length) await notify(toShow.map(d => d.description));   // told before the tool runs
     await callTool(record.tool_call.name, record.call_arguments);
     await judge.recordResult(record, { ok: true });
+  } else {
+    await judge.recordResult(record, { executed: false, why: "not ready" });   // your decision, recorded too
   }
 }
 ```

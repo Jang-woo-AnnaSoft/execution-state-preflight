@@ -204,7 +204,8 @@
  * @property {string|null} [checklist_digest]   // 6.1: the version of the whole checklist this verdict used
  * @property {Object|null} [checklist_changed]  // At the trigger: { at_instruction, now, approvals_voided }
  * @property {GateResult|null} gate     // The authoritative decision. Consumers read this, not reason.
- * @property {"execute"|"ask_user"|"system_lookup"|"definition_repair"|"exhausted"|"hold"|"deferred"|"executed"|"failed"} execution_decision
+ * @property {"execute"|"ask_user"|"system_lookup"|"definition_repair"|"exhausted"|"hold"|"deferred"|"executed"|"failed"|"not_executed"} execution_decision
+ *   // executed, failed and not_executed are the executing side's (actor "executor"), never the gate's.
  *   // deferred: the normal wait for non-immediate work (distinct from hold). Only "executed" counts as baseline.
  *   // On the value gate, hold means what 4.5 means by it: the check FINISHED and its result prohibits
  *   //   (unmet, payload_invalid). system_lookup and definition_repair are routes still open (4.5b, 4.5c)
@@ -1873,6 +1874,9 @@ async function unitHistory(h, actionKey, phase) {
     r.kind !== FORM_TRANSLATION_KIND);
   const out = { available: true, asked: new Map(), askings: [], ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0, conditions: null, values: {} };
   for (const r of recs) {
+    // The executing side's record is the verdict it read, with its own decision on it: counted once, as
+    //   the verdict.
+    if (r.actor === "executor") continue;
     const g = r.gate ?? {};
     // The values read from the user's words, where, and how far those words were read ([VALUE READ ONCE]).
     //   The latest record that read each one is the one carried.
@@ -4037,7 +4041,11 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.31",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.32",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.32: every record carries actor ("gate" | "executor"). The executing side's record may read
+    //        execution_decision "not_executed" (it read the verdict and did not run it), and carries told
+    //        ([{ id, description, when: "with_question" | "before_call" }]): the notices it showed the
+    //        user before the call. The unit's history is read from the gate's records only.
     //   1.31: a value the user approved no longer counts once the user's words in a later segment give
     //        the field a value: lookup_trace user_answer "superseded", and the field carries
     //        answer_superseded { value, approval, by: { segment_index, span } } ([SAID AFTER]).
@@ -4173,6 +4181,12 @@ async function recordExecutionState(h, executionState) {
     reason: executionState.reason,
     timestamp: executionState.timestamp,
     ...(executionState.deferred_input !== undefined ? { deferred_input: executionState.deferred_input } : {}),
+    // Who wrote this record (6.4: the executing party reads the verdict, then leaves its own decision as a
+    //   record of its own). "gate": a verdict. "executor": the executing side's decision on the verdict it
+    //   read — executed, failed or not_executed — written as that verdict with its own decision on it.
+    //   told: the provider's notices the executing side says it showed the user before the call, and when.
+    actor: executionState.actor === "executor" ? "executor" : "gate",
+    ...(executionState.actor === "executor" && Array.isArray(executionState.told) ? { told: executionState.told } : {}),
   };
 
   // NOTE: there is no masking hook. fields.value is persisted verbatim (account numbers, amounts, recipients, tokens).
@@ -4248,6 +4262,7 @@ async function executeIfReady(h, executionState, mcpTool, callMcpTool) {
   // NOTE: the reason below bypasses formatReason and is assembled inline. Rendering should be unified.
   const finalRecord = await recordExecutionState(h, {
     ...executionState,
+    actor: "executor",
     execution_decision: callError ? "failed" : "executed",
     reason: callError
       ? `${executionState.reason} / call failed: ${callError?.message ?? String(callError)}`
