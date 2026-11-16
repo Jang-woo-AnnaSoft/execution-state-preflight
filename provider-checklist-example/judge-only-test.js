@@ -37,14 +37,14 @@ let thread = 0;
 
 function standIn(id, condition, over = {}) {
   const ctx = S.conditions[condition].context, date = S.date_modes.said;
-  const calls = [], shown = [], prompts = [], heard = [];
+  const calls = [], shown = [], prompts = [], heard = [], events = [];
   const chatInner = makeChat();
   const askInner = over.ask ?? makeAsk(id);
-  const ins = S.instructions.find(i => i.id === id), text = ins.text;
+  const ins = S.instructions.find(i => i.id === id), text = over.text ?? ins.text;
   let first = true;
   const store = over.store ?? createStorage();
   return {
-    calls, store, shown, prompts, heard,
+    calls, store, shown, prompts, heard, events,
     connect: {
       // Every prompt the gate's model calls were sent, kept for the checks.
       ask: async (m, system, user, hook) => { prompts.push({ hook, system, user }); return askInner(m, system, user, hook); },
@@ -58,7 +58,9 @@ function standIn(id, condition, over = {}) {
         if (first) { first = false; return buildUserTurn(ctx, text, date).segments; }
         return realConnect.labelInput(msg);
       },
-      callTool: over.callTool ?? (async (name, args) => { calls.push({ name, args }); return { ok: true }; }),
+      callTool: over.callTool ?? (async (name, args) => { events.push("call"); calls.push({ name, args }); return { ok: true }; }),
+      // The provider's notices, shown before the call when no question carried them. In order with the call.
+      ...(over.notify === null ? {} : { notify: async lines => { events.push(["notify", lines]); } }),
       store,
       // The seller's settings, when the scenario has them (spec 5.2).
       readPreSet: async () => over.preSet ?? ins.pre_set ?? {},
@@ -82,7 +84,23 @@ async function run(id, condition, replies = [], over = {}) {
   let last = first;
   for (const r of replies) last = await main.turn({ threadId, message: { typed: r }, userChecklist });
   const records = await s.store.list(`user:${TOOL.name}:${threadId}`);
-  return { first, last, calls: s.calls, shown: s.shown, heard: s.heard, prompts: s.prompts, store: s.store, key: `user:${TOOL.name}:${threadId}`, records };
+  return { first, last, calls: s.calls, events: s.events, shown: s.shown, heard: s.heard, prompts: s.prompts, store: s.store, key: `user:${TOOL.name}:${threadId}`, records };
+}
+
+
+// A seller who types every value in its declared form: nothing is left to ask. The stand-in extractor
+//   reads the time from the typed date-time.
+const ALL_GIVEN = "Set up the pickup for listing LST-2291 at 2026-10-31T14:00:00+09:00 at the Hongdae station lockers.";
+function askAllGiven(id) {
+  const inner = makeAsk(id);
+  return async (m, system, user, hook) => {
+    const out = await inner(m, system, user, hook);
+    if (hook === "extraction") {
+      const segs = JSON.parse(user.slice(user.indexOf("[", user.indexOf("Segments:")), user.indexOf("\n\nFields to locate")));
+      out.time = { found: true, value: "2026-10-31T14:00:00+09:00", segment_index: segs.findIndex(s => s.trust === "user" && s.text.includes("2026-10-31T14")) };
+    }
+    return out;
+  };
 }
 
 (async () => {
@@ -567,6 +585,48 @@ async function run(id, condition, replies = [], over = {}) {
     const pt = plain.records.filter(x => x.execution_decision === "execute").at(-1)?.fields?.find(f => f.name === "time");
     check("an approval with no later words about the value stands", [pt?.source, pt?.lookup_trace?.[0]?.result, "answer_superseded" in (pt ?? {})],
       ["user_answer", "found", false]);
+  }
+
+  console.log("\n--- 1-k. the provider's notice is told before the tool runs (spec 3.3) ---");
+  {
+    const NOTICE = "The buyer sees the time and location immediately. Tell the seller before the pickup is scheduled.";
+    // Nothing to ask: no question carried the notice, so it is shown first, and then the tool runs.
+    const r = await run("g1-01", "clean", [], { text: ALL_GIVEN, ask: askAllGiven("g1-01") });
+    check("every value given in its form: nothing asked, executed in one turn", [r.first.status, r.calls.length], ["executed", 1]);
+    check("  the notice is shown first, then the tool is called", r.events, [["notify", [NOTICE]], "call"]);
+    const done = r.records.at(-1);
+    check("  the executing side's record says it was told, and when", [done.actor, done.execution_decision, done.told.map(t => [t.description, t.when])],
+      ["executor", "executed", [[NOTICE, "before_call"]]]);
+    // A question carried it: it is not shown a second time.
+    check("a run that asked: the notice went with the question, and is not shown again",
+      [g1.events, g1.records.at(-1).told.map(t => t.when)], [["call"], ["with_question"]]);
+    // No way to show it: the tool does not run.
+    const mute = await run("g1-01", "clean", [], { text: ALL_GIVEN, ask: askAllGiven("g1-01"), notify: null });
+    check("no way to show a notice, and no question to show it with: not executed", [mute.first.status, mute.calls.length], ["not_executed", 0]);
+    check("  the verdict was execute; the executing side's own record says why it did not run",
+      [mute.records.map(x => `${x.actor}:${x.execution_decision}`), /a notice could not be shown/.test(mute.records.at(-1).reason)],
+      [["gate:execute", "executor:not_executed"], true]);
+  }
+
+  console.log("\n--- 1-l. the executing side's decision is a record of its own, also when it does not run (spec 6.4) ---");
+  {
+    const held = await run("g1-01", "order_cancelled", ["yes"]);
+    const last = held.records.at(-1), verdict = held.records.at(-2);
+    check("a hold: the gate's verdict, then the executing side's record that it did not run it",
+      [verdict.actor, verdict.execution_decision, last.actor, last.execution_decision, held.calls.length], ["gate", "hold", "executor", "not_executed", 0]);
+    check("  it says which reading of the record stopped it", /not executed: the verdict is unmet/.test(last.reason), true);
+    check("  it is not a verdict: not ready, and nothing a later run carries values from",
+      [readyToExecute(last, TOOL.name), graphSide.readyToExecute(last, TOOL.name), await held.store.load(held.key)], [false, false, null]);
+    check("  every record says who wrote it", held.records.every(x => x.actor === "gate" || x.actor === "executor"), true);
+    // The seller's next words are judged again, and the executing side records its decision again.
+    check("  each turn: a verdict, then the executing side's record", held.records.map(x => `${x.actor}:${x.execution_decision}`),
+      ["gate:hold", "executor:not_executed", "gate:hold", "executor:not_executed"]);
+    // The unit's history is read from the gate's records: a failed call's record is not a second asking.
+    let n = 0;
+    const retried = await run("g1-01", "clean", ["yes", "Try again."], { callTool: async () => { if (++n === 1) throw new Error("timeout"); return { ok: true }; } });
+    check("a call that failed, then tried again: asked once in all, and the second verdict counts it once",
+      [retried.records.map(x => `${x.actor}:${x.execution_decision}`), retried.records.filter(x => x.actor === "gate").at(-1).gate.next_ask_attempt],
+      [["gate:ask_user", "gate:execute", "executor:failed", "gate:execute", "executor:executed"], 1]);
   }
 
   console.log("\n--- 2. what judge.run returns cannot be executed from ---");

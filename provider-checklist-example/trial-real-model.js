@@ -101,6 +101,8 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
       return real.labelInput(msg);
     },
     callTool: async (name, args) => { calls.push({ name, args }); return { ok: true }; },
+    // The provider's notices, shown to the seller before the call when no question carried them.
+    notify: async lines => { for (const l of lines) console.log(`\n→ shown to the seller before the call:\n    Note: ${l}`); (log.notified ??= []).push(...lines); },
     store,
     // The seller's settings, when the scenario has them (pre_set): a setting the seller approved, or a
     //   value a model remembered on its own (spec 5.2).
@@ -150,7 +152,7 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
 
   const tool = (await real.listTools())[0];
   const records = await store.list(`user:${tool.name}:${threadId}`);
-  const rec = records.filter(x => x && "execution_decision" in x && x.execution_decision !== "executed" && x.execution_decision !== "failed").at(-1) ?? null;
+  const rec = records.filter(x => x && "execution_decision" in x && x.actor !== "executor").at(-1) ?? null;
   log.records = records;
   log.tool_calls = calls;
 

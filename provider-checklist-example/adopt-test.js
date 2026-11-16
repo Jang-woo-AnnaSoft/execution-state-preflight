@@ -36,12 +36,15 @@ let thread = 0;
 //   stub model, this folder's tool.json as the server's one tool, the condition's platform facts.
 function standIn(id, condition, over = {}) {
   const ctx = { ...S.conditions[condition].context, ...(over.ctx ?? {}) }, date = S.date_modes.said;
-  const calls = [], prompts = [];
-  const text = S.instructions.find(i => i.id === id).text;
+  const calls = [], prompts = [], events = [];
+  const text = over.text ?? S.instructions.find(i => i.id === id).text;
   let first = true;
   return {
-    calls, prompts,
+    calls, prompts, events,
     connect: {
+      // The provider's notices, shown before the call when no question carried them; the user's settings.
+      ...(over.notify === null ? {} : { notify: async lines => { events.push(["notify", lines]); } }),
+      ...(over.readPreSet ? { readPreSet: over.readPreSet } : {}),
       ask: over.ask ?? makeAsk(id),
       chat: async req => { prompts.push(req.system); return makeChat()(req); },
       listTools: async () => [TOOL],
@@ -52,7 +55,7 @@ function standIn(id, condition, over = {}) {
         if (first) { first = false; return buildUserTurn(ctx, text, date).segments; }
         return realConnect.labelInput(msg);
       }),
-      callTool: async (name, args) => { calls.push({ name, args }); return { ok: true }; },
+      callTool: async (name, args) => { events.push("call"); calls.push({ name, args }); return { ok: true }; },
       store: gate.createStorage(),
       checkpointer: new gate.MemorySaver(),
       // The names this system can measure (connect.js's MEASUREMENTS keys).
@@ -68,8 +71,24 @@ const run = async (id, condition, over = {}, replies = []) => {
   const first = await agent.start({ threadId, message: { typed: "(stand-in)" }, userChecklist: S.instructions.find(i => i.id === id).user_checklist ?? [] });
   let last = first;
   for (const r of replies) last = r === "CANCEL" ? await agent.cancel({ threadId }) : await agent.reply({ threadId, message: { typed: r } });
-  return { first, last, calls: s.calls, prompts: s.prompts, store: s.connect.store };
+  return { first, last, calls: s.calls, events: s.events, prompts: s.prompts, store: s.connect.store, key: `user:${TOOL.name}:${threadId}` };
 };
+
+
+// A seller who types every value in its declared form: nothing is left to ask. The stand-in extractor
+//   reads the time from the typed date-time.
+const ALL_GIVEN = "Set up the pickup for listing LST-2291 at 2026-10-31T14:00:00+09:00 at the Hongdae station lockers.";
+function askAllGiven(id) {
+  const inner = makeAsk(id);
+  return async (m, system, user, hook) => {
+    const out = await inner(m, system, user, hook);
+    if (hook === "extraction") {
+      const segs = JSON.parse(user.slice(user.indexOf("[", user.indexOf("Segments:")), user.indexOf("\n\nFields to locate")));
+      out.time = { found: true, value: "2026-10-31T14:00:00+09:00", segment_index: segs.findIndex(s => s.trust === "user" && s.text.includes("2026-10-31T14")) };
+    }
+    return out;
+  };
+}
 
 (async () => {
   console.log("--- 1. the folder holds only what an adopter keeps ---");
@@ -295,6 +314,30 @@ const run = async (id, condition, over = {}, replies = []) => {
     check(label, [rf.status, rf.executedWith, sf.calls.length], [want, null, 1]);
     check("  and it is recorded as failed, not as something to carry values from",
       [(await sf.connect.store.list(`user:schedule_pickup:${id}`)).at(-1)?.execution_decision, await sf.connect.store.load(`user:schedule_pickup:${id}`)], ["failed", null]);
+  }
+
+  console.log("\n--- 4-c. the graph's executing step: notices before the call, its own record, the user's settings ---");
+  {
+    const NOTICE = "The buyer sees the time and location immediately. Tell the seller before the pickup is scheduled.";
+    const r = await run("g1-01", "clean", { text: ALL_GIVEN, ask: askAllGiven("g1-01") });
+    const recs = await r.store.list(r.key);
+    check("nothing to ask: the notice is shown, then the tool is called", [r.first.status, r.events], ["executed", [["notify", [NOTICE]], "call"]]);
+    check("  the executing step's record says so", [recs.at(-1).actor, recs.at(-1).told.map(t => t.when)], ["executor", ["before_call"]]);
+    const mute = await run("g1-01", "clean", { text: ALL_GIVEN, ask: askAllGiven("g1-01"), notify: null });
+    const mrecs = await mute.store.list(mute.key);
+    check("no way to show the notice: not executed, and the step's own record says why",
+      [mute.first.status, mute.calls.length, mrecs.map(x => `${x.actor}:${x.execution_decision}`)], ["not_executed", 0, ["gate:execute", "executor:not_executed"]]);
+    const held = await run("g1-01", "order_cancelled", {}, ["yes"]);
+    const hrecs = await held.store.list(held.key);
+    check("a hold: the step's record that it did not run it follows the verdict",
+      [held.last.status, hrecs.slice(-2).map(x => `${x.actor}:${x.execution_decision}`)], ["hold", ["gate:hold", "executor:not_executed"]]);
+    // The seller's saved place (spec 5.2) reaches the gate through the graph too: g6-01's "my usual spot".
+    const preSet = S.instructions.find(i => i.id === "g6-01").pre_set;
+    const saved = await run("g6-01", "clean", { readPreSet: async () => preSet }, ["yes"]);
+    check("readPreSet reaches the graph's gate: the saved place is the one used",
+      [saved.last.status, saved.calls[0]?.args.location], ["executed", preSet.location.value]);
+    const none = await run("g6-01", "clean", {}, ["yes"]);
+    check("  without it the place is still to be given: nothing runs", [none.calls.length, none.last.status === "executed"], [0, false]);
   }
 
   console.log("\n--- 5. the agent's first verdict is the arm's ---");
