@@ -3312,13 +3312,89 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
     //   not fill.
     const userFormsNow = checklist.filter(i => i?.form_pending);
     const providerFormsNow = providerConditions.filter(c => c?.form_untranslated);
+    // [APPROVED AT INSTRUCTION] 4.5: what is confirmed by asking the user is confirmed at instruction
+    //   time, while the user is here. An item the user approves — a condition of theirs with no form to
+    //   compare it in, a [Verify] line whose form is the user's approval — is asked now, for the values
+    //   settled now. The yes is in the conversation the deferred run carries, and counts at the trigger
+    //   while the values and the rule are the ones it was given for ([APPROVAL BINDING]); a value or a
+    //   rule that changed by then is asked about again there. Every comparison stays the trigger's.
+    //   Left to the trigger, as this did, the first question came when the call was due, with nobody
+    //   there to answer it: the run asked to its ceiling and ended.
+    //   Not asked now: an item about a value that is not settled yet. The blank is asked first, and a
+    //   value the system gives at the trigger has nothing to show the user until then.
+    //   A no is a finished check that prohibits (4.5): the run is held now, not scheduled to be held.
+    const fieldsNow = new Map([...fields, ...extra_fields].map(f => [f.name, f]));
+    //   Which items those are is read the way the trigger reads it: one whose form is the user's approval
+    //   (form_none, kind user_approval), and one with no form at all that the adopter's own comparison
+    //   leaves unverified for these values (the hook is asked, as at the trigger; its result is not a
+    //   verdict here, only whether the user would be asked).
+    const settledNow = it => it && typeof it === "object" && !it.form_pending && !it.form_untranslated &&
+      it.withdrawal?.status !== "proposed" && it.withdrawal?.status !== "confirmed" &&
+      Array.isArray(it.constrains ?? []) && (it.constrains ?? []).every(n => fieldsNow.get(n)?.status === "known");
+    const ctxNow = { ...ctx, fields, extra_fields, checklistAnswers: {}, measurements: {} };
+    const leftToTheUser = async (it, hook) => {
+      if (it.form_none || it.compare?.kind === "user_approval") return true;
+      if (it.compare !== null && it.compare !== undefined) return false;
+      const out = await safeHook(hook, [it, ctxNow], () => ({ status: "unverified" }));
+      return !(out?.status === "verified" || out?.status === "checked" || (out?.status === "unmet" && out?.source));
+    };
+    const userApprovals = [], providerApprovals = [];
+    for (const it of checklist) if (settledNow(it) && await leftToTheUser(it, h.verifyUserChecklistItem)) userApprovals.push(it);
+    for (const c of providerConditions) {
+      if (settledNow(c) && normalizeProviderLabel(c.label) === "verify" && !valueSourceRule(c) &&
+          await leftToTheUser(c, h.verifyProviderCondition)) providerApprovals.push(c);
+    }
+    const approvalsNow = [
+      ...userApprovals.map(it => ({ it, declared_by: "user" })),
+      ...providerApprovals.map(it => ({ it, declared_by: "provider" })),
+    ].map(a => ({ ...a, b: boundAnswer(checklistAnswers?.[a.it.id], a.it, fieldsNow, checklistChanged) }));
+    for (const a of approvalsNow) if (a.b && !a.b.ok) voidedApprovals.push({ id: a.it.id, why: a.b.why });
+    const approveNow = approvalsNow.filter(a => !a.b?.ok);
+    const declinedNow = approvalsNow.filter(a => a.b?.ok && a.b.answer === false);
+    // The record's view of the items: what was asked or answered now is written on a copy. The items the
+    //   deferred run carries stay as they were declared; the trigger judges them again from the replies.
+    const approvalOf = new Map(approvalsNow.map(a => [a.it, a]));
+    const withApprovalNow = items => items.map(it => {
+      const a = approvalOf.get(it);
+      if (!a) return it;
+      return a.b?.ok
+        ? { ...it, approval: a.b.approval, approved_at: "at_instruction" }
+        : { ...it, ...(a.b ? { approval_voided: a.b.why } : {}), approval_asked_at: "at_instruction" };
+    });
+    const approveList = declared_by => approveNow.filter(a => a.declared_by === declared_by).map(a => a.it);
+
+    if (declinedNow.length > 0) {
+      const unmet = declinedNow.map(a => ({ id: a.it.id, description: a.it.description ?? a.it.stated_as ?? null,
+        note: "the user said it does not hold for the values shown", declared_by: a.declared_by,
+        ...(a.declared_by === "provider" ? { label: a.it.label } : {}) }));
+      return {
+        fixed, ...toolFacts, measurements, action_key, phase, fields, extra_fields,
+        advisory_notes: advisoryNotes,
+        user_checklist: withApprovalNow(checklist),
+        unknown_count: unknownNow.length,
+        unverified_checklist_count: null,
+        provider_checklist: withApprovalNow(providerConditions),
+        unverified_provider_count: null,
+        value_checks, unverified_value_check_count,
+        checklist_digest, checklist_changed: checklistChangedNow(),
+        call_arguments: null,
+        gate: { kind: "unmet", unmet, unknown_fields: [], unverified_checklist: [],
+                next_ask_attempt: askExhaustedNow ? null : askAttempt,
+                _diag: { phase, pending_at_trigger: pendingCount, lookup_failures: lookupFailures(fields) } },
+        execution_decision: "hold",
+        reason: `hold: unmet — ${unmet.map(u => `${u.id} [${u.declared_by}] (${u.note})`).join("; ")}`,
+        timestamp: h.now(),
+      };
+    }
 
     if (blocking.length > 0 || repairNow.length > 0 || valueCheckRepair.length > 0 ||
-        userFormsNow.length > 0 || providerFormsNow.length > 0) {
+        userFormsNow.length > 0 || providerFormsNow.length > 0 || approveNow.length > 0) {
       const decision = (repairNow.length || valueCheckRepair.length || providerFormsNow.length) ? "definition_repair"
         : askExhaustedNow ? "exhausted" : "ask_user";
       const asked = decision === "ask_user"
-        ? await buildQuestions({ askFields: blocking, approveItems: [],
+        ? await buildQuestions({ askFields: blocking,
+            approveItems: approveNow.map(a => ({ id: a.it.id, ...(a.declared_by === "provider" ? { label: a.it.label } : {}),
+              description: a.it.description ?? a.it.stated_as ?? null, approve: approvalPrompt(a.it, fieldsNow) })),
             formItems: formRequests.filter(r => r.proposal && userFormsNow.some(i => i.id === r.item_id)),
             withdrawItems: checklist.filter(i => i?.withdrawal?.status === "proposed"),
             values: [...fields, ...extra_fields] })
@@ -3329,10 +3405,10 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
       return {
         fixed, ...toolFacts, measurements, action_key, phase, fields, extra_fields,
         advisory_notes: advisoryNotes,
-        user_checklist: checklist,        // Raw input. Not verified at this phase
+        user_checklist: withApprovalNow(checklist),   // As declared, with what was asked now. Compared at the trigger
         unknown_count: unknownNow.length, // Total (including pending). gate is authoritative for what blocks
         unverified_checklist_count: null, // No decision made. Not 0
-        provider_checklist: providerConditions,  // Raw declarations. Conditions are trigger-time (4.5)
+        provider_checklist: withApprovalNow(providerConditions),  // As declared. Conditions are trigger-time (4.5)
         unverified_provider_count: null,         // Not performed at this phase
         value_checks, unverified_value_check_count,
         checklist_digest, checklist_changed: checklistChangedNow(),
@@ -3341,8 +3417,16 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
           unknown_fields: blocking.map(f => ({ name: f.name, note: f.note ?? null,
             ...(f.prior_candidate ? { candidate: f.prior_candidate } : {}) })),
           // Only the forms the user must confirm now; the items themselves are checked at the trigger.
-          unverified_checklist: userFormsNow.map(i => ({ id: i.id, description: i.description,
-            note: pendingFormNote(i), form_request: formRequests.find(r => r.item_id === i.id) ?? null })),
+          //   And the items the user approves now, for the values settled now ([APPROVED AT INSTRUCTION]).
+          unverified_checklist: [
+            ...userFormsNow.map(i => ({ id: i.id, description: i.description,
+              note: pendingFormNote(i), form_request: formRequests.find(r => r.item_id === i.id) ?? null })),
+            ...approveList("user").map(i => ({ id: i.id, description: i.description ?? i.stated_as ?? null,
+              note: "the user approves it for the values shown", approve: approvalPrompt(i, fieldsNow) })),
+          ],
+          ...(approveList("provider").length ? { unverified_provider: approveList("provider").map(c =>
+            ({ id: c.id, label: c.label, description: c.description, note: "the user approves it for the values shown",
+               approve: approvalPrompt(c, fieldsNow) })) } : {}),
           ...(formRequests.length ? { form_approvals: formRequests } : {}),
           ...(providerFormsNow.length ? {
             ...((failedNow.length || gapsNow.length) ? {} : { kind: "definition_repair" }),
@@ -3364,7 +3448,8 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
             definition_repair_checks: valueCheckRepairList(),
           } : {}),
           ...(decision === "exhausted" ? { kind: "exhausted",
-            exhausted: [{ route: "ask_user", attempt: askAttempt, limit: h.limits.ask, names: blocking.map(f => f.name) }] } : {}),
+            exhausted: [{ route: "ask_user", attempt: askAttempt, limit: h.limits.ask,
+                          names: [...blocking.map(f => f.name), ...approveNow.map(a => a.it.id)] }] } : {}),
           next_ask_attempt: decision === "ask_user" ? askAttempt + 1 : (askExhaustedNow ? null : askAttempt),
           ...(asked ? { questions: asked.questions, question_block: asked.block, asked_through: askedThrough,
                         ...(asked.settled.length ? { settled_block: asked.settled } : {}) } : {}),
@@ -3382,8 +3467,9 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
           ? `definition_repair: value check not made — ${valueCheckRepair.map(c => c.id).join(", ")} ` +
             `(no validator could check it; no user answer settles these)`
           : decision === "exhausted"
-          ? `exhausted: ask_user ${askAttempt}/${h.limits.ask} (${blocking.map(f => f.name).join(", ")})`
-          : await h.formatReason(decision, { unknown_fields: blocking, unverified_checklist: [] }),
+          ? `exhausted: ask_user ${askAttempt}/${h.limits.ask} (${[...blocking.map(f => f.name), ...approveNow.map(a => a.it.id)].join(", ")})`
+          : await h.formatReason(decision, { unknown_fields: blocking, unverified_checklist: [...userFormsNow, ...approveList("user")],
+                                             unverified_provider: approveList("provider") }),
         timestamp: h.now(),
       };
     }
@@ -3391,10 +3477,10 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
     return {
       fixed, ...toolFacts, measurements, action_key, phase, fields, extra_fields,   // Actual decision results. For comparison at trigger time
       advisory_notes: advisoryNotes,
-      user_checklist: checklist,          // Carried unverified, as things to confirm at trigger time
+      user_checklist: withApprovalNow(checklist),   // Carried to be compared at the trigger; what the user approved now is on it
       unknown_count: unknownNow.length,   // Only pending remains. May not be 0
       unverified_checklist_count: null,
-      provider_checklist: providerConditions,  // Raw declarations. Conditions are trigger-time (4.5)
+      provider_checklist: withApprovalNow(providerConditions),  // As declared. Conditions are trigger-time (4.5)
       unverified_provider_count: null,         // Not performed at this phase
       value_checks, unverified_value_check_count,
       checklist_digest, checklist_changed: checklistChangedNow(),
@@ -4041,7 +4127,13 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.32",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.33",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.33: an at_instruction record asks for the approvals the user can give now (a condition of the
+    //        user's with no form, a [Verify] line approved by the user), for the values settled now:
+    //        its gate carries them in questions, unverified_checklist / unverified_provider (with
+    //        approve), and its items carry approval_asked_at or approval + approved_at "at_instruction".
+    //        A no given now is execution_decision "hold" (gate.kind "unmet") at instruction time
+    //        ([APPROVED AT INSTRUCTION]). Before 1.33 these were first asked at the trigger.
     //   1.32: every record carries actor ("gate" | "executor"). The executing side's record may read
     //        execution_decision "not_executed" (it read the verdict and did not run it), and carries told
     //        ([{ id, description, when: "with_question" | "before_call" }]): the notices it showed the
@@ -4458,7 +4550,8 @@ module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, l
  *      ├─ branch_unresolved / conflict ─► "ask_user" (carries branch_options, no unknown_fields)
  *      └─ resolved → fields = the slot set, extra_fields = everything else that was looked up
  *      ▼
- * Step 3-a. [at_instruction] values now, conditions at trigger
+ * Step 3-a. [at_instruction] values now, the user's approvals now, comparisons at trigger
+ *      │ └─ an item the user approves, about values settled now, is asked now (4.5); a no → "hold"
  *      │ └─ unknowns by route (routes as in Step 5-6). system_lookup and NULL slots are excused to the
  *      │    trigger (4.5: only what was confirmed by asking is fixed now); pending_at_trigger likewise
  *      ├─ [route definition_repair] ─────► "definition_repair"
