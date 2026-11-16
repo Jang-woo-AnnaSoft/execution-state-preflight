@@ -643,7 +643,8 @@ function askAllGiven(id) {
     await say("(stand-in)");
     const asked = await say("Saturday 3pm, Hongdae station lockers");
     check("the time to approve and the condition to approve are asked together, before scheduling",
-      [asked.status, asked.question?.block], ["waiting", ["time = 2026-10-31 (Sat) 15:00 +09:00", "public places only — for location = \"Hongdae station lockers\""]]);
+      [asked.status, asked.question?.block], ["waiting", ["time = 2026-10-31 (Sat) 15:00 +09:00", "public places only — for location = \"Hongdae station lockers\"",
+                                                             "Note: The buyer sees the time and location immediately. Tell the seller before the pickup is scheduled."]]);
     const scheduled = await say("yes");
     const recs = () => s.store.list(`user:${TOOL.name}:later`);
     const deferred = (await recs()).filter(x => x.actor === "gate").at(-1);
@@ -657,6 +658,10 @@ function askAllGiven(id) {
     check("when it is due nothing is asked: the approval given then counts, and it runs",
       [due.status, verdict.phase, verdict.user_checklist.find(i => i.id === "chk_public")?.status, s.calls.map(c => [c.args.time, c.args.location])],
       ["executed", "at_trigger", "verified", [["2026-10-31T15:00:00+09:00", "Hongdae station lockers"]]]);
+    // The provider's notice went with the question asked before scheduling, so it is not shown again when
+    //   the call is due, when the seller may not be there.
+    check("  the notice was told with the question at instruction time, not again before the call",
+      [s.events, (await recs()).at(-1).told.map(t => t.when)], [["call"], ["with_question"]]);
   }
 
   console.log("\n--- 2. what judge.run returns cannot be executed from ---");
