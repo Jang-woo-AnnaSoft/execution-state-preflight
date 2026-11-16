@@ -28,12 +28,12 @@ Sections 1 to 3 are for both. Section 4 is `judge-only.js`. Section 5 is the dem
 | [`connect.js`](./connect.js) | **Fill in.** Your model, your tools, your system's values, your storage |
 | [`principles-gated.md`](./principles-gated.md) | Goes into your agent's system prompt (both flows put it there). What the model needs to know when a gate judges its calls (spec 6.2, last paragraph) |
 | [`principles.md`](./principles.md) | The specification's 6.2 as prompt sentences, for a model with no gate (`systemPrompt("principles.md")`) |
-| [`judge-only.js`](./judge-only.js) | Do not edit. Gives the skeleton its model calls and a validator; judges one tool call and writes the record |
+| [`judge-only.js`](./judge-only.js) | Do not edit. Gives the library its model calls and a validator; judges one tool call and writes the record |
 | [`judge-only-example.js`](./judge-only-example.js) | Read and adapt. Your agent's side: ask, judge again, read the record, execute, write the result |
 | [`agent.js`](./agent.js) | Demonstration. Run it, or call it from your app. No edits needed |
 | [`gate.js`](./gate.js) | Demonstration. Do not edit. The flow around `judge-only.js`, as a LangGraph graph |
 
-You also need the skeleton, [`execution-state-preflight.js`](../execution-state-preflight.js): one
+You also need the library, [`execution-state-preflight.js`](../execution-state-preflight.js): one
 file, no dependencies. Copy it next to this folder or into it.
 
 ## 1. Declare the tool: `tool.md`
@@ -161,7 +161,7 @@ npm install --no-save @langchain/anthropic@1.5.13   # or your provider's package
 MODEL=anthropic:<model-name> node judge-only-example.js "Set up the pickup for LST-2291, 2pm this Saturday, Hongdae station lockers."
 ```
 
-`judge-only.js` needs only the skeleton and the validator (Ajv). It does not load LangGraph.
+`judge-only.js` needs only the library and the validator (Ajv). It does not load LangGraph.
 
 **Six things are yours to keep.** Nothing checks them for you, and
 breaking one leaves a record that is right about an execution that was not.
@@ -191,7 +191,7 @@ breaking one leaves a record that is right about an execution that was not.
    a server's tools itself shows the whole description. The gate reads the full definition either way.
 
 **When nothing runs, tell the user why.** `writeStop` (in `judge-only.js`) hands your model the
-skeleton's `stopFacts` for the record: the condition in its own words, whose it is, what was found.
+library's `stopFacts` for the record: the condition in its own words, whose it is, what was found.
 Your model writes the message from those alone; without its words there is still a plain sentence.
 The example shows it, and gives it to the model as its call's result. Without this, a hold ends with
 nothing said: a real run held on a `[Required]` line did.
@@ -272,7 +272,7 @@ else means it did not: the gate's own reasons (`hold`, `definition_repair`, `exh
   come back in the result (`disclosures`). The gate does not wait for the user to acknowledge one; if
   your tool needs that, ask for it before the call.
 
-## What the skeleton does that you do not write
+## What the library does that you do not write
 
 - **Reads the tool's definition** once the model calls the tool, and records which one it read: a
   changed declaration shows in the record.

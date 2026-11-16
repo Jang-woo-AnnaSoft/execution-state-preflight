@@ -5,7 +5,7 @@
  * written by the tool's provider, in the tool's definition, and what changes from one system to the next
  * is in connect.js.
  *
- * The judging is in judge-only.js: the skeleton (execution-state-preflight.js) reads the tool's
+ * The judging is in judge-only.js: the library (execution-state-preflight.js) reads the tool's
  * definition itself, once the model has called the tool, and judges. This file adds the flow around it,
  * for an agent built here from the start:
  *
