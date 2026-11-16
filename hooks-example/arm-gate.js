@@ -151,6 +151,9 @@ function project(state, preflight, tool) {
       // Why a slot that was found is still unknown — a format refusal, a derivation that did not
       //   hold. Left out, a published run showed "found" and "unknown" side by side with no reason.
       note: f.note ?? null,
+      // An approval the user's later words replaced ([SAID AFTER]): the value it had approved, and where
+      //   the later words are. Left out, a slot read from the instruction after a yes shows no trace of the yes.
+      answer_superseded: f.answer_superseded ?? null,
       // A NULL slot has no value; only a known one is projected.
       value: f.status === "known" ? f.value : undefined
     })),

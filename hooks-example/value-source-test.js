@@ -15,7 +15,7 @@
  * answered, because that is the entire difference 2.4 is about: a looked-up value and an invented one
  * are the same string, and the record is readable only if it says where the string came from.
  *
- * Seven parts:
+ * The parts:
  *   1. the same value in each of the five seats, one at a time
  *   2. two seats at once — the order is a search order, not a ranking by trustworthiness
  *   3. pre_set_data's wrapper, which is the trap a migration falls into
@@ -28,6 +28,7 @@
  *  10. NULL as a slot state, who may report it, and the two route ceilings
  *  11. a derived value names every input it rests on, and the gate checks each one
  *  12. a value settled at execution time: a measurement settles it only inside a range the user set
+ *  13. a value the user approved, and words about it typed afterwards
  *
  * Part 4 is why this file exists. storage.load is never called by the gate — the caller fetches the
  * prior record with preflight.getPriorExecutionState(key) and passes it in — so until now no test
@@ -724,6 +725,57 @@ const slotOf = state => (state.fields ?? []).find(f => f.name === SLOT) ?? {};
     check("  not read as all five", slotOf(onlyMeasured).status, "unknown");
     check("  back to the declarer", slotOf(onlyMeasured).route, "definition_repair");
     check("  and the run does not execute", onlyMeasured.execution_decision !== "execute", true);
+  }
+
+  console.log("\n--- part 13: a value the user approved, and words about it typed afterwards ([SAID AFTER]) ---");
+  {
+    // The value is proposed, the user says yes, and it is user_answer. Then one more segment arrives.
+    //   What the reader of the user's words reports about that segment decides whether the approval
+    //   still counts (spec 3.5: what the user declared holds until the user changes it).
+    const OTHER = "FR76-3000-6000-0112";
+    async function afterApproval(lastSegment, extractLast) {
+      const storage = createStorage();
+      const instruction = [{ trust: "user", text: "Pay the supplier today." }];
+      let extract = () => ({ none: "absent" });
+      const hooks = withPorts({
+        ...createHooks({ extract: (f, ins) => extract(f, ins), measured: {} }),
+        proposeValue: () => ({ value: ACCOUNT }),
+        readReplies: () => [{ target: `value:${SLOT}`, answer: true, quote: "yes", segment_index: 2, span: [0, 3] }],
+      }, { tool: TOOL });
+      const round = async () => {
+        const preflight = createPreflight({ hooks, storage });
+        const state = await preflight.runPreflight({ userId: "u_1042", instruction, toolCall: { name: TOOL.name } });
+        await preflight.recordExecutionState(state);
+        return state;
+      };
+      const asked = await round();
+      instruction.push({ trust: "assistant", text: "Use this account?" }, { trust: "user", text: "yes" });
+      const approved = await round();
+      instruction.push(lastSegment);
+      extract = extractLast;
+      return { asked, approved, last: await round() };
+    }
+    const typed = `Use ${OTHER} instead.`;
+    const claim = { value: OTHER, segment_index: 3, span: [typed.indexOf(OTHER), typed.indexOf(OTHER) + OTHER.length] };
+
+    const changed = await afterApproval({ trust: "user", text: typed }, () => claim);
+    check("asked with the value shown, then approved", `${changed.asked.execution_decision}/${slotOf(changed.approved).source}`, "ask_user/user_answer");
+    check("the user types another value afterwards: read", slotOf(changed.last).source, "instruction");
+    check("  it is the value used", slotOf(changed.last).value, OTHER);
+    check("  the approval is on the record as superseded", slotOf(changed.last).lookup_trace[0].result, "superseded");
+    check("  with the value it had approved", slotOf(changed.last).answer_superseded?.value, ACCOUNT);
+    check("  and where the later words are", JSON.stringify(slotOf(changed.last).answer_superseded?.by), JSON.stringify({ segment_index: 3, span: claim.span }));
+
+    const pasted = await afterApproval({ trust: "untrusted", text: typed, origin: "pasted" }, () => claim);
+    check("the same words, not the user's: the approval stands", `${slotOf(pasted.last).source}/${slotOf(pasted.last).value}`, `user_answer/${ACCOUNT}`);
+    check("  nothing superseded", "answer_superseded" in slotOf(pasted.last), false);
+
+    const nothingNew = await afterApproval({ trust: "user", text: "Thanks." }, () => ({ none: "absent" }));
+    check("later words that give no value: the approval stands", slotOf(nothingNew.last).source, "user_answer");
+
+    const broken = await afterApproval({ trust: "user", text: typed }, () => { throw new Error("reader down"); });
+    check("the reader of the user's words throws: not taken on its silence", slotOf(broken.last).lookup_failed, true);
+    check("  definition repair, not execute", broken.last.execution_decision, "definition_repair");
   }
 
   console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`);
