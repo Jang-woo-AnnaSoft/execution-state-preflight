@@ -290,6 +290,11 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
       [asking.r.phase, asking.r.execution_decision, q.target, q.shown], ["at_instruction", "ask_user", "approve:chk_public", { location: "Hongdae station lockers" }]);
     check("  the record says what was asked now", [asking.r.user_checklist[0].approval_asked_at, asking.r.gate.unverified_checklist.map(i => i.id)],
       ["at_instruction", ["chk_public"]]);
+    // The provider's notice goes with what is asked now: the seller is here now.
+    const noticed = await run({ ...schedOver, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") }, { userChecklist: [APPROVE] });
+    check("  a [Notice] line is on the gate that asks at instruction time", [noticed.r.execution_decision, (noticed.r.gate.disclosures ?? []).map(d => d.description)],
+      ["ask_user", ["The buyer sees it immediately."]]);
+    check("  a tool with none carries none", "disclosures" in asking.r.gate, false);
     const refused = await run(schedOver, { userChecklist: [APPROVE], checklistAnswers: { chk_public: false } });
     check("  a no: held now, not scheduled to be held", [refused.r.execution_decision, refused.r.gate.kind, refused.r.gate.unmet.map(u => u.id), "deferred_input" in refused.r],
       ["hold", "unmet", ["chk_public"], false]);
@@ -436,7 +441,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.33");
+    check("schema_version", persisted?.schema_version, "1.34");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
