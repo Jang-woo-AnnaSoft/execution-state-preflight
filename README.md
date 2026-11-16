@@ -1,5 +1,9 @@
 # execution-state-preflight
 
+Don't execute on a guess. Check everything stated, and ask or stop when it can't be confirmed.
+
+Rules are written as sentences in the tool's description, and code does the counting. The checks that used to be hard-coded for each tool are no longer needed.
+
 Before a tool is called, check where the intent, values and conditions came from and whether they were confirmed, and write it into the record.
 
 Models fill blanks, and when blocked they find another way through. The usual expectation is that better models will stop this; better models only find better ways around. The blanks are mostly not facts the model lacks — they are things missing from the input. And models were trained to fill blanks in the first place.
@@ -8,33 +12,54 @@ So this does not ask the model whether it knows. Against a checklist kept outsid
 
 ---
 
+## A rule in a prompt, a hook, or a checklist
+
+A hook is code the harness runs before a tool executes.
+
+| | Prompt | Hook | Checklist |
+|---|---|---|---|
+| Written as | Natural language | Code | Natural language (labelled lines) |
+| Read by | The model | The harness | The model too, but the gate reads the tool's definition itself |
+| Who decides it was kept | The model that read it | Code the developer wrote | Code that counts unconfirmed items |
+| Checked against | The model's words | What the code sees, usually the call the model made | Declared sources: the system's data, the user's words |
+| If skipped | Runs, with no mark | Blocked | Stays unconfirmed, and does not run |
+| To change a rule | Edit the sentence | Edit the code and deploy | Edit the sentence |
+
+In a prompt, a sentence is a request. The model reads it and decides whether it kept it, and an output that kept it looks the same as one that skipped it. A hook enforces, but each rule is code a developer writes, and it does not look at where a value came from unless that is built too. The checklist does not replace the hook: a place to stop before execution is still needed, and the hook is that place. What changes is that the code running there no longer grows with each rule.
+
+So one line does two jobs:
+
+- **Safety.** Unlike a prompt, a stated condition is not skipped, and nothing runs while it is unconfirmed.
+- **Developer productivity.** Unlike a hook, nobody writes that guarantee as code. A condition is not turned into an `if`; to change it, edit the sentence. Only a rule that needs system data not yet connected needs one more connection.
+
+---
+
 ## Where this sits
 
 Where work can be undone, let the model act and verify the result; fixing it afterwards is cheaper. An irreversible execution is different. The result cannot be fixed after the fact, so the model has to move inside a declared frame, and the inputs have to be confirmed before execution (spec 1.1).
 
-That frame is already being built. This does not replace it. It adds back one premise the frame cannot restore.
+### What already exists, and where this goes
 
-### The frame: what already exists
+| | What it does | What it checks | Who judges |
+|---|---|---|---|
+| Alignment | Makes the AI judge well | The AI's dispositions and values, in training | The AI |
+| Governance | Settles who may act, and under what process | Risk tiers, approval paths, access, audit. Lately also a tool call just before execution, against policy: whether a transfer amount is within the limit | People, through declared policy |
+| Harness | Builds the environment around the model and limits what it can reach | Which tools and data the agent can reach, and whether inputs and outputs match their formats | People set the bounds; within them, the AI fills the arguments |
+| This specification | Checks that what people declared was met, and records it | Where the intent, each value and each condition of this call came from, and who confirmed it, just before execution | People. The AI does not judge |
 
-**Governance settles who may act, and under what process.** Risk tiering, approval paths, access control, audit logging, model risk policy. Lately it has come down to a runtime layer that intercepts a tool call just before execution and checks it against policy. Whether a transfer amount is within the limit can be checked there too.
+Loop engineering is a method that runs across these: act, verify, record, repeat. It checks the result after the act, and the checker is often another model. This checks before the act, and moves the criteria and the decision into a separate, declared domain model and code.
 
-**Harness engineering builds the environment around the model.** What matters here is the part that decides what the agent can reach: which tools it can call, which data it can access, whether inputs and outputs match their formats.
-
-**Loop engineering settles whether the result is right.** Act, verify, record, repeat. The maker and the checker are separated, and done is a passed check, not a claim.
-
-Together they come close to the domain modeling and finite-state machines of earlier systems. Which values are allowed, and which transitions are possible from which state, are fixed outside the model, and the model moves inside them.
+Governance, harness and loop together come close to the domain modeling and finite-state machines of earlier systems. Which values are allowed, and which transitions are possible from which state, are fixed outside the model, and the model moves inside them. That frame is already being built. This does not replace it. It adds back one premise the frame cannot restore.
 
 ### The broken premise
 
-The frame checks whether a value is allowed and whether a transition is possible. It does not check who set the value. It never had to.
+The frame checks whether a value is allowed and whether a transition is possible. It does not check who set the value. It never had to: a person logged in and typed the values, so the input path was the proof of origin.
 
-In earlier systems a person logged in and typed the values into a form. Short of tampering, the source of a value could only be that person. The input path itself was the proof of origin, and the controls were built on that premise.
+With agents, the execution still runs under the user's session and permissions, and the audit log still says the user executed with this value. But the model wrote it. Nothing was tampered with, and the premise breaks anyway.
 
-With agents, the user still logs in, and the execution still runs under that person's session and permissions. The audit log still says "the user executed with this value." But the model wrote the value. Nobody tampered with anything, and the premise still breaks. The controls came over; the premise that made them enough did not.
+So some wrong executions pass the whole frame. In [the reported Meta Muse case](./case-muse-marketplace.en.md), with "Allow Always" on, Muse agreed in the seller's name to the buyer's 8 to 10 p.m., and the buyer came to the seller's building while the seller was out. The permission was there, the format was right, no policy was broken. The seller had not set that time.
 
-So there are wrong executions that pass the whole frame. [The reported Meta Muse case](./case-muse-marketplace.en.md) is one. The seller handed his sale messages to Muse and chose "Allow Always." When the buyer proposed 8 to 10 p.m., Muse agreed in the seller's name, and the buyer came to the seller's building. The seller was not home and did not know anyone was coming. The permission was there, the format was right, and no policy was broken. One thing was wrong: the seller had not set that time.
-
-The model and the agent are not one actor. Permission comes from ownership, not accuracy, and a model that answers for nothing cannot hold it (spec 2.1). The model writes the draft; the agent — the code around the model — checks it. **Where the act happens.**
+Permission comes from ownership, not accuracy, and a model that answers for nothing cannot hold it (spec 2.1). The model writes the draft; the agent, the code around the model, checks it.
 
 ### What this adds
 
@@ -72,7 +97,7 @@ Not a new layer. It does for the owner of each value what the frame already does
 
 **It divides responsibility and makes it traceable.** Which checklist an empty slot belongs to is where the responsibility lies: a value points to the source integration, a condition to the provider's declaration, an intent to the conversation design (spec 7.1). Today, with no record, an anomaly is left blamed on the agent developer or the model. A decision record cannot be made after the incident.
 
-**It opens other ways to improve.** It shows what to fix without retraining the model. None of the three types needs a training budget (spec 7.1). Rules are written as sentences instead of code: each one becomes an item that must pass before execution, and changing it needs no code change and no deploy. **Checks that developers used to hard-code move out of the code.** The gate code stays the same as tools are added or models are swapped. Decision records become data by failure type, an input to model development (spec 7.2).
+**It opens other ways to improve.** It shows what to fix without retraining the model. None of the three types needs a training budget (spec 7.1). The gate code stays the same as tools are added or models are swapped. Decision records become data by failure type, an input to model development (spec 7.2).
 
 [The case report](./case-muse-marketplace.en.md) maps this incident's message log onto the checklists and is explicit about what this gate would **not** have caught.
 
@@ -87,6 +112,41 @@ The rules an execution needs, split by who declares them. This split is the core
 **Provider** — per tool. Values sit in the MCP input schema or inside the agent. Conditions have to be declared separately. Today they vary from agent to agent, and an MCP server's conditions are not applied before execution.
 
 **User** — intent, limits, preferences. Changes with the user's environment rather than the tool, and differs from user to user. Today all of it is left to the model's judgment.
+
+## Writing the provider's checklist
+
+The checklist is written in the tool's definition: each condition on a line of its own in the description, with a label, and the forms of the values in the input schema. Shortened from [`adopt-example/tool.md`](./adopt-example/tool.md):
+
+```text
+Schedule an in-person pickup for a marketplace item. The buyer sees it at once.
+The lines below are checked after this tool is called and before it runs. Call it with what the user said; what is missing is asked or checked then.
+[Required] The sale must be agreed, as shown by the order status.
+[Verify] The time is the one the seller states. It is one moment.
+[Verify] The location is the place the seller names, not a place read from the platform.
+[Required] The buyer's contact is read from the platform.
+[Notice] The buyer sees the time and location immediately.
+```
+
+- `[Required]` is confirmed only from the system's own data. The user's words do not fill it.
+- `[Verify]` is the user's. A value the user did not give counts only once the user approves it.
+- `[Notice]` is told to the user and blocks nothing.
+
+A line without a label is like a prompt: it is recorded and blocks nothing. A line need not say how to ask. The model asks, and code holds what was answered.
+
+Two lines came from running real models:
+
+- **The second line, without a label.** A model that does not know this specification reads the labelled lines as conditions to meet before calling. So the description says, in a line of its own, that they are checked after the call (spec 4.2.1).
+- **"not a place read from the platform."** For a value the user can give and the system can also read, the line says whether the system's value counts too. Without it, the same line takes a different form each time it is translated (spec 4.2.1).
+
+## Who does what
+
+| | Does |
+|---|---|
+| Developer, tool provider | Writes **what** is checked, in the checklist |
+| Model | Translates the lines into a comparable form, asks the user, finds the answers in the user's words, and tells the user why it stopped |
+| System | Reads the facts from real APIs; code decides pass or fail and records it |
+
+From outside, a model's "I checked" cannot be told apart from a real check. So the model translates, asks, finds and tells, and code decides. Better models translate and ask better; the authority to decide does not move to them. Each line's translation is made once and recorded with every verdict, and a line that could not be translated stays unconfirmed and blocks the run.
 
 ---
 
@@ -216,7 +276,7 @@ A tool's input schema defines the shape of the values it needs. It does not say 
 
 **If you build the agent and the tool together, you are still the tool provider.** Sharing an owner removes the protocol, not the role. The failure mode of same-ownership is not that the declaration lands in the wrong place; it is that **nobody plays the provider role at all.**
 
-So, a proposal for tool providers: declare conditions and how each is checked in the `description`, with a label — `[Required]`, `[Verify]`, `[Notice]`. The gate reads a labeled line as a condition, so a hint the model may or may not follow becomes a condition checked before execution. The model reads the line too, so the description also says, in a line of its own, that the labeled lines are checked after the call. It needs no protocol change and can be done today (spec 4.2.1).
+So, a proposal for tool providers: declare conditions in the `description`, each on a labelled line ([Writing the provider's checklist](#writing-the-providers-checklist)). A hint the model may or may not follow becomes a condition checked before execution. It needs no protocol change and can be done today (spec 4.2.1).
 
 The first version of the argument was posted as [If unsure, ask. Never guess. — AI Agent Pre-Execution Checklist](https://discuss.huggingface.co/t/if-unsure-ask-never-guess-ai-agent-pre-execution-checklist/176632). The discussion continues in [Misalignment is not required for an agent to act without authorization](https://discuss.huggingface.co/t/misalignment-is-not-required-for-an-agent-to-act-without-authorization/180541) and [We gave AI a trust we never gave people — The third axis, after capability and permission](https://discuss.huggingface.co/t/we-gave-ai-a-trust-we-never-gave-people-the-third-axis-after-capability-and-permission/183807/), where a team running its own agent is cross-checking the skeleton against its cases ([`hooks-example/crosscheck/`](./hooks-example/crosscheck/)).
 
