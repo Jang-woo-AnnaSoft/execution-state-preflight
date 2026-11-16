@@ -104,6 +104,8 @@
  * @property {{item: string|null, status: "checked"|"rejected", source: "instruction", note: string}[]} [limit_checks]
  *   // Limit-wording checks on a value read from the user's words ([LIMIT WORDING]). Written by the gate.
  * @property {(string|null)[]} [source_rule_ids] // The value_source conditions that narrowed allowed_sources
+ * @property {boolean} [optional]      // An optional argument the user gave a value for that did not settle:
+ *                                       //   a slot of this run all the same ([SAID OPTIONAL])
  * @property {boolean} [derived]       // The value was computed from the span plus other inputs, not stated
  * @property {Object[]} [derived_from]  // Every other input a derived value rests on, as the gate verified it:
  *   //   { source: "instruction", segment_index, span, text } | { source: "measured_data", name, value }
@@ -178,7 +180,9 @@
  *   // that slot. The route for an unknown follows from it (4.5), and it is on known records too.
  * @property {FieldRecord[]|null} [extra_fields]
  *   // Looked up through the same chain but outside the slot set: optional arguments, and values that
- *   // grounded a branch. Never counted by the gate; eligible for call_arguments when known.
+ *   // grounded a branch. Never counted by the gate; eligible for call_arguments when known. On the
+ *   // record since 1.35. An optional argument the user gave a value for that did not settle is not
+ *   // here: it is in fields, with optional: true ([SAID OPTIONAL]).
  * @property {Object|null} [call_arguments]
  *   // The object executeIfReady would send, assembled from settled (known) values only. null on the
  *   //   early returns and on deferred, where no slot set was judged. On the value gate it is assembled
@@ -1187,7 +1191,7 @@ function valueChecksFrom(fields, extraFields, fieldSchemas) {
     }
   };
   for (const f of fields ?? []) add(f, false);
-  for (const f of extraFields ?? []) if (f.status === "known" || f.limit_checks?.length) add(f, true);
+  for (const f of extraFields ?? []) if (f.status === "known" || f.limit_checks?.length || f.format_check) add(f, true);
   return out;
 }
 
@@ -1880,7 +1884,7 @@ async function unitHistory(h, actionKey, phase) {
     const g = r.gate ?? {};
     // The values read from the user's words, where, and how far those words were read ([VALUE READ ONCE]).
     //   The latest record that read each one is the one carried.
-    for (const f of Array.isArray(r.fields) ? r.fields : []) {
+    for (const f of [...(Array.isArray(r.fields) ? r.fields : []), ...(Array.isArray(r.extra_fields) ? r.extra_fields : [])]) {
       if (f?.source === "instruction" && Number.isInteger(f.read_through) && Number.isInteger(f.located_at?.segment_index) &&
           Array.isArray(f.located_at?.span) && typeof f.name === "string") {
         out.values[f.name] = { value: f.value, segment_index: f.located_at.segment_index, span: f.located_at.span.slice(0, 2), read_through: f.read_through };
@@ -3273,6 +3277,23 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
     allowed_sources: null, route: "definition_repair", lookup_trace: [],
     pending_at_trigger: false, note: "slot was not in the candidate set", resolved_at: h.now(),
   });
+  // [SAID OPTIONAL] An optional argument the user gave a value for is part of what the user asked for.
+  //   When that value did not settle — the words are not in the field's form ("2pm this Saturday" for a
+  //   date-time), a stored value says otherwise, the model's call disagrees with what was approved — the
+  //   argument is a slot of this run: counted, and asked about like any blank. Left among the extras, as
+  //   it was, it was neither asked about nor sent, and the run executed without a value the user had
+  //   stated, with nothing in the record saying so.
+  //   "Gave a value for": the user's words were found for it (lookup_trace instruction "found"), or the
+  //   user approved one (call_disagrees). Not when the user then said there is none: that takes it back.
+  //   An optional argument nobody gave anything for stays an extra: not asked, not counted, not sent.
+  const saidOptional = f => f.status === "unknown" && !slotNames.has(f.name) &&
+    !(f.lookup_trace ?? []).some(t => t.source === "user_answer" && t.result === "absent") &&
+    ((f.lookup_trace ?? []).some(t => t.source === "instruction" && t.result === "found") || Boolean(f.call_disagrees));
+  for (const f of resolvedAll) {
+    if (!saidOptional(f)) continue;
+    slotNames.add(f.name);
+    fields.push({ ...f, optional: true });
+  }
   const extra_fields = resolvedAll.filter(f => !slotNames.has(f.name));
 
   // The value checks (format, limit wording), from the field records. Common to both phases: a value
@@ -3551,6 +3572,8 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
   //   The addressee follows the declarer (7.1): a user item goes back to the user as a blank, and a
   //   provider condition is a broken declaration and goes to definition_repair (see Step 4-b).
   const lookedUpNames = new Set([...fields, ...extra_fields].map(f => f.name));
+  // Optional arguments that did not settle and are not asked about: they are not sent.
+  const unsentNames = new Set(extra_fields.filter(f => f.status !== "known").map(f => f.name));
   const missingTargets = targets => targets.filter(n => !lookedUpNames.has(n));
   const finalUserChecklist = [];
   for (const item of checklist) {
@@ -3587,6 +3610,16 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
       finalUserChecklist.push({
         ...item, id: item.id, status: "pending_on_slot", source: null, waiting_on: waitingOn,
         note: `cannot be compared yet: ${waitingOn.join(", ")} unknown`,
+      });
+      continue;
+    }
+    // An item only about optional arguments nobody gave a value for: they are not sent, so there is
+    //   nothing to compare it with (as for a provider's line on one). Not counted. With a settled value
+    //   among its targets it is compared, on the values that are sent.
+    if (targets.length > 0 && targets.every(n => unsentNames.has(n))) {
+      finalUserChecklist.push({
+        ...item, id: item.id, status: "pending_on_slot", source: null, waiting_on: targets.slice(),
+        note: `${targets.join(", ")} not settled, so not sent: nothing to compare`,
       });
       continue;
     }
@@ -4133,7 +4166,13 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.34",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.35",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.35: the record carries extra_fields (the optional arguments looked up, each as a field record).
+    //        An optional argument the user gave a value for that did not settle is a slot: it is in fields
+    //        with optional: true, counted and asked about ([SAID OPTIONAL]). value_checks lists an extra's
+    //        format check whatever its result. A user item only about optional arguments that are not
+    //        sent is pending_on_slot. Before 1.35 such an argument was neither asked about nor sent, and
+    //        a sent one had no source on the record.
     //   1.34: the gate of an at_instruction record that asks or holds carries disclosures, as a trigger
     //        record's does: the provider's notices go with what is asked at instruction time.
     //   1.33: an at_instruction record asks for the approvals the user can give now (a condition of the
@@ -4265,6 +4304,9 @@ async function recordExecutionState(h, executionState) {
     // Every measurement the gate made in this round, with the settled values it was made with ([MEASURE]).
     measurements: executionState.measurements ?? null,
     fields: executionState.fields,
+    // The arguments looked up outside the slot set (optional ones): never counted, sent when known. On the
+    //   record like the slots, so a value that reaches the tool has its source and its place on it (2.7).
+    extra_fields: executionState.extra_fields ?? null,   // null = no lookup was made, not []
     advisory_notes: executionState.advisory_notes ?? "",   // Not part of the gate. Recorded for audit
     user_checklist: executionState.user_checklist,
     provider_checklist: executionState.provider_checklist ?? null,   // null = no decision made, not []
