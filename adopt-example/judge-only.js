@@ -381,22 +381,30 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
         : { status: "unmet", source: "measured_data", note: `${c.measure} = ${JSON.stringify(m.value)}: ${out.errors}` };
     },
 
-    // A user's condition with a JSON Schema form, against the value the slot settled on. One with no
-    //   form, or of kind user_approval, is the user's to approve, and the library decides it from the
-    //   user's bound answer; it reaches this hook only while no answer holds.
+    // A user's condition with a JSON Schema form, against the value each slot it names settled on:
+    //   every one of them, required or optional, as the words shown to the user say ("holds only when
+    //   time, location …"). One that fails is unmet. A named slot with no settled value is not sent, and
+    //   is not compared (the library holds back an item whose slots are all like that).
+    //   One with no form, or of kind user_approval, is the user's to approve, and the library decides it
+    //   from the user's bound answer; it reaches this hook only while no answer holds.
     verifyUserChecklistItem(item, ctx) {
-      const slot = Array.isArray(item?.constrains) ? item.constrains[0] : undefined;
-      if (!item?.compare || !slot) {
+      const slots = Array.isArray(item?.constrains) ? item.constrains.filter(n => typeof n === "string" && n) : [];
+      if (!item?.compare || slots.length === 0) {
         return { ...item, status: "unverified", source: null, note: "no confirmed comparison form" };
       }
-      const field = (ctx?.fields ?? []).find(f => f.name === slot);
-      const out = checkAgainst(item.compare, field?.value);
-      if (out.error) {
-        return { ...item, status: "unverified", source: null, note: `the confirmed schema cannot be run: ${out.error}` };
+      const all = [...(ctx?.fields ?? []), ...(ctx?.extra_fields ?? [])];
+      const settled = slots.map(n => all.find(f => f.name === n)).filter(f => f?.status === "known");
+      if (settled.length === 0) return { ...item, status: "unverified", source: null, note: `no settled value of ${slots.join(", ")} to compare` };
+      const said = [];
+      for (const field of settled) {
+        const out = checkAgainst(item.compare, field.value);
+        if (out.error) {
+          return { ...item, status: "unverified", source: null, note: `the confirmed schema cannot be run: ${out.error}` };
+        }
+        if (!out.ok) return { ...item, status: "unmet", source: field.source ?? null, note: `${field.name}=${JSON.stringify(field.value)}: ${out.errors}` };
+        said.push(`${field.name}=${JSON.stringify(field.value)}`);
       }
-      return out.ok
-        ? { ...item, status: "verified", source: field?.source ?? null, note: `${slot}=${JSON.stringify(field.value)} satisfies the confirmed schema` }
-        : { ...item, status: "unmet", source: field?.source ?? null, note: `${slot}=${JSON.stringify(field?.value)}: ${out.errors}` };
+      return { ...item, status: "verified", source: settled[0].source ?? null, note: `${said.join(", ")} ${said.length > 1 ? "satisfy" : "satisfies"} the confirmed schema` };
     },
 
     // The unit: this user, this tool, this conversation. The library reads the unit's records under it:
