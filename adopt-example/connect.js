@@ -36,6 +36,14 @@ const { MemorySaver } = require("@langchain/langgraph");
 // The model is chosen once, at start, from MODEL. It is not chosen per request: what the gate is
 //   given to read should not change with outside input. Changing the model changes how well words
 //   are located, never what counts as checked.
+// To use two models, split here. One model serves both places by default, and nothing requires two.
+//   The gate's questions to the model go through ask and say; the agent's turns go through chat.
+//   1. Make a second model() beside this one, from its own variable (e.g. GATE_MODEL), chosen once too.
+//   2. Call it in ask and say, and leave chat on this one.
+//   3. Set MODEL_NAME from that variable: it is the name recorded on each translation, and the gate's
+//      model is the one that writes them.
+//   Install the second provider's package if it differs. The gate's model decides how well words are
+//   read and questions are put, so a smaller one may ask more often; what counts as checked is the same.
 let modelPromise = null;
 function model() {
   if (!modelPromise) {
