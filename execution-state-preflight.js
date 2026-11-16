@@ -77,7 +77,7 @@
  * @property {string} [note]
  * @property {string} resolved_at
  * @property {string[]} allowed_sources // Which of the five 5.2 sources this slot may consult (getAllowedSources)
- * @property {{source: string, result: "found"|"absent"|"no_place"|"no_report"|"cannot_answer"|"rejected"|"failed"|"candidate"}[]} lookup_trace
+ * @property {{source: string, result: "found"|"absent"|"no_place"|"no_report"|"cannot_answer"|"rejected"|"failed"|"candidate"|"superseded"}[]} lookup_trace
  *   // Every source the gate consulted for this slot, in order, and what came back (5.2: a source
  *   //   that was checked stays on the record). A source not in allowed_sources is not consulted and
  *   //   not listed; the chain stops at the first "found", so later sources are not listed either.
@@ -95,6 +95,8 @@
  *   //   failed         the hook threw (lookup_failed)
  *   //   candidate      prior_state held a value. Not a confirmation: the slot stays unknown and the
  *   //                  value waits on the user (prior_candidate, 5.2)
+ *   //   superseded     user_answer held a value the user approved, and the user's later words give the
+ *   //                  field a value: the approval no longer counts and the search goes on ([SAID AFTER])
  *   //   Written by the gate, never by a hook: resolveField re-attaches it after applyFieldPolicy.
  * @property {{status: "checked"|"rejected"|"unverified", source: string|null, note?: string}} [format_check]
  *   // The value's format check, written by the gate (resolveField). Absent when no schema is declared
@@ -1086,6 +1088,8 @@ async function resolveField(h, fieldName, ctx) {
     else delete out.prior_candidate;
     if (status === "unknown" && record.stored_candidate) out.stored_candidate = record.stored_candidate;
     else delete out.stored_candidate;
+    if (record.answer_superseded) out.answer_superseded = record.answer_superseded;
+    else delete out.answer_superseded;
     if (status === "unknown" && record.lower_differs) out.lower_differs = record.lower_differs;
     else delete out.lower_differs;
     if (record.source === "pre_set_data" && record.pre_set) out.pre_set = record.pre_set;
@@ -1264,7 +1268,10 @@ async function lookupField(h, fieldName, ctx) {
   const saw = (source, result) => trace.push({ source, result });
   // The limit-wording checks this lookup made (instruction source only). Carried on whatever comes back.
   const limitChecks = [];
-  const traced = rec => ({ ...rec, lookup_trace: trace, ...(limitChecks.length ? { limit_checks: limitChecks } : {}) });
+  // An approved value the user's later words replaced ([SAID AFTER]). Carried on whatever comes back.
+  let answerSuperseded = null;
+  const traced = rec => ({ ...rec, lookup_trace: trace, ...(limitChecks.length ? { limit_checks: limitChecks } : {}),
+                           ...(answerSuperseded ? { answer_superseded: answerSuperseded } : {}) });
   // For the first four sources, this decision is itself the origin.
   const fresh = rec => traced({ ...rec, origin_source: rec.source });
   const failedAt = failure => { saw(failure.source, "failed"); return traced(lookupFailureRecord(fieldName, failure)); };
@@ -1289,15 +1296,48 @@ async function lookupField(h, fieldName, ctx) {
   // POLICY: invalidate on a change to what the value derived from, not on elapsed time.
   // D1: the user may answer "there is none" — { none: "absent" }. That is a report of nothing by the
   //   one who checked (5.1), recorded, and the search goes on (5.2). It is never a value.
+  const NOT_READ = Symbol("not_read");
+  let earlyInstruction = NOT_READ;
   if (allowed.has("user_answer")) {
     if (userAnswers && fieldName in userAnswers) {
       const none = mapNone(userAnswers[fieldName]);
       if (none) {
         saw("user_answer", none);
       } else {
-        saw("user_answer", "found");
-        return fresh({ name: fieldName, value: userAnswers[fieldName], status: "known", source: "user_answer",
-                       ...(ctx.valueApprovals?.[fieldName] ? { approval: ctx.valueApprovals[fieldName] } : {}) });
+        // [SAID AFTER] A value the user approved stands until the user changes it (3.5). When the user's
+        //   words in a segment after the one that approved it give this field a value, those words are the
+        //   later declaration: the approval no longer counts, and the words are read like any others (in
+        //   the field's form they settle it; otherwise a reading of them is shown to approve). Without
+        //   this the lookup ended at the approval and the later words were never read: a seller approved
+        //   2pm, then typed "Make it Saturday 7pm instead", and the pickup ran at 2pm.
+        //   Only a located claim in a later segment the user typed. A claim in the approving segment
+        //   itself, or before it, changes nothing: the approval was given after those words.
+        //   Words that repeat the approved value in a later segment are read again too, and may be
+        //   asked about once more: code cannot tell a repetition from a change.
+        const approval = ctx.valueApprovals?.[fieldName];
+        const approvedAt = approval?.located_at?.segment_index;
+        if (Number.isInteger(approvedAt) && allowed.has("instruction")) {
+          earlyInstruction = await safeHook(h.extractFromInstruction, [fieldName, instruction], lookupFailed("instruction"));
+          // A reader that threw cannot say whether the user changed the value: the approval is not taken
+          //   on its silence ([LOOKUP HOOK FAILURE]).
+          if (earlyInstruction?.[LOOKUP_HOOK_FAILED]) return failedAt(earlyInstruction);
+          const c = earlyInstruction;
+          const seg = c && typeof c === "object" && noneReport(c) === null && Number.isInteger(c.segment_index)
+            ? instruction?.[c.segment_index] : null;
+          const sp = c?.span;
+          if (seg?.trust === "user" && typeof seg.text === "string" && c.segment_index > approvedAt &&
+              Array.isArray(sp) && sp.length === 2 && Number.isInteger(sp[0]) && Number.isInteger(sp[1]) &&
+              sp[0] >= 0 && sp[0] < sp[1] && sp[1] <= seg.text.length) {
+            answerSuperseded = { value: userAnswers[fieldName], approval, by: { segment_index: c.segment_index, span: [sp[0], sp[1]] } };
+          }
+        }
+        if (answerSuperseded) {
+          saw("user_answer", "superseded");
+        } else {
+          saw("user_answer", "found");
+          return fresh({ name: fieldName, value: userAnswers[fieldName], status: "known", source: "user_answer",
+                         ...(approval ? { approval } : {}) });
+        }
       }
     } else {
       saw("user_answer", "no_report");
@@ -1307,9 +1347,10 @@ async function lookupField(h, fieldName, ctx) {
   // Source 2 — instruction: known only from a trusted segment with a valid span.
   //   To use a value from an untrusted segment, ask and take it back as user_answer.
   //   If instruction is a string, this entire source dies (fail-closed).
-  let fromInstruction = allowed.has("instruction")
-    ? await safeHook(h.extractFromInstruction, [fieldName, instruction], lookupFailed("instruction"))
-    : undefined;
+  //   Read once per lookup: [SAID AFTER] may have read it already.
+  let fromInstruction = !allowed.has("instruction") ? undefined
+    : earlyInstruction !== NOT_READ ? earlyInstruction
+    : await safeHook(h.extractFromInstruction, [fieldName, instruction], lookupFailed("instruction"));
   if (fromInstruction?.[LOOKUP_HOOK_FAILED]) return failedAt(fromInstruction);
   // [VALUE READ ONCE] Within a unit, a value read from the user's words is not read again from the same
   //   words. When the extractor points again into a segment an earlier round already read, the value
@@ -3981,7 +4022,10 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.30",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.31",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.31: a value the user approved no longer counts once the user's words in a later segment give
+    //        the field a value: lookup_trace user_answer "superseded", and the field carries
+    //        answer_superseded { value, approval, by: { segment_index, span } } ([SAID AFTER]).
     //   1.30: a candidate not made from the user's words now carries from_text, and its block line says
     //        where it came from; an asking gate carries settled_block, the settled values the model's
     //        call does not carry as they are ([SETTLED]).
