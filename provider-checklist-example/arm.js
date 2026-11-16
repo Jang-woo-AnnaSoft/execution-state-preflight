@@ -157,6 +157,8 @@ function project(state, preflight) {
       allowed_sources: f.allowed_sources ?? null, source_rule_ids: f.source_rule_ids ?? null,
       settled_at_execution: f.settled_at_execution ?? false, range_declared: f.range_declared ?? null,
       derived_from: f.derived_from ?? null, note: f.note ?? null, approval: f.approval ?? null,
+      // An approval the user's later words replaced ([SAID AFTER]): which value it had approved, and where the later words are.
+      answer_superseded: f.answer_superseded ?? null,
       value: f.status === "known" ? f.value : undefined,
     })),
     // rule_hash: the version an approval must name (6.1); approval / approval_voided: what the seller's

@@ -541,6 +541,31 @@ async function run(id, condition, replies = [], over = {}) {
       ["executed", "Gangnam station exit 3", "user_answer", ["instruction", "pre_set_data"]]);
   }
 
+  console.log("\n--- 1-j. a value the user approved, then changed in later words: the later words are read ([SAID AFTER]) ---");
+  {
+    // The seller approves 2pm; the assistant then answers in words, without calling; the seller types
+    //   another time. The gate judges on the next call. Before 1.31 the lookup ended at the approval, and
+    //   the pickup ran at 2pm.
+    let turnNo = 0;
+    const r = await run("g1-01", "clean", ["yes", "Make it Saturday 7pm instead.", "yes"],
+      { chat: (a, inner) => (++turnNo === 2 ? { text: "Noted." } : inner(a)) });
+    const asks = r.records.filter(x => x.execution_decision === "ask_user");
+    const second = asks.at(-1), time = second?.fields?.find(f => f.name === "time");
+    check("the seller's yes, then a new time: asked again, the new time shown, nothing run on the old one",
+      [asks.length, second?.gate?.question_block?.[0], r.calls.map(c => c.args.time)],
+      [2, "time = 2026-10-31 (Sat) 19:00 +09:00", ["2026-10-31T19:00:00+09:00"]]);
+    check("  the record says the approval no longer counts, and which words replaced it",
+      [time?.lookup_trace?.[0], time?.answer_superseded?.value, Number.isInteger(time?.answer_superseded?.by?.segment_index),
+       time?.answer_superseded?.by?.segment_index > time?.answer_superseded?.approval?.located_at?.segment_index],
+      [{ source: "user_answer", result: "superseded" }, SAT_2PM, true, true]);
+    check("  the seller's yes to the new time settles it: executed once, at 7pm", [r.last.status, r.calls.length], ["executed", 1]);
+    // Words before the approval change nothing: the plain run still settles on the approved value.
+    const plain = await run("g1-01", "clean", ["yes"]);
+    const pt = plain.records.filter(x => x.execution_decision === "execute").at(-1)?.fields?.find(f => f.name === "time");
+    check("an approval with no later words about the value stands", [pt?.source, pt?.lookup_trace?.[0]?.result, "answer_superseded" in (pt ?? {})],
+      ["user_answer", "found", false]);
+  }
+
   console.log("\n--- 2. what judge.run returns cannot be executed from ---");
   {
     const s = standIn("g1-01", "clean");
