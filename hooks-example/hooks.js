@@ -14,16 +14,16 @@
  *      states in group 2 are declared as items and compared by the hook below.
  *      The first version left it empty and called that a scope choice — which was
  *      wrong. verifyUserChecklistItem could not see the resolved fields, so an item
- *      constraining a slot was not implementable. The skeleton now hands the hook
+ *      constraining a slot was not implementable. The library now hands the hook
  *      ctx.fields, and an item whose slot is still UNKNOWN is pending_on_slot
  *      rather than a question.
- *   3. Several optional hooks run on the skeleton's defaults, and the live list is
+ *   3. Several optional hooks run on the library's defaults, and the live list is
  *      preflight.unsafeDefaults, read at runtime rather than copied here — a count
- *      written into a comment goes stale the next time the skeleton gains a hook.
+ *      written into a comment goes stale the next time the library gains a hook.
  *      It is written into every arm C record, so the published runs carry on their
  *      face whichever ones were unwired. The experiment measures the value gate, so
  *      field policy and the provider conditions are absent. Payload validation IS
- *      wired since skeleton 1.16, where an unwired validator reads as unverified and
+ *      wired since library 1.16, where an unwired validator reads as unverified and
  *      sends the run to definition_repair instead of passing silently: the whole
  *      argument object is checked against tool.js's flat schema (validatePayload).
  *      validateFieldSchema IS wired, for each property's type and for the one format tool.js declares (time is
@@ -35,7 +35,7 @@
  *      getAllowedSources IS wired: buyer_contact may come only from measured_data
  *      (tool.js ALLOWED_SOURCES). isSettledAtExecution IS wired: time and location
  *      are values settled at execution time (SETTLED_AT_EXECUTION), so the
- *      skeleton lets a measurement settle them only when the seller declared a
+ *      library lets a measurement settle them only when the seller declared a
  *      range for them (spec 3.3, 4.5). Every other slot permits all five. The cost: a contact the user types in the instruction is
  *      not consulted, and a conflict between it and the measurement is not
  *      recorded. No instruction here states a contact that contradicts the
@@ -43,7 +43,7 @@
  *   4. spanSupportsValue is wired. Its contract asks the hook to judge whether
  *      the span states the value FOR THE SLOT, and equality cannot: "Nothing after
  *      8pm" contains a time and states none. ONE case is decided deterministically,
- *      and since skeleton 1.16 by the skeleton, not here: text inside the wording of
+ *      and since library 1.16 by the library, not here: text inside the wording of
  *      a limit the seller declared (a user checklist item's stated_as) for that slot
  *      is not a value (decision f, after the first said smoke; [LIMIT WORDING]).
  *      Everything else is still equality, with the role pushed into the extraction
@@ -53,7 +53,7 @@
  *      (datetime.js) turns the span plus the date the seller stated plus the
  *      measured year and zone into a datetime, and names all of them.
  *
- * NOT a simplification: the span check is the skeleton's, through spanSupportsValue.
+ * NOT a simplification: the span check is the library's, through spanSupportsValue.
  * This hook does not pre-check a claim: it finds the quote in the segment the model
  * named and passes the claim on, so a claim the gate refuses is recorded as
  * rejected rather than as no report.
@@ -105,7 +105,7 @@ function measuredClock(measured) {
 }
 
 // Decision f ("text inside a declared limit's wording is not a value") used to live here, in
-//   spanSupportsValue. The skeleton makes that check itself now, for every adopter ([LIMIT WORDING]),
+//   spanSupportsValue. The library makes that check itself now, for every adopter ([LIMIT WORDING]),
 //   before spanSupportsValue is called, and records it as its own check (value_checks, limit_wording).
 
 // The type a property declares, checked on one value. The four primitive types JSON Schema names for
@@ -285,7 +285,7 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter, userChec
       if (hit?.found === false) return { none: "absent" };
       if (!hit || hit.found !== true) return undefined;        // no report → next source
 
-      // A claim came back. It goes to the gate as a claim, checked or not: the skeleton checks the
+      // A claim came back. It goes to the gate as a claim, checked or not: the library checks the
       //   segment, the span and the text itself, and records a claim it refuses as rejected.
       //   BREAKS: refuse it here and return undefined — as this did — and the record says the
       //     extractor reported nothing (no_report) where it reported a location that is not there.
@@ -299,7 +299,7 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter, userChec
       const span = locateQuote(seg?.text, value);
       const located = span !== null;
 
-      // Simplification 3: the span must actually say the value — checked by the skeleton through
+      // Simplification 3: the span must actually say the value — checked by the library through
       //   spanSupportsValue below. Only a claim that holds is turned into a datetime here.
       // A datetime slot: the seller said "2pm this Saturday"; the tool needs a moment. Derive it in
       //   code from that span, the date the seller stated, and the year and zone the system
@@ -316,10 +316,10 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter, userChec
       return { value, segment_index, span };
     },
 
-    // [OPTIONAL, wired] Equality for every slot, as the skeleton's default does. What it adds is the
+    // [OPTIONAL, wired] Equality for every slot, as the library's default does. What it adds is the
     //   derived datetime: it re-derives the value from the span and the conversation and, if it
     //   matches, says so with every input named. The gate then checks each input itself.
-    //   A span inside a limit the seller declared never reaches this hook: the skeleton refuses it first
+    //   A span inside a limit the seller declared never reaches this hook: the library refuses it first
     //   ([LIMIT WORDING]), so a range cannot be derived into a datetime here (the first said smoke:
     //   sonnet turned "this Saturday between 1pm and 6pm" into 13:00, twice, recorded as stated).
     spanSupportsValue(value, textAtSpan, fieldName, ctx) {
@@ -332,7 +332,7 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter, userChec
     },
 
     // [wired] The property's type, and the formats declared in tool.js. A reply of null says the value
-    //   was checked; since 1.16 the skeleton records that as the slot's format check, so it must be so.
+    //   was checked; since 1.16 the library records that as the slot's format check, so it must be so.
     validateFieldSchema(value, schema, ctx, fieldName) {
       const typeOut = typeViolation(value, schema);
       if (typeOut !== null) return typeof typeOut === "string" ? `"${fieldName}" ${typeOut}` : typeOut;
@@ -372,7 +372,7 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter, userChec
       return undefined;
     },
 
-    // [OPTIONAL, wired] Reads the declaration in tool.js. null = all five (skeleton default).
+    // [OPTIONAL, wired] Reads the declaration in tool.js. null = all five (library default).
     getAllowedSources(fieldName) {
       return ALLOWED_SOURCES[fieldName] ?? null;
     },
@@ -380,7 +380,7 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter, userChec
     // [OPTIONAL, wired] Reads the declaration in tool.js. v1's input schema stays as the first smoke
     //   runs saw it, so the declaration is kept beside it rather than in it. The rule that follows from
     //   it — a measurement settles such a slot only when the user set a range (spec 3.3) — is the
-    //   skeleton's, not this file's.
+    //   library's, not this file's.
     isSettledAtExecution(fieldName) {
       return SETTLED_AT_EXECUTION.includes(fieldName);
     },
@@ -456,7 +456,7 @@ function createHooks({ adapter, model, runId, measuredData, ask, meter, userChec
 /**
  * In-memory storage. Each run gets its own.
  *
- * CONTRACT: the skeleton calls `persist(key, record)` and `load(key)` — two arguments
+ * CONTRACT: the library calls `persist(key, record)` and `load(key)` — two arguments
  * on the write. The first version of this file took `persist(record)` and derived the
  * key from `record.action_key`, so every write landed under "UNKEYED" with the KEY
  * STRING as the value, and `load` always returned null.
@@ -484,7 +484,7 @@ function createStorage() {
     },
     // CONTRACT: the most recent EXECUTED record, and nothing else. Spec 5.2 inherits a value only
     // from an execution the record confirms happened, so a hold or a deferred record is not a
-    // baseline. Returning the last record of any kind hands one back — and while the skeleton
+    // baseline. Returning the last record of any kind hands one back — and while the library
     // checks execution_decision at the prior_state source and would ignore it, an adapter that
     // relies on being double-checked downstream is not the adapter to copy.
     async load(key) {
@@ -494,7 +494,7 @@ function createStorage() {
       }
       return null;
     },
-    // Every record under the key, oldest first. Since skeleton 1.17/1.18 the gate reads confirmed forms,
+    // Every record under the key, oldest first. Since library 1.17/1.18 the gate reads confirmed forms,
     //   and what this unit was asked and how often, this way; without it no answer counts.
     async list(key) {
       return [...(m.get(key) ?? [])];

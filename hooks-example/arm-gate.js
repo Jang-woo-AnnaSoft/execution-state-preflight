@@ -19,7 +19,7 @@
  *   { outcome: "exhausted" }                a route reached its ceiling (4.5)
  *   { outcome: "deferred" }                 execution_decision === "deferred"
  *   { outcome: "unrecognized" }             a decision word this arm does not know — loud, so a
- *                                           skeleton change cannot fall silently into "hold"
+ *                                           library change cannot fall silently into "hold"
  *
  * The last three used to come back as "hold". That merged a finished check with a missing one —
  * exactly what 4.5 says loses where the work should go — and the analyzer counted them together.
@@ -122,7 +122,7 @@ function project(state, preflight, tool) {
     system_lookup: (state.gate?.system_lookup ?? []).map(s => s.name),
     // NOTE: this object is a whitelist, like recordExecutionState. A field the gate computes and this
     //   projection leaves out reaches neither the results file nor the analyzer.
-    //   BREAKS: add a slot field to the skeleton without adding it here and it is silently dropped.
+    //   BREAKS: add a slot field to the library without adding it here and it is silently dropped.
     reason: state.reason,
     fields: (state.fields ?? []).map(f => ({
       name: f.name,
@@ -158,7 +158,7 @@ function project(state, preflight, tool) {
       id: i.id, status: i.status, source: i.source ?? null, note: i.note ?? null,
       rule_hash: i.rule_hash ?? null,
     })),
-    // Every check on a value, each its own slot (skeleton 1.16): format per slot, limit_wording per
+    // Every check on a value, each its own slot (library 1.16): format per slot, limit_wording per
     //   value read from the seller's words on a limited slot, the payload. Without it a published run
     //   cannot tell a value that was format-checked from one nobody could check.
     value_checks: (state.value_checks ?? []).map(c => ({
@@ -185,7 +185,7 @@ function project(state, preflight, tool) {
     } : null,
     c2_issues: (state.gate?._diag?.issues ?? [])
       .filter(i => i.slot === "c2_user_action_name").map(i => ({ code: i.code, detail: i.detail ?? null })),
-    // The skeleton's per-slot lookup failures, with the hook's exception text. Harness diagnostics.
+    // The library's per-slot lookup failures, with the hook's exception text. Harness diagnostics.
     lookup_failures: state.gate?._diag?.lookup_failures ?? []
   };
 

@@ -130,7 +130,7 @@ function createHooks({ locate, measured, acceptPriorState, whenCase, allowed, me
     verifyProviderCondition: (c) => ({ status: "checked", source: "measured_data", note: "ok" }),
 
     buildActionKey: () => "u_1042:send_payment",   // the SAME key across runs, for part 4
-    // Since skeleton 1.16 an unwired validator reads as unverified (definition_repair). This file is not
+    // Since library 1.16 an unwired validator reads as unverified (definition_repair). This file is not
     //   about validation, so both are wired with stand-ins that report the values checked; the unwired
     //   default is declared-checks-test's.
     validateFieldSchema: () => null,
@@ -138,7 +138,7 @@ function createHooks({ locate, measured, acceptPriorState, whenCase, allowed, me
 
     // Part 7. Which seats are permitted at all.
     ...(allowed ? { getAllowedSources: allowed } : {}),
-    // Part 12. Whether the slot is settled at execution time; unwired, the skeleton reads the schema.
+    // Part 12. Whether the slot is settled at execution time; unwired, the library reads the schema.
     ...(settled ? { isSettledAtExecution: settled } : {}),
   };
 }
@@ -317,7 +317,7 @@ const slotOf = state => (state.fields ?? []).find(f => f.name === SLOT) ?? {};
   }
 
   // ── 5. Only an executed record is a baseline. ─────────────────────────────────
-  // The port's contract, not the skeleton's check: the skeleton reads whatever it is handed and
+  // The port's contract, not the library's check: the library reads whatever it is handed and
   // only tests execution_decision === "executed" at the prior_state source. An adapter that hands
   // back a hold record would have it ignored there — but nothing stops a caller passing one in
   // directly, which is 8.2's forged-record limit.
@@ -372,7 +372,7 @@ const slotOf = state => (state.fields ?? []).find(f => f.name === SLOT) ?? {};
   {
     const ins = instructionHolding(ACCOUNT);
 
-    // Declaring nothing means all five, which is what this skeleton did before the hook existed.
+    // Declaring nothing means all five, which is what this library did before the hook existed.
     const { state: open } = await run({ instruction: ins.segments, locate: ins.locate });
     check("no declaration: instruction still answers", slotOf(open).source, "instruction");
     check("  and all five are recorded as permitted",
@@ -686,7 +686,7 @@ const slotOf = state => (state.fields ?? []).find(f => f.name === SLOT) ?? {};
 
   // ── 12. A value settled at execution time. ────────────────────────────────────
   // 3.3: a value the user does not set when instructing, but the state at execution decides, needs a
-  //   range the user set. Without one, a measurement does not confirm it. The rule is the skeleton's;
+  //   range the user set. Without one, a measurement does not confirm it. The rule is the library's;
   //   only the declaration (which slots) comes from outside. Before, it lived in a hook body.
   console.log("\n--- part 12: settled at execution time ---");
   {

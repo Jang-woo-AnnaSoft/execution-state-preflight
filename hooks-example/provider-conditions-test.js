@@ -5,7 +5,7 @@
  *
  *   node provider-conditions-test.js
  *
- * No API calls, no model. What is under test is the SKELETON's contract for
+ * No API calls, no model. What is under test is the LIBRARY's contract for
  * provider-declared conditions, so the verification hook is a dispatcher that
  * returns whatever each case needs. That is deliberate: a realistic hook would
  * test the hook, and what has to be pinned down here is what the gate does with
@@ -81,7 +81,7 @@ function createHooks({ runId, conditions, conditionsThrow, measured }) {
     },
     readToolDefinition: () => SEND_WIRE,
     buildActionKey: (userId, fixed) => `${userId}:${fixed?.c3_provider_action_name}:${runId}`,
-    // Since skeleton 1.16 an unwired validator reads as unverified (definition_repair). This file is not
+    // Since library 1.16 an unwired validator reads as unverified (definition_repair). This file is not
     //   about validation, so both are wired with stand-ins that report the values checked; the unwired
     //   default is declared-checks-test's.
     validateFieldSchema: () => null,
@@ -99,7 +99,7 @@ function createHooks({ runId, conditions, conditionsThrow, measured }) {
       return { ...item, status: "verified", source: "user_answer", note: "declared and confirmed" };
     },
   };
-  // Case 12 runs the skeleton's own default for verifyProviderCondition.
+  // Case 12 runs the library's own default for verifyProviderCondition.
   if (conditions === null) delete hooks.verifyProviderCondition;
   return hooks;
 }
@@ -350,9 +350,9 @@ function len(x) { return (x ?? []).length; }
     check("executes", r.execution_decision, "execute");
   }
 
-  // ── 12. The skeleton's own default for the verification hook. ─────────────────
+  // ── 12. The library's own default for the verification hook. ─────────────────
   {
-    // conditions === null removes the hook, so the skeleton's default runs.
+    // conditions === null removes the hook, so the library's default runs.
     const preflight = createPreflight({
       hooks: createHooks({ runId: "c12", conditions: null }),
       storage: createStorage(),

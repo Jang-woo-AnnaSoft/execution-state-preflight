@@ -43,7 +43,7 @@
  *
  * The decisive question is whether the user can change it. "Nothing after 8pm" is theirs to
  * set; an approval limit is not, and no answer they give satisfies it. That is [Required]
- * (3.3), and the skeleton enforces the source restriction rather than trusting this file
+ * (3.3), and the library enforces the source restriction rather than trusting this file
  * to be careful about it — see case 8.
  *
  * The limit values are illustrative placeholders. Replace them with the handbook's.
@@ -130,7 +130,7 @@ function createHooks({ runId, conditions, override, erp }) {
     },
     readToolDefinition: () => CREATE_PAYMENT,
     buildActionKey: (userId, fixed) => `${userId}:${fixed?.c3_provider_action_name}:${runId}`,
-    // Since skeleton 1.16 an unwired validator reads as unverified (definition_repair). This file is not
+    // Since library 1.16 an unwired validator reads as unverified (definition_repair). This file is not
     //   about validation, so both are wired with stand-ins that report the values checked; the unwired
     //   default is declared-checks-test's.
     validateFieldSchema: () => null,
@@ -139,7 +139,7 @@ function createHooks({ runId, conditions, override, erp }) {
     // The conditions this tool declares. Returned from the tool side, not passed in as input.
     getProviderConditions: () => conditions,
 
-    // The comparison. Three outcomes, as the skeleton expects: checked / unmet / unverified.
+    // The comparison. Three outcomes, as the library expects: checked / unmet / unverified.
     //   There is no "verified" for a provider condition — it is a reason not to execute and
     //   nothing more, so clearing it promotes nothing.
     verifyProviderCondition(item, ctx) {
@@ -177,7 +177,7 @@ function createHooks({ runId, conditions, override, erp }) {
   };
 }
 
-// Storage with the signature the skeleton calls: persist(key, record), load(key).
+// Storage with the signature the library calls: persist(key, record), load(key).
 function createStorage() {
   const m = new Map();
   return {
@@ -312,7 +312,7 @@ async function main() {
     // value and reports the condition cleared, sourced to the user's own words — the
     // mistake an adopter makes by writing an agreeable hook.
     //
-    // [Required] does not accept user_answer as a source (3.3), and the skeleton enforces
+    // [Required] does not accept user_answer as a source (3.3), and the library enforces
     // it: the return is demoted to unverified and routed to the provider. So trap 2 fails
     // even against a hook that wants to let it through.
     const s = await runCase("p8", {

@@ -9,7 +9,7 @@
  *
  * Two things, because either alone can mislead:
  *   git     the commit, and whether the working tree had uncommitted changes. null outside git
- *   files   a short hash of every file whose content decides what a run does — the skeleton, the
+ *   files   a short hash of every file whose content decides what a run does — the library, the
  *           example's code, and its declarations. These match across machines whatever git says,
  *           so two results files can be compared without trusting either checkout.
  */

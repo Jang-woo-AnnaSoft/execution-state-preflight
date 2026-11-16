@@ -516,7 +516,7 @@ console.log("\n--- runner: options it does not know, and which code made a file 
   // The code version that goes into every results file.
   const { codeVersion } = require("./version");
   const v1 = codeVersion(), v2 = codeVersion();
-  check("the skeleton is hashed", typeof v1.files["execution-state-preflight.js"], "string");
+  check("the library is hashed", typeof v1.files["execution-state-preflight.js"], "string");
   check("the declarations are hashed", typeof v1.files["hooks-example/instructions.json"], "string");
   check("tests are not — they do not decide a run", Object.keys(v1.files).some(f => /test\.js$/.test(f)), false);
   check("the same code gives the same version", JSON.stringify(v1.files) === JSON.stringify(v2.files), true);
@@ -524,8 +524,8 @@ console.log("\n--- runner: options it does not know, and which code made a file 
   let out = "";
   try { out = execFileSync(process.execPath, [runner, "--check"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
   catch (e) { out = String(e.stdout); }
-  check("--check names the skeleton the run would use",
-    out.includes(`skeleton ${v1.files["execution-state-preflight.js"]}`), true);
+  check("--check names the library the run would use",
+    out.includes(`library ${v1.files["execution-state-preflight.js"]}`), true);
 }
 
 {

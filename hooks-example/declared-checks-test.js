@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * The checks the skeleton makes itself since 1.16, each its own slot in the record (spec 3.3.1).
+ * The checks the library makes itself since 1.16, each its own slot in the record (spec 3.3.1).
  *
  *   node declared-checks-test.js
  *
@@ -163,7 +163,7 @@ const field = (r, n) => (r.fields ?? []).find(f => f.name === n) ?? {};
 const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
 
 (async () => {
-  console.log("CHECKS THE SKELETON MAKES ITSELF (1.16)");
+  console.log("CHECKS THE LIBRARY MAKES ITSELF (1.16)");
   const ALL_MEASURED = { buyer_contact: "in-app chat (@kim_2291)" };
 
   // ══ 1 ══════════════════════════════════════════════════════════════════════════════════

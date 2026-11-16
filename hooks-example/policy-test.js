@@ -6,12 +6,12 @@
  *   node policy-test.js
  *
  * declaration-test.js answers "what do I have to declare". This one answers the question that comes
- * next and is easier to get wrong: how much of this skeleton do I actually have to run.
+ * next and is easier to get wrong: how much of this library do I actually have to run.
  *
  * THE STANDARD IS THE SPECIFICATION, NOT THIS FILE. The spec says what has to be true before an
  * irreversible call: values, conditions and intent declared, each confirmed from a declared source,
  * the verdict counted by code, the verdict recorded, the executor reading only the record. It does
- * not say those things have to look like this. Taken literally as a framework, this skeleton makes
+ * not say those things have to look like this. Taken literally as a framework, this library makes
  * a stiff, over-specified pipeline, and an adopting system that already has tool selection, a
  * conversation layer and a job-id scheme should not grow a second copy of any of them. What this
  * code is for is narrower: to show one working method for verifying a source and for stopping the
@@ -87,7 +87,7 @@ const slot = (state, name) => (state.fields ?? []).find(f => f.name === name) ??
 
 (async () => {
   console.log("WHAT YOU MAY REPLACE, AND WHAT BREAKS WHEN YOU DROP IT");
-  console.log("the specification is the standard; this skeleton is one way of meeting it");
+  console.log("the specification is the standard; this library is one way of meeting it");
 
   // ══ 1. The required hooks ══════════════════════════════════════════════════════
   heading("1. Can the fixed checklist be left to the existing agent?");
@@ -166,7 +166,7 @@ const slot = (state, name) => (state.fields ?? []).find(f => f.name === name) ??
   // ══ 3. Where the gate cannot tell ══════════════════════════════════════════════
   heading("4. measure replaced by a model call (the gate CANNOT tell)");
   {
-    // 5.2: "the lookup must be a live measurement." The skeleton's own note says it plainly — if
+    // 5.2: "the lookup must be a live measurement." The library's own note says it plainly — if
     // this hook is LLM-based it is not a measurement — and then cannot check it.
     const { state } = await run(minimalHooks({
       measure: () => ({ valid: true, value: 4200 }),   // stands in for a model call
@@ -174,7 +174,7 @@ const slot = (state, name) => (state.fields ?? []).find(f => f.name === name) ??
     row("a hook that invents a value", state.execution_decision, "execute",
       "PASSES — and it is supposed to, because the gate has no way to see inside a hook");
     row("  the record says measured", slot(state, "amount").source, "measured_data",
-      "8.2: this skeleton does not define how hooks are implemented");
+      "8.2: this library does not define how hooks are implemented");
     // Nothing on the record distinguishes a live read from an invented one, which is the whole
     //   of 2.4 turned on the hook rather than the model. Keeping this source honest is policy.
     row("  nothing marks how it was observed",
@@ -269,7 +269,7 @@ const slot = (state, name) => (state.fields ?? []).find(f => f.name === name) ??
   }
 
   console.log(`
-WHAT THE SPECIFICATION REQUIRES  ·  HOW THIS SKELETON DOES IT  ·  WHAT IS YOURS
+WHAT THE SPECIFICATION REQUIRES  ·  HOW THIS LIBRARY DOES IT  ·  WHAT IS YOURS
 
   values, conditions and intent are declared outside the model
       here: three checklists + the input schema
@@ -295,7 +295,7 @@ WHAT THE SPECIFICATION REQUIRES  ·  HOW THIS SKELETON DOES IT  ·  WHAT IS YOUR
       here: ask_user / system_lookup / definition_repair, chosen by the slot's declared sources
       yours: the asking itself (4.6). Your existing conversation layer does this better
 
-  NOT THE SPECIFICATION — this skeleton's own departures
+  NOT THE SPECIFICATION — this library's own departures
       executeIfReady exists at all (3.5 says the executor is outside)
       no NULL state, so a confirmed absence and an unfinished lookup look alike
       the fixed checklist as exactly these three hooks — 4.1 says what must be settled, not how`);

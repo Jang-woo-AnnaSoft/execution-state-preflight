@@ -9,7 +9,7 @@
  * hooks.js (gate-test, case 10 and the C2 cases), so this stub is not what proves the contract.
  *
  * It quotes the first few words of the first user segment. That is a choice of WHICH words, not a
- * shortcut past the check: the span is computed from the text, and the skeleton re-checks it.
+ * shortcut past the check: the span is computed from the text, and the library re-checks it.
  */
 function locatedActionName(words = 3) {
   return function extractUserActionName(instruction) {

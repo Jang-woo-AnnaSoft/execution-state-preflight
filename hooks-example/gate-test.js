@@ -6,7 +6,7 @@
  *   node gate-test.js
  *
  * No API calls. The model is stubbed, so what is being tested is the thing
- * most likely to be wrong: whether these hooks actually satisfy the skeleton's
+ * most likely to be wrong: whether these hooks actually satisfy the library's
  * runtime contract, and whether the gate behaves as the design claims.
  *
  * Cases, among them (the console headers below are the full list):
@@ -80,7 +80,7 @@ function locate(segments, needle, onlyTrust = null) {
 /**
  * The action-name stub answers as a faithful extractor would: it quotes the word and names the
  * segment where the seller typed it, read from the prompt the hook actually sent. The hook then
- * finds the span and the skeleton checks it, so this exercises the real path, not a shortcut.
+ * finds the span and the library checks it, so this exercises the real path, not a shortcut.
  */
 function actionReply(user, word = "pickup", segmentIndex) {
   const head = "Segments:\n";
@@ -485,7 +485,7 @@ async function main() {
     const ext = (once.hook_calls ?? []).filter(c => c.hook === "extraction");
     check("  the failed call is on the record", `${ext.length}:${ext[0]?.ok}`, "1:false");
     check("  with its error", /no JSON object/.test(ext[0]?.error ?? ""), "true");
-    check("  and the skeleton's per-slot failures", (once.lookup_failures ?? []).length, 3);
+    check("  and the library's per-slot failures", (once.lookup_failures ?? []).length, 3);
     check("all three hook calls metered", (once.hook_calls ?? []).map(c => c.hook).join(","), "when_case,action_name,extraction");
 
     // Through a real-shaped adapter: usage is summed, and a truncated reply says it was truncated.
@@ -813,7 +813,7 @@ async function main() {
     check("the model reports no act named: unresolved", none.c2_issues.map(i => i.code).join(","), "unresolved");
     check("  same route: asks", none.decision, "ask_user");
 
-    // The skeleton directly: user_action_name and the refusal of fixedPreSet.
+    // The library directly: user_action_name and the refusal of fixedPreSet.
     const { createPreflight } = require("../execution-state-preflight");
     const { createStorage } = require("./hooks");
     const WIRE = { name: "send_wire", description: "Send a wire transfer.",

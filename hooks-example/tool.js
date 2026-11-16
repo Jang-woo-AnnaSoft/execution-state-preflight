@@ -51,7 +51,7 @@ const LABELLED_DESCRIPTION =
 //   and confirmed at declaration), which is why a provider who owns both sides of the call has no reason to use the prose.
 //
 // What each label commits the declarer to:
-//   [Required] — name the system source. A user answer cannot satisfy it, and the skeleton enforces
+//   [Required] — name the system source. A user answer cannot satisfy it, and the library enforces
 //                that rather than trusting the hook. Declare no means of checking and the condition
 //                is not ignored: it goes to definition_repair, back to whoever declared it.
 //   [Verify]   — the user's approval is the means, so this one becomes a question.
@@ -116,7 +116,7 @@ const SLOTS = {
 /**
  * Which of the five sources each slot may consult (getAllowedSources). A slot left
  * out permits all five. Kept here, next to the slot classification, because it is a
- * declaration about the tool's arguments, not logic: the skeleton's POLICY note puts
+ * declaration about the tool's arguments, not logic: the library's POLICY note puts
  * it with the checklist, out of hook bodies.
  *
  * buyer_contact is the slot the system measures. Without this line the user's

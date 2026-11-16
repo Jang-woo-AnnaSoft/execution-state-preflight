@@ -8,9 +8,9 @@ This document says only **what the code in this folder does and how to use it**.
 
 You can use it to look at the record made before a tool executes, to measure whether the same input gives the same decision, or to evaluate where a model takes its tool arguments from. Change the instructions (`instructions.json`) and the tool (`tool.js`), and modify the harness as you need. Use for research, evaluation and development is free for anyone. Commercial deployment follows [`../LICENSE.md`](../LICENSE.md).
 
-> This folder works **inside the repository**. It loads the skeleton as `../execution-state-preflight`. If you downloaded the folder on its own, put `execution-state-preflight.js` one level up.
+> This folder works **inside the repository**. It loads the library as `../execution-state-preflight`. If you downloaded the folder on its own, put `execution-state-preflight.js` one level up.
 
-> **Where this departs from the specification: the verdict and the execution sit in one place.** Spec 3.5 separates them. The gate ends by recording its verdict; an executing party loads that record and decides for itself; and a structure that branches on the verdict function's return value is, in the specification's words, not separation. This folder puts the two together so the results can be read directly. Arm C (`arm-gate.js`) does write the decision record, but it reads whether to execute from the `execution_decision` the verdict function returned, not from the stored record. The skeleton's `executeIfReady` is there for the same reason, and the skeleton's own comment marks it as the point where it departs from the specification. In a real system the executing side loads the record by `action_key` and `phase` and decides. The tool in this folder, `schedule_pickup`, is a mock and does nothing outside.
+> **Where this departs from the specification: the verdict and the execution sit in one place.** Spec 3.5 separates them. The gate ends by recording its verdict; an executing party loads that record and decides for itself; and a structure that branches on the verdict function's return value is, in the specification's words, not separation. This folder puts the two together so the results can be read directly. Arm C (`arm-gate.js`) does write the decision record, but it reads whether to execute from the `execution_decision` the verdict function returned, not from the stored record. The library's `executeIfReady` is there for the same reason, and the library's own comment marks it as the point where it departs from the specification. In a real system the executing side loads the record by `action_key` and `phase` and decides. The tool in this folder, `schedule_pickup`, is a mock and does nothing outside.
 
 What is in this folder:
 
@@ -32,9 +32,9 @@ npm run check                     # everything below. No API calls
 | File | What it looks at |
 |---|---|
 | `declaration-test.js` | Puts in and takes out what the provider declares. At the end it prints what is declared by whom, which file covers it, and what was deliberately left unplugged |
-| `declared-checks-test.js` | The checks the skeleton makes itself, each its own slot in the record: labelled description lines and the forms they are translated into and kept in, each value's format and the payload's, the checklist's version, who may give a value, words inside a declared limit, the conditions the user stated in the instruction, replies read from the user's words and bound to what they answered, the tool's definition read by the gate, and measurements made with the values it settled |
-| `policy-test.js` | A swap that satisfies the specification gives the same result; a removal gives a named failure. At the end it prints "what the specification requires · how this skeleton does it · what the adopter decides" |
-| `gate-test.js` | Runs `hooks.js` through the real skeleton (via `arm-gate.js`) |
+| `declared-checks-test.js` | The checks the library makes itself, each its own slot in the record: labelled description lines and the forms they are translated into and kept in, each value's format and the payload's, the checklist's version, who may give a value, words inside a declared limit, the conditions the user stated in the instruction, replies read from the user's words and bound to what they answered, the tool's definition read by the gate, and measurements made with the values it settled |
+| `policy-test.js` | A swap that satisfies the specification gives the same result; a removal gives a named failure. At the end it prints "what the specification requires · how this library does it · what the adopter decides" |
+| `gate-test.js` | Runs `hooks.js` through the real library (via `arm-gate.js`) |
 | `value-source-test.js` | Seats one value in each of the five sources in turn. Includes the storage round trip and allowed sources |
 | `provider-conditions-test.js` | Direction, route and source constraints of provider conditions |
 | `payment-limit-test.js` | An approval limit declared as a provider condition |
@@ -54,11 +54,11 @@ Where the three checklists are covered:
 
 ## Required hooks
 
-The hooks the skeleton requires are listed in `REQUIRED_HOOKS`. `hooks.js` implements all of them. Below are each hook's contract, and what the skeleton records when the contract is broken.
+The hooks the library requires are listed in `REQUIRED_HOOKS`. `hooks.js` implements all of them. Below are each hook's contract, and what the library records when the contract is broken.
 
 ### `extractFromInstruction`
 
-**It returns a location, not a value.** The contract is `{ value, segment_index, span }`, and `value` is a claim that this is what is written there. The skeleton checks the segment's trust label, the span, and the characters at that place (spec 5.2).
+**It returns a location, not a value.** The contract is `{ value, segment_index, span }`, and `value` is a claim that this is what is written there. The library checks the segment's trust label, the span, and the characters at that place (spec 5.2).
 
 | Return | Meaning | Record |
 |---|---|---|
@@ -69,14 +69,14 @@ The hooks the skeleton requires are listed in `REQUIRED_HOOKS`. `hooks.js` imple
 | exception | The lookup failed | `failed`. The slot is fixed as unconfirmed, `definition_repair` |
 
 - If you looked and found nothing, return `{ none: "absent" }`. Returning `undefined` is recorded as `no_report` (spec 5.2: no report is not the same as a report of nothing). JS `null` is not accepted as a report.
-- Pass the returned claim to the skeleton without filtering it first. If the hook filters it and returns `undefined`, it is recorded as `no_report`, not `rejected`.
-- The skeleton rejects a claim that points at a segment that is not `trust: "user"`.
+- Pass the returned claim to the library without filtering it first. If the hook filters it and returns `undefined`, it is recorded as `no_report`, not `rejected`.
+- The library rejects a claim that points at a segment that is not `trust: "user"`.
 
 This folder's implementation (`hooks.js`):
 
-- The model **quotes** the seller's words and gives only the segment number. The hook builds the span by finding the quote in that segment. If the quote is not in that segment, the claim goes through without a span and the skeleton rejects it.
+- The model **quotes** the seller's words and gives only the segment number. The hook builds the span by finding the quote in that segment. If the quote is not in that segment, the claim goes through without a span and the library rejects it.
 - The prompt says that this is a conversation in which a seller has handed a pickup arrangement to an assistant, and that the task is to quote the seller.
-- The prompt says that only `trust: "user"` segments are the seller's words, and not to quote other segments. The skeleton's verdict does not depend on this instruction.
+- The prompt says that only `trust: "user"` segments are the seller's words, and not to quote other segments. The library's verdict does not depend on this instruction.
 - The prompt says that limits, negations and examples are not values ("A LIMIT IS NOT A VALUE"). This is a prompt, not a check. The check exists for one case only, in `spanSupportsValue` (below).
 - Extraction runs once per run, and a failure is cached too. It is not called again for each slot.
 
@@ -84,7 +84,7 @@ This folder's implementation (`hooks.js`):
 
 Returns the timing as one of `immediate` / `scheduled` / `conditional` / `recurring`. If it cannot decide, it returns `null`, recorded as `unresolved`. It throws only when the hook actually failed, recorded as `hook_error`. In both cases the intent gate asks again. It does not default to `immediate` when it cannot decide (spec 6.2).
 
-A time inside the act is an argument, not a timing (spec 3.3). "Set up the pickup for 2pm Saturday" is `immediate`, and 2pm Saturday is an argument. If it is classified `scheduled`, the skeleton treats it as an instruction-time verdict and, even when the values are complete, returns `deferred`, waiting for a trigger instead of executing. This folder's prompt states the distinction.
+A time inside the act is an argument, not a timing (spec 3.3). "Set up the pickup for 2pm Saturday" is `immediate`, and 2pm Saturday is an argument. If it is classified `scheduled`, the library treats it as an instruction-time verdict and, even when the values are complete, returns `deferred`, waiting for a trigger instead of executing. This folder's prompt states the distinction.
 
 ### `measure`
 
@@ -98,7 +98,7 @@ The gate calls it when it needs a system value, in the round it judges, with the
 | `{ none: "no_place" }` | There is nothing to measure for this slot |
 | `undefined` | No report |
 
-The skeleton does not record what did the measuring. If this hook calls a model, the record still says `measured_data` and the gate cannot tell the difference (spec 5.2: a lookup must be a measurement). This folder's implementation returns the measurement given for each run as is.
+The library does not record what did the measuring. If this hook calls a model, the record still says `measured_data` and the gate cannot tell the difference (spec 5.2: a lookup must be a measurement). This folder's implementation returns the measurement given for each run as is.
 
 ### `readToolDefinition`
 
@@ -110,25 +110,25 @@ The `prior_state` source finds earlier execution records by this key, and verdic
 
 ### `extractUserActionName`
 
-Returns what the user calls this act, **with its location in the user's words in this request** (spec 4.1). The contract is the same as for values, `{ value, segment_index, span }`, and the skeleton checks it the same way. A bare string has no location and is rejected. Do not return the tool's name.
+Returns what the user calls this act, **with its location in the user's words in this request** (spec 4.1). The contract is the same as for values, `{ value, segment_index, span }`, and the library checks it the same way. A bare string has no location and is rejected. Do not return the tool's name.
 
 | Record (`code` in `c2_issues`) | Meaning |
 |---|---|
 | `hook_error` | The hook threw |
 | `unresolved` | A report that the user's words contain no act (`{ none: "absent" }`), or no report |
-| `rejected` | The skeleton rejected the returned claim |
+| `rejected` | The library rejected the returned claim |
 
 In all three cases the intent gate asks again, and the ceiling counts it.
 
-- There is no fallback. Neither pre-set data nor measurements are a source for C2. If `fixedPreSet` is passed, the skeleton refuses it with `definition_repair`.
+- There is no fallback. Neither pre-set data nor measurements are a source for C2. If `fixedPreSet` is passed, the library refuses it with `definition_repair`.
 - Other names the user uses for a tool go in `user_action_name`, and only the tool gate reads it (spec 4.1.1).
-- What the skeleton checks stops at the words being in the user's segment. It does not check whether those words ask for this act (the skeleton's `[LIMIT]`).
+- What the library checks stops at the words being in the user's segment. It does not check whether those words ask for this act (the library's `[LIMIT]`).
 
 This folder's implementation has the model quote the user's words, and the hook finds the span.
 
 ### `confirmToolNameMatchesIntent`
 
-When `user_action_name` covers this C2, the skeleton decides from the record and does not call this hook. This hook judges only when the record has no entry. Which of the two decided is kept in `fixed.c3_match.matched_by` (`record` / `judgment`). Tool selection is not verified by code (spec 8.1).
+When `user_action_name` covers this C2, the library decides from the record and does not call this hook. This hook judges only when the record has no entry. Which of the two decided is kept in `fixed.c3_match.matched_by` (`record` / `judgment`). Tool selection is not verified by code (spec 8.1).
 
 This folder's implementation always approves, because there is only one tool. So the repeated-run test does not test tool selection.
 
@@ -136,7 +136,7 @@ This folder's implementation always approves, because there is only one tool. So
 
 ## Optional hooks
 
-The skeleton has more hooks with default implementations. Some of those defaults verify nothing. If you don't plug them, their names appear in `preflight.unsafeDefaults`, and that list is kept in every verdict record. The source list is the skeleton's `UNSAFE_DEFAULT_HOOKS`. To see what is currently unplugged, look at the last output of `declaration-test.js` and at `unsafe_defaults` in the result files.
+The library has more hooks with default implementations. Some of those defaults verify nothing. If you don't plug them, their names appear in `preflight.unsafeDefaults`, and that list is kept in every verdict record. The source list is the library's `UNSAFE_DEFAULT_HOOKS`. To see what is currently unplugged, look at the last output of `declaration-test.js` and at `unsafe_defaults` in the result files.
 
 Optional hooks this folder plugs:
 
@@ -150,42 +150,42 @@ Optional hooks this folder plugs:
 
 Not plugged: the provider condition hooks (`getProviderConditions`, `verifyProviderCondition`), `applyFieldPolicy`.
 
-Since skeleton 1.16 the two validators cannot be left out: unplugged, each check reads as unverified and the run goes to `definition_repair` instead of passing (`declaration-test.js` row 5). Their results are in the record's `value_checks`, one entry per check. How provider conditions behave is shown in `provider-conditions-test.js` and `payment-limit-test.js`.
+Since library 1.16 the two validators cannot be left out: unplugged, each check reads as unverified and the run goes to `definition_repair` instead of passing (`declaration-test.js` row 5). Their results are in the record's `value_checks`, one entry per check. How provider conditions behave is shown in `provider-conditions-test.js` and `payment-limit-test.js`.
 
 ### `spanSupportsValue`
 
-The contract is "does the text at that place say this, as the value of this slot?". The skeleton's default implementation only checks that the strings are equal. With `strict: true`, the skeleton refuses that default.
+The contract is "does the text at that place say this, as the value of this slot?". The library's default implementation only checks that the strings are equal. With `strict: true`, the library refuses that default.
 
-Before the hook is called, the skeleton makes one check itself: **inside the wording of a declared limit, it is not a value.** If a user checklist item constrains the slot (`constrains`) and the span lies inside that item's wording (`located_at` if it says where, otherwise `stated_as`), the value is refused and recorded as a `limit_wording` check. Example: "Any time this Saturday between 1pm and 6pm works for me" is not a time. This folder used to do this in its own hook (decision f); it moved to the skeleton in 1.16.
+Before the hook is called, the library makes one check itself: **inside the wording of a declared limit, it is not a value.** If a user checklist item constrains the slot (`constrains`) and the span lies inside that item's wording (`located_at` if it says where, otherwise `stated_as`), the value is refused and recorded as a `limit_wording` check. Example: "Any time this Saturday between 1pm and 6pm works for me" is not a time. This folder used to do this in its own hook (decision f); it moved to the library in 1.16.
 
 This folder's implementation then checks:
 
-1. **For the time slot, it checks a derived value.** If `datetime.js` rebuilds the same value from the span, the date the seller said, and the measured year and time zone, it returns `{ supported: true, derived: true, derived_from }`. The skeleton checks each input in `derived_from` itself and keeps them in the record.
+1. **For the time slot, it checks a derived value.** If `datetime.js` rebuilds the same value from the span, the date the seller said, and the measured year and time zone, it returns `{ supported: true, derived: true, derived_from }`. The library checks each input in `derived_from` itself and keeps them in the record.
 2. Everything else is checked for equal strings.
 
-Undeclared limits, examples and negations are not caught by the skeleton's check. When an item carries no `located_at`, the skeleton compares text, so a value the seller also stated outside the limit may be refused; that direction asks, it never settles.
+Undeclared limits, examples and negations are not caught by the library's check. When an item carries no `located_at`, the library compares text, so a value the seller also stated outside the limit may be refused; that direction asks, it never settles.
 
 ### What `verifyUserChecklistItem` returns
 
-| Return | Meaning | What the skeleton does |
+| Return | Meaning | What the library does |
 |---|---|---|
 | `verified` | The value is inside the limit | Passes |
 | `unmet` | Checked, and it exceeds the limit. Must carry a source | Holds (`hold`). Does not ask |
 | `unverified` | Could not check | Counted, and goes back to the user |
 
-The skeleton turns an `unmet` without a source into `unverified`. If the slot the item constrains is still unconfirmed, the skeleton does not call the hook and leaves the item `pending_on_slot`.
+The library turns an `unmet` without a source into `unverified`. If the slot the item constrains is still unconfirmed, the library does not call the hook and leaves the item `pending_on_slot`.
 
 ### Provider conditions (`getProviderConditions` / `verifyProviderCondition`)
 
-Not plugged in this folder (its description has no labelled lines, so the skeleton's default reads none), but the skeleton's rules are:
+Not plugged in this folder (its description has no labelled lines, so the library's default reads none), but the library's rules are:
 
 - The states are `checked` · `unmet` · `unverified`. There is no `verified`. Meeting a condition settles no slot (spec 3.3).
 - The label decides the route: an unconfirmed `[Required]` goes to `definition_repair`, an unconfirmed `[Verify]` to `ask_user`, and `[Notice]` is kept in `gate.disclosures` and is not a gate. An unknown label goes to `definition_repair`.
-- `[Required]` is confirmed only by `measured_data`. The skeleton refuses `checked` and `unmet` from any other source.
+- `[Required]` is confirmed only by `measured_data`. The library refuses `checked` and `unmet` from any other source.
 - If `constrains` points at a slot not present in this run, the condition is `unverified`.
 - The declarations are in `CONDITIONS` in `tool.js`.
 - Unplugged, `getProviderConditions` reads the description's labelled lines (spec 4.2.1). A line with no confirmed comparison form is `unverified` and routed by its label, so it is never silently absent.
-- A condition of the form `compare: { kind: "value_source", slot }` says who may give a value (spec 3.3). The skeleton checks it itself: `[Required]` takes the value from `measured_data` only, `[Verify]` from the user only (`user_answer`, `instruction`, `pre_set_data`), with `measured_within_user_range: true` also a measurement inside a range the user set. `declared-checks-test.js` part 4.
+- A condition of the form `compare: { kind: "value_source", slot }` says who may give a value (spec 3.3). The library checks it itself: `[Required]` takes the value from `measured_data` only, `[Verify]` from the user only (`user_answer`, `instruction`, `pre_set_data`), with `measured_within_user_range: true` also a measurement inside a range the user set. `declared-checks-test.js` part 4.
 
 ---
 
@@ -206,7 +206,7 @@ This folder's declarations (`tool.js`):
 | Slot | Allowed sources |
 |---|---|
 | `buyer_contact` | `measured_data` only (`ALLOWED_SOURCES`) |
-| `time`, `location` | Values settled at execution time (`SETTLED_AT_EXECUTION`, through `isSettledAtExecution`). The skeleton allows `measured_data` only when a user checklist item constrains the slot (spec 3.3, 4.5). Otherwise measurements are not looked up and the slot becomes a blank |
+| `time`, `location` | Values settled at execution time (`SETTLED_AT_EXECUTION`, through `isSettledAtExecution`). The library allows `measured_data` only when a user checklist item constrains the slot (spec 3.3, 4.5). Otherwise measurements are not looked up and the slot becomes a blank |
 | `item_id` | All five |
 
 Allowed sources decide whether a source may be looked up; `applyFieldPolicy` decides whether to downgrade what answered. A policy hook can only downgrade.
@@ -231,13 +231,13 @@ Slot states are `known` · `unknown` · `"null"` (a string).
 
 - `"null"` arises only when every allowed source reported `absent` (spec 5.1). A required slot at `"null"` is kept in `gate.unmet` as `kind: "required_null"`, and the decision is `hold`.
 - An unconfirmed slot's route is in `fields[].route`; the sources looked up, and what each returned, are in `fields[].lookup_trace` — `found` · `absent` · `no_place` · `no_report` · `cannot_answer` · `rejected` · `failed` · `candidate`.
-- Asking the user and system lookups each have a ceiling (spec 4.5). The caller brings `ask_attempt` / `lookup_attempt`, and the skeleton returns `gate.next_ask_attempt` / `next_lookup_attempt`. Change the defaults with `createPreflight({ limits: { ask, lookup } })`.
+- Asking the user and system lookups each have a ceiling (spec 4.5). The caller brings `ask_attempt` / `lookup_attempt`, and the library returns `gate.next_ask_attempt` / `next_lookup_attempt`. Change the defaults with `createPreflight({ limits: { ask, lookup } })`.
 
 ### What to check per source
 
 - `pre_set_data` is accepted only with a `{ value, trust: "user" }` wrapper. A bare value is refused.
 - `prior_state` does not settle a slot. Its value goes into the question as `prior_candidate`, and is settled as `user_answer` when the user confirms it (spec 5.2).
-- The skeleton does not call `storage.load`. The caller fetches it with `preflight.getPriorExecutionState(key)` and passes it as `priorExecutionState`.
+- The library does not call `storage.load`. The caller fetches it with `preflight.getPriorExecutionState(key)` and passes it as `priorExecutionState`.
 
 ### Locations in the verdict record
 
@@ -248,7 +248,7 @@ A value settled from `instruction` is recorded with its location.
  "located_at":{"segment_index":2,"span":[58,75]},"value":"2pm this Saturday"}
 ```
 
-C2 is the same: `fixed.c2_located_at` points at where the name was in the user's words. `measured_data` and `prior_state` have no text to point at, so the skeleton records no location for them. To re-check from the record alone, the adopter has to keep separately what was looked up and when (spec 2.7).
+C2 is the same: `fixed.c2_located_at` points at where the name was in the user's words. `measured_data` and `prior_state` have no text to point at, so the library records no location for them. To re-check from the record alone, the adopter has to keep separately what was looked up and when (spec 2.7).
 
 ---
 
@@ -262,7 +262,7 @@ The same input many times, through the same model in two ways. The mock tool `sc
 |---|---|
 | A | A plain tool call. The model fills the arguments and calls |
 | B | Same as A, with one more line in the system prompt: "if you don't know, ask" |
-| C | The gate. The same model only points at where each value is; the skeleton checks it in a declared source and decides |
+| C | The gate. The same model only points at where each value is; the library checks it in a declared source and decides |
 
 Arm C's "execution" is the `execute` the verdict function returned, read as is (above, "Where this departs from the specification"). All three arms get the same user turn and the same tool. The user turn is a set of segments with trust labels (`prompts.js`): only the seller's words are `user`; the account context, the buyer's messages and the platform's records are `untrusted`.
 
@@ -427,7 +427,7 @@ Arms A and B call the model once per run; arm C calls it per hook (extraction on
 | `version.js` | The code information written into result files |
 | `analyze.js`, `provenance.js`, `claims.js` | Aggregation, source classification and record audit, pre-registered predictions |
 | `c2-stub.js` | A located C2 answer for tests unrelated to C2 |
-| `crosscheck/` | Runs someone else's case file through the actual skeleton and compares decisions ([`crosscheck/README.md`](./crosscheck/README.md)). Not part of `npm run check` |
+| `crosscheck/` | Runs someone else's case file through the actual library and compares decisions ([`crosscheck/README.md`](./crosscheck/README.md)). Not part of `npm run check` |
 | `*-test.js`, `selftest.js` | Offline checks (above) |
 | `results/` | Run results and analysis output ([`results/README.md`](./results/README.md)) |
 

@@ -57,7 +57,7 @@ const typeError = (v, s) =>
 
 // Hooks that settle whatever the schema asks for, so nothing but the declaration decides the outcome.
 //   The validators are wired (the comparison engine is the adopting system's, 6.3); row 5 takes them
-//   out to show what the skeleton does without one.
+//   out to show what the library does without one.
 function hooks({ measured, conditions, verify, validators = "wired" }) {
   const m = measured ?? { amount: AMOUNT, payee_account: ACCOUNT };
   return {
@@ -305,7 +305,7 @@ const UNMET = { status: "unmet", source: "measured_data", note: "limit exceeded"
   console.log(`
 THE WHOLE INVENTORY — what gets declared, by whom, and where it is covered
 
-  FIXED (the skeleton's own three questions; no one declares these)
+  FIXED (the library's own three questions; no one declares these)
     C1 timing · C2 what the user called it · C3 does the tool match    gate-test.js
 
   PROVIDER — values (the input schema)

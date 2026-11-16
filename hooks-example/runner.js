@@ -100,7 +100,7 @@ async function main() {
       console.log(`  ok  ${m.key.padEnd(10)} ${String(m.vendor).padEnd(10)} ${m.model}  via ${m.adapter.id}`);
     }
     console.log(`\ncode: ${code.git ? `${code.git.commit.slice(0, 7)}${code.git.dirty ? " (uncommitted changes)" : ""}` : "not a git checkout"}` +
-                `, skeleton ${code.files["execution-state-preflight.js"]}`);
+                `, library ${code.files["execution-state-preflight.js"]}`);
     console.log(`\n${resolved.length} usable, ${problems.length} unusable. Nothing was called.\n`);
     process.exit(problems.length ? 1 : 0);
   }
