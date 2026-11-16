@@ -187,6 +187,24 @@ async function run(id, condition, over = {}) {
   const utc = await run("g5-01", "offer_in_range", { ctx: { pickup_request: { ...S.conditions.offer_in_range.context.pickup_request, time: "2026-10-31T05:00:00Z" } } });
   check("a measured time in another offset is compared as a moment (14:00 KST)", item(utc, "chk_window").status, "verified");
 
+  // The comparison itself (judge-only.js): every slot the condition names, required or optional.
+  {
+    const { verifyUserChecklistItem } = require("./hooks").createHooks({ ask: async () => ({}) });
+    const starts = { id: "c", compare: { type: "string", pattern: "^A" }, constrains: ["time", "location"] };
+    const f = (name, value, status = "known") => ({ name, value: status === "known" ? value : undefined, status, source: status === "known" ? "instruction" : null });
+    const both = verifyUserChecklistItem(starts, { fields: [f("time", "A1"), f("location", "A2")], extra_fields: [] });
+    check("a condition on two fields: verified when both satisfy it", [both.status, both.note], ["verified", "time=\"A1\", location=\"A2\" satisfy the confirmed schema"]);
+    const second = verifyUserChecklistItem(starts, { fields: [f("time", "A1"), f("location", "B2")], extra_fields: [] });
+    check("  the second one fails: unmet, on that field", [second.status, second.source, /^location="B2"/.test(second.note)], ["unmet", "instruction", true]);
+    const onNote = { id: "n", compare: { type: "string", maxLength: 5 }, constrains: ["note"] };
+    const opt = verifyUserChecklistItem(onNote, { fields: [], extra_fields: [f("note", "short")] });
+    check("a condition on an optional argument is compared on the value sent", [opt.status, opt.source], ["verified", "instruction"]);
+    const optLong = verifyUserChecklistItem(onNote, { fields: [], extra_fields: [f("note", "much too long")] });
+    check("  and unmet when it fails", optLong.status, "unmet");
+    const unsent = verifyUserChecklistItem(onNote, { fields: [], extra_fields: [f("note", null, "unknown")] });
+    check("  with no settled value there is nothing compared: unverified, never verified", unsent.status, "unverified");
+  }
+
   console.log("\n--- 4-b. a check that cannot be run is not a check that passed ---");
   const ts = await run("g1-01", "clean", { userAnswers: SAT_2PM,
     forms: { [SALE]: { compare: { source: "measured_data", measure: "order_status", schema: { constt: "agreed" } }, constrains: [] } } });

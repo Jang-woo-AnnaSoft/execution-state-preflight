@@ -156,11 +156,14 @@ function project(state, preflight) {
       name: f.name, status: f.status, source: f.source ?? null, route: f.route ?? null,
       allowed_sources: f.allowed_sources ?? null, source_rule_ids: f.source_rule_ids ?? null,
       settled_at_execution: f.settled_at_execution ?? false, range_declared: f.range_declared ?? null,
-      derived_from: f.derived_from ?? null, note: f.note ?? null, approval: f.approval ?? null,
+      derived_from: f.derived_from ?? null, note: f.note ?? null, approval: f.approval ?? null, optional: f.optional ?? false,
       // An approval the user's later words replaced ([SAID AFTER]): which value it had approved, and where the later words are.
       answer_superseded: f.answer_superseded ?? null,
       value: f.status === "known" ? f.value : undefined,
     })),
+    // The optional arguments looked up: sent when known, never counted. With where each value came from.
+    extra_fields: (state.extra_fields ?? []).map(f => ({ name: f.name, status: f.status, source: f.source ?? null,
+      note: f.note ?? null, value: f.status === "known" ? f.value : undefined })),
     // rule_hash: the version an approval must name (6.1); approval / approval_voided: what the seller's
     //   answer did (6.3). Left out, a reader cannot tell an approval that held from one that was voided.
     user_checklist: (state.user_checklist ?? []).map(i => ({ id: i.id, status: i.status, source: i.source ?? null, note: i.note ?? null,

@@ -50,8 +50,8 @@ function standIn(id, condition, over = {}) {
       ask: async (m, system, user, hook) => { prompts.push({ hook, system, user }); return askInner(m, system, user, hook); },
       // What the agent's model is given, kept for the checks.
       chat: async a => { shown.push(a?.tools ?? null); heard.push(a?.messages ?? null); return over.chat ? over.chat(a, chatInner) : chatInner(a); },
-      listTools: async () => [TOOL],
-      readToolDefinition: async name => [TOOL].find(t => t.name === name),
+      listTools: async () => [over.tool ?? TOOL],
+      readToolDefinition: async name => [over.tool ?? TOOL].find(t => t.name === name),
       measure: measurePort(measuredFor(ctx, date)),
       // The first message arrives with the condition's context; later ones are what the seller typed.
       labelInput: msg => {
@@ -662,6 +662,40 @@ function askAllGiven(id) {
     //   the call is due, when the seller may not be there.
     check("  the notice was told with the question at instruction time, not again before the call",
       [s.events, (await recs()).at(-1).told.map(t => t.when)], [["call"], ["with_question"]]);
+  }
+
+  console.log("\n--- 1-n. an optional argument the seller gave in words: asked about, not dropped ([SAID OPTIONAL]) ---");
+  {
+    // The tool takes an optional ready_by. The seller says when, in words that are not a date-time.
+    //   Before 1.35 the argument was neither asked about nor sent, and the pickup ran without it.
+    const tool = JSON.parse(JSON.stringify(TOOL));
+    tool.inputSchema.properties.ready_by = { type: "string", format: "date-time" };
+    const text = `${S.instructions.find(i => i.id === "g1-01").text} Have it ready by noon Saturday.`;
+    const NOON = "2026-10-31T12:00:00+09:00";
+    const inner = makeAsk("g1-01");
+    const ask = async (m, system, user, hook) => {
+      if (hook === "propose_value" && /^Field: ready_by:/m.test(user)) return { value: NOON };
+      const out = await inner(m, system, user, hook);
+      if (hook === "extraction") {
+        const segs = JSON.parse(user.slice(user.indexOf("[", user.indexOf("Segments:")), user.indexOf("\n\nFields to locate")));
+        const i = segs.findIndex(sg => sg.trust === "user" && sg.text.includes("noon Saturday"));
+        out.ready_by = i < 0 ? { found: false } : { found: true, value: "noon Saturday", segment_index: i };
+      }
+      return out;
+    };
+    const r = await run("g1-01", "clean", ["yes"], { tool, text, ask });
+    const asked = r.records.find(x => x.execution_decision === "ask_user");
+    check("the optional argument is asked about with the time, its reading shown",
+      [r.first.status, r.first.question?.block?.slice(0, 2), asked.fields.find(f => f.name === "ready_by")?.optional, asked.unknown_count],
+      ["waiting", ["time = 2026-10-31 (Sat) 14:00 +09:00", "ready_by = 2026-10-31 (Sat) 12:00 +09:00"], true, 2]);
+    const verdict = r.records.filter(x => x.actor === "gate").at(-1);
+    check("the seller's yes: sent with the rest, and the record says where it came from",
+      [r.last.status, r.calls[0]?.args.ready_by, verdict.extra_fields.map(f => [f.name, f.status, f.source])],
+      ["executed", NOON, [["ready_by", "known", "user_answer"]]]);
+    // The same tool, and a seller who says nothing about it: nothing more is asked.
+    const quiet = await run("g1-01", "clean", ["yes"], { tool, ask });
+    check("said nothing about it: not asked, not sent", [quiet.first.question?.block?.length, quiet.last.status, "ready_by" in (quiet.calls[0]?.args ?? {})],
+      [g1.first.question?.block?.length, "executed", false]);
   }
 
   console.log("\n--- 2. what judge.run returns cannot be executed from ---");
