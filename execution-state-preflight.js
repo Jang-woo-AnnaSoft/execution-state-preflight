@@ -332,14 +332,29 @@ function itemRuleHash(item, wording) {
 //   interpretation: the bracketed word is passed on as the label, and normalizeProviderLabel routes a
 //   word it does not know to definition_repair. So "[Requried]" is not dropped as prose — a typo in a
 //   declaration does not delete the condition.
+//   What may stand before the bracket is how a description is laid out, not part of the rule: a list
+//   marker ("- ", "* ", "+ ", "• ", "1. ", "2) ") and emphasis marks around the label or the line
+//   ("**[Required]** …", "**[Required] …**"). Read as prose — as they were — a provider who wrote the
+//   lines as a list had every condition dropped without a trace, and shown to the model as well.
+//   A label with nothing after it is a line too, with no words: it cannot be put into a form, so it is
+//   held for definition repair rather than dropped.
+//   A task-list box after a list marker ("- [ ] …", "- [x] …") is not a label.
 //   NOTE: a prose line that happens to start with brackets ("[Beta] …") is read as a label too, and held
 //     for definition repair. That is the fail-closed reading, and the provider can reword it.
-const LABEL_LINE = /^\s*\[([^\]\n]+)\]\s*(.+?)\s*$/;
+const LABEL_LINE = /^\s*((?:[-*+\u2022]|\d+[.)])\s+)?([*_`]*)\[([^\]\n]+)\]([*_`]*)\s*(.*?)\s*$/;
+function readLabelLine(line) {
+  const m = String(line ?? "").match(LABEL_LINE);
+  if (!m) return null;
+  const [, marker, open, rawLabel, close, rest] = m;
+  const label = rawLabel.trim();
+  if (marker && (label === "" || label === "x" || label === "X")) return null;
+  // Emphasis opened before the bracket and closed at the end of the line is around the whole line.
+  const text = open && !close && rest.endsWith(open) ? rest.slice(0, -open.length).trim() : rest;
+  return { label, text };
+}
+const isLabelLine = line => readLabelLine(line) !== null;
 function labelledLines(description) {
-  return String(description ?? "").split("\n")
-    .map(l => l.match(LABEL_LINE))
-    .filter(Boolean)
-    .map(m => ({ label: m[1].trim(), text: m[2] }));
+  return String(description ?? "").split("\n").map(readLabelLine).filter(Boolean);
 }
 
 // The tools as the agent's model is given them: the provider's labelled lines taken out of each
@@ -353,7 +368,7 @@ function labelledLines(description) {
 function toolsForModel(tools) {
   return (tools ?? []).map(t => ({
     ...t,
-    description: String(t?.description ?? "").split("\n").filter(l => !LABEL_LINE.test(l)).join("\n").trim(),
+    description: String(t?.description ?? "").split("\n").filter(l => !isLabelLine(l)).join("\n").trim(),
   }));
 }
 
@@ -2218,7 +2233,7 @@ async function withTranslatedForm(h, item, { tool, wording, label, mcpTool }) {
 //   names the system can measure now; it is not kept with the translation.
 //   A [Required] line is not marked: its label already says only the system's value counts.
 function alsoMeasuredReview(label, form, names) {
-  if (label !== "Verify" || !form || !Array.isArray(names) || names.length === 0) return null;
+  if (normalizeProviderLabel(label) !== "verify" || !form || !Array.isArray(names) || names.length === 0) return null;
   const slots = new Set([...(Array.isArray(form.constrains) ? form.constrains : []),
                          ...(typeof form.compare?.slot === "string" ? [form.compare.slot] : [])]);
   const also = [...slots].filter(s => names.includes(s)).sort();
