@@ -1325,6 +1325,7 @@ async function lookupField(h, fieldName, ctx) {
   // D1: the user may answer "there is none" — { none: "absent" }. That is a report of nothing by the
   //   one who checked (5.1), recorded, and the search goes on (5.2). It is never a value.
   const NOT_READ = Symbol("not_read");
+  const sameWords = (a, b) => typeof b === "string" && String(a).trim().replace(/\s+/g, " ") === b.trim().replace(/\s+/g, " ");
   let earlyInstruction = NOT_READ;
   if (allowed.has("user_answer")) {
     if (userAnswers && fieldName in userAnswers) {
@@ -1338,10 +1339,18 @@ async function lookupField(h, fieldName, ctx) {
         //   the field's form they settle it; otherwise a reading of them is shown to approve). Without
         //   this the lookup ended at the approval and the later words were never read: a seller approved
         //   2pm, then typed "Make it Saturday 7pm instead", and the pickup ran at 2pm.
-        //   Only a located claim in a later segment the user typed. A claim in the approving segment
-        //   itself, or before it, changes nothing: the approval was given after those words.
-        //   Words that repeat the approved value in a later segment are read again too, and may be
-        //   asked about once more: code cannot tell a repetition from a change.
+        //   Only a located claim in a segment the user typed, the approving one or a later one. A claim
+        //   before the approving segment changes nothing: the approval was given after those words.
+        //   The approving segment itself counts: "yes, but make it 7pm" approves and changes in one
+        //   message, and a reader that reported its yes left the pickup at 2pm. Before or after the yes
+        //   inside that message makes no difference: the question showed one value, and the message
+        //   that answers it gives the field another.
+        //   One exception in the approving segment: words that are the approved value itself, character
+        //   for character. A user shown two places to choose from answers by typing one of them; that
+        //   is the choice, not a change, and the approval keeps what it was chosen from.
+        //   Any other words that repeat the approved value, there or later ("2pm Saturday" for a shown
+        //   date-time), are read again too, and may be asked about once more: code cannot tell a
+        //   repetition from a change.
         const approval = ctx.valueApprovals?.[fieldName];
         const approvedAt = approval?.located_at?.segment_index;
         if (Number.isInteger(approvedAt) && allowed.has("instruction")) {
@@ -1353,9 +1362,10 @@ async function lookupField(h, fieldName, ctx) {
           const seg = c && typeof c === "object" && noneReport(c) === null && Number.isInteger(c.segment_index)
             ? instruction?.[c.segment_index] : null;
           const sp = c?.span;
-          if (seg?.trust === "user" && typeof seg.text === "string" && c.segment_index > approvedAt &&
+          if (seg?.trust === "user" && typeof seg.text === "string" && c.segment_index >= approvedAt &&
               Array.isArray(sp) && sp.length === 2 && Number.isInteger(sp[0]) && Number.isInteger(sp[1]) &&
-              sp[0] >= 0 && sp[0] < sp[1] && sp[1] <= seg.text.length) {
+              sp[0] >= 0 && sp[0] < sp[1] && sp[1] <= seg.text.length &&
+              !(c.segment_index === approvedAt && sameWords(seg.text.slice(sp[0], sp[1]), userAnswers[fieldName]))) {
             answerSuperseded = { value: userAnswers[fieldName], approval, by: { segment_index: c.segment_index, span: [sp[0], sp[1]] } };
           }
         }
@@ -4177,7 +4187,10 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.35",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.36",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.36: [SAID AFTER] also reads the segment that approved: a value the user's words give the field
+    //        in the same message as the yes supersedes the approval (before 1.36 only a later segment did),
+    //        unless those words are the approved value itself (a choice typed out).
     //   1.35: the record carries extra_fields (the optional arguments looked up, each as a field record).
     //        An optional argument the user gave a value for that did not settle is a slot: it is in fields
     //        with optional: true, counted and asked about ([SAID OPTIONAL]). value_checks lists an extra's
