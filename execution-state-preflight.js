@@ -557,7 +557,7 @@ async function resolveFixedChecklist(h, instruction, mcpTool) {
   //   whole segment is located and non-empty, so it passes, and flows into action_key.
   // [LIMIT] The location check proves the words are in the user's segment. It does not prove they ask
   //   for this act. "If it's full, don't cancel" contains "cancel", correctly located. This is where spec
-  //   1.1 lands — an execution unit the user did not state or approve is not attempted, and no unit can be
+  //   1.1 lands — an execution unit the user did not state is not attempted, and no unit can be
   //   added to the ones the user set — and the role of the words is not judged by code (8.1). It is the
   //   same hole as spanSupportsValue's identity comparison for values (a limit is not a value).
   //   BREAKS: an extractor that picks a word the user used in another role ("cancel" from "don't
@@ -565,10 +565,10 @@ async function resolveFixedChecklist(h, instruction, mcpTool) {
   //   POLICY: because code cannot hold this, the adopting system must give it to the model as a
   //     principle read at EVERY gated execution — put into the context of each call that reaches this
   //     gate, not written once into a system prompt where it dilutes and nobody can confirm it was
-  //     dropped (spec 6.1). The principle, in the spec's words (1.1, 6.2):
-  //       - Decide the tool only after taking in when the user said to do it and what they called it.
-  //       - An alternative to a blocked or failed execution is a new execution unit. If the user did not
-  //         state or approve it, do not attempt it; bring the block back instead.
+  //     dropped (spec 6.1). The principle (spec 6.2, 1.1):
+  //       - Decide on the tool only after taking in when the user said to do it and what they called it.
+  //       - An alternative to a blocked or failed execution is a new execution unit. If it is not
+  //         among the execution units the user stated, do not attempt it; bring the block back instead.
   //     A violation of this principle is not detected by the record. It is mitigation, not verification.
   let c2HookError = null;
   const claim = await safeHook(h.extractUserActionName, [instruction],
@@ -3680,14 +3680,15 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
     }
 
     if (label === "notice") {
-      // [Notice] is the kind of condition that does not block (3.3). It is a disclosure obligation
-      //   before execution, not a gate. Gate it and "the user was told" becomes grounds for executing,
-      //   which 3.3 rules out (a condition never creates a reason to execute), and 2.2 says that confirmation degrades into a click-through anyway.
+      // [Notice] is something the user must be told before execution (3.3). It is not a condition to
+      //   confirm, so it is not counted, and the user is not asked to acknowledge it. Gate it and "the
+      //   user was told" becomes grounds for executing, which 3.3 rules out (a condition never creates a
+      //   reason to execute), and 2.2 says that confirmation degrades into a click-through anyway.
       // Unlike advisory_notes this is structured and identified, and it is surfaced in gate.disclosures
       //   so the executing party cannot miss it. It is still not enforced: whether a sentence reached a
       //   human is not observable here.
-      //   POLICY: gating this on an acknowledgement passed back by the caller is the adopting system's
-      //     call — 8.3 leaves accepting that risk to its policy.
+      //   POLICY: telling it is the executing party's part (3.3). A tool that needs an acknowledgement
+      //     asks for it itself, before the call; the gate does not.
       finalProviderChecklist.push({ ...base, status: "disclosure_required", source: null, route: null });
       continue;
     }

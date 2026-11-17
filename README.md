@@ -59,7 +59,7 @@ With agents, the execution still runs under the user's session and permissions, 
 
 So some wrong executions pass the whole frame. In [the reported Meta Muse case](./case-muse-marketplace.en.md), with "Allow Always" on, Muse agreed in the seller's name to the buyer's 8 to 10 p.m., and the buyer came to the seller's building while the seller was out. The permission was there, the format was right, no policy was broken. The seller had not set that time.
 
-Permission comes from ownership, not accuracy, and a model that answers for nothing cannot hold it (spec 2.1). The model writes the draft; the agent, the code around the model, checks it.
+Authority comes from ownership, not accuracy, and a model that answers for nothing cannot hold it (spec 2.1). The model writes the draft; the agent, the code around the model, checks it.
 
 ### What this adds
 
@@ -87,7 +87,7 @@ Not a new layer. It does for the owner of each value what the frame already does
 
 **It stops wrong executions.** A value whose source is not confirmed does not enter an execution. A value the model made up, or one it took from someone else's text, stays unconfirmed and comes back to the user as a blank (spec 5.2). Even a confirmed value is held if it exceeds the user's limit or the provider's condition.
 
-**It stops executions nobody asked for.** Only an execution unit the user stated or approved can execute. Not being prohibited is not a ground (spec 0, 1.1).
+**It stops executions nobody asked for.** Only an execution unit the user stated can execute. Not being prohibited is not a ground (spec 0, 1.1).
 
 **It stops different executions.** The act is settled only from the user's words in this request, so an act the user did not name does not execute (gate 1). Going around a block or a failure by another tool or another path is not a continuation of the same request; it is a new execution, judged again from the start. Whether the act and the tool match, however, is not proven by code (spec 8.1).
 

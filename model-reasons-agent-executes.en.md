@@ -53,7 +53,7 @@ Tool selection can't be proven by source checks the way argument values can. It 
 
 ## Stopping is not a failure
 
-That nothing prohibited an action is not grounds for it. Only what's confirmed, within what the user stated or approved, can run. So sometimes things will stop.
+That nothing prohibited an action is not grounds for it. Only what's confirmed, within what the user stated, can run. So sometimes things will stop.
 
 Model developers do train agents to stop and confirm before irreversible actions. But the decision to stop still sits inside the model, and the model is rewarded for finishing. A completed task scores; a stopped one counts as a failure. So when something is blocked, it tends to find another way through, like cancelling an existing booking to make a new one.
 

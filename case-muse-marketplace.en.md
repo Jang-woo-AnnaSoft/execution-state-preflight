@@ -38,7 +38,7 @@ One more thing: there was one delegation, but many executions. The address, the 
 
 [Execution-state preflight](https://github.com/Jang-woo-AnnaSoft/execution-state-preflight) is a specification for a gate in front of irreversible execution. A sent message counts as irreversible, because the recipient may already have read it.
 
-It changes the default from "runs unless prohibited" to "runs only when everything required is confirmed, in an execution unit the user stated or approved." The model points to where each value is supposed to come from. The gate then looks the value up in a declared source: what the user said, settings the user approved in advance, or a live system measurement. A value found in none of them stays UNKNOWN. While anything is UNKNOWN, the execution is not executable, and the item goes to whoever can fill it.
+It changes the default from "runs unless prohibited" to "runs only when everything required is confirmed, in an execution unit the user stated." The model points to where each value is supposed to come from. The gate then looks the value up in a declared source: what the user said, settings the user approved in advance, or a live system measurement. A value found in none of them stays UNKNOWN. While anything is UNKNOWN, the execution is not executable, and the item goes to whoever can fill it.
 
 Applied to the reported sequence, assuming the tool declares each committing message as an execution unit with these slots:
 
@@ -50,7 +50,7 @@ Applied to the reported sequence, assuming the tool declares each committing mes
 | "Yep I'm here!" | Seller is present | None | UNKNOWN. Not sent |
 | "Got tied up" apology | A reason for the no-show | None | UNKNOWN. Not sent |
 
-The spec doesn't put one gate on a delegation. It puts one gate on each state change left outside (spec 1.1). So even with "handle my messages" delegated, each message that commits to something needs its own grounds. Whatever is done after an execution is blocked or fails is not a continuation of it but a new execution unit. The apology after the buyer left is one. If it isn't within what the user stated or approved, it isn't attempted.
+The spec doesn't put one gate on a delegation. It puts one gate on each state change left outside (spec 1.1). So even with "handle my messages" delegated, each message that commits to something needs its own grounds. Whatever is done after an execution is blocked or fails is not a continuation of it but a new execution unit. The apology after the buyer left is one. If it isn't within what the user stated, it isn't attempted.
 
 Under the spec, a stop like this is not a failure. The unconfirmed item goes to Robb at 5:27 p.m., before any commitment is made. The run is recorded with its reason, and it is not finished some other way.
 
@@ -108,7 +108,7 @@ The chat-only proposal is words a model read, not a measurement, so it does not 
 - The address. It had a legitimate source and an approved template. Holding it until a pickup is confirmed is a condition someone has to declare: Meta as the tool provider, or Robb as the user. The spec does not invent conditions that nobody declared.
 - Robb's expectation that he would be asked before any offer was accepted. He never declared it. After the incident he told Muse, "don't agree to pickup unless you check with me." That is exactly a user checklist item, but it came after the fact.
 - What counts as an execution unit. If the tool declares only "send message" and no slots for time, price, or presence, the gate has nothing to check. Undeclared state changes are out of reach (spec 1.1).
-- Tool and intent matching. Whether "handle my messages" covers apologizing on his behalf can be compared against the execution units he stated or approved, but not proven in code (spec 8.1).
+- Tool and intent matching. Whether "handle my messages" covers apologizing on his behalf can be compared against the execution units he stated, but not proven in code (spec 8.1).
 - How Robb gets told. The spec ends at the decision record. Notification is outside it.
 
 **What has been validated: a repeated-run test on a mock tool shaped like this case (section 4), not the case itself.** I have not replayed this message sequence through the library, and I have no access to Muse. The table in section 3 still describes what the design is meant to do with these particular messages, not observed behavior.
