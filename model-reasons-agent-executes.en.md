@@ -34,7 +34,7 @@ So the model's assumptions decide which tool to use, which criteria to pass, and
 
 ## Two methods
 
-**Declare the checklist.** If the model decides what has to be checked, that checklist is reasoning too. What gets asked and what gets skipped changes from run to run, and a missing item doesn't look missing. It looks like it was never there. So the criteria are declared before execution, outside the model, by whoever is responsible for them. Providers write the conditions for their tools. Users write the scope of what they delegate.
+**Declare the checklist.** If the model decides what has to be checked, that checklist is reasoning too. What gets asked and what gets skipped changes from run to run, and a missing item doesn't look missing. It looks like it was never there. So the criteria are declared before execution, outside the model, by whoever is responsible for them. Providers write the conditions for their tools. Users write the scope of what they delegate. This needs no new field: the spec proposes that a provider's condition be a line of the tool's description that starts with a label (`[Required]`, `[Verify]`, `[Notice]`). A labelled line is read and checked by code; it is no longer prose left to the model.
 
 **Check the source.** Looking at a value after it arrives can't separate what was made up from what wasn't. Asking the model to label where each value came from doesn't help, because the model writes the label too.
 
