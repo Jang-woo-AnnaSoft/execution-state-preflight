@@ -2,7 +2,7 @@
 *Intent, values, conditions: **people** should declare them, not the model.*
 
 > This specification deals with missing inputs, not with the correctness of computation.
-> Don't trust what the model says. Have code count only whether each check was carried out.
+> Don't trust what the model says. Have code count only whether each validation step was carried out.
 
 *RFC: Declare, judge, record, execute — separating authority from the model*
 
@@ -19,19 +19,19 @@ Existing work raises model accuracy and validates input arguments with schemas a
 | Axis | Existing | This specification |
 | --- | --- | --- |
 | **Who sets the rules** | Nobody, so the model sets them on every call. What to ask and what to skip changes from call to call, and since nothing is kept as a rule, the rules cannot be listed (2.3). | Parties with definition authority (provider, user, adopting system) declare them in external checklists. They change without a deploy, live in a fixed place, and can be listed. Whoever owns a rule changes it as a single line of plain language, not code; developers only maintain the verdict structure (7.2). |
-| **What gets checked** | Arguments only. Structured Outputs and Tools schemas check data type and format; there is no field for intent or conditions (2.5). | Intent, values, and conditions (balance, permission) become slots on the same footing. Because the verdict is about the action, conditions need no separate mechanism, and confidence scores are not used (3.3). |
+| **What gets checked** | Arguments only. Structured Outputs and Tools schemas check data type and format; there is no field for intent or conditions (2.5). | Intent, values, and conditions (balance, order status) become slots on the same footing. Because the verdict is about the action, conditions need no separate mechanism, and confidence scores are not used (3.3). |
 | **Do missing rules show up** | An undeclared item is missing from the record too, so it looks like an item that never existed rather than one that was missed (2.7). | An item that cannot be checked stays UNKNOWN and routes to definition repair (4.5). The gap is not filled, but the record shows who failed to declare what. The model may report a condition missing from the checklist, but the report does not affect execution (4.7). |
 | **Is there a reason to trust a filled value** | A looked-up value and an invented one are the same string, so neither the user nor the validator can tell them apart (2.4). | A value filled in by the model does not settle the slot. What is not there is written down as not there, and a check that has not finished is counted as UNKNOWN by code (5.1, 5.2). |
-| **Who judges that what was filled is everything** | The model hands over a neat, completed form and a person clicks through (2.2). | Counting code does. People receive blanks, not a filled-in form, and only the items only they can answer come back to them (3.5). |
-| **Who decides to execute** | Validation is a branch inside the execution flow, so it can be skipped, and the skip leaves no trace. | The verdict ends in a record. An external executing party reads that record and makes its own decision. No execution path bypasses the record. |
+| **Who rules that what was filled is everything** | The model hands over a neat, completed form and a person clicks through (2.2). | Counting code does. People receive blanks, not a filled-in form, and only the items only they can answer come back to them (3.5). |
+| **Who decides to execute** | Validation is a branch inside the execution flow, so it can be skipped, and the skip leaves no trace. | The verdict ends in a record. An external executing party looks up that record and makes its own decision. No execution path bypasses the record. |
 
-**The default changes.** Today, an execution that nothing prohibits goes ahead. Nobody can write down everything that should be prohibited, so whatever is left unwritten stays permitted. Under this specification, only an execution unit the user stated or approved (in the instruction or in answers; 5.2) can reach an executable state, and only when everything it needs is confirmed and no confirmed condition prohibits it. That nothing prohibited it is not grounds for execution.
+**The default changes.** Today, an execution that nothing prohibits goes ahead. Nobody can write down everything that should be prohibited, so whatever is left unwritten stays permitted. Under this specification, only an execution unit the user stated (in the instruction or in answers; 5.2) can reach an executable state, and only when everything it needs is confirmed and no confirmed condition prohibits it. That nothing prohibited it is not grounds for execution.
 
 **Stopping is not a failure.** Today, stopping counts as a failure and finishing by any other route counts as a success, so when something is blocked, the agent looks for a way around it that nobody asked for (1.1). Under this specification, an execution that does not run because something was not confirmed is a normal outcome, recorded with its reason (6.4), and the blank goes back to whoever can fill it (4.5).
 
 The model's output is not grounds for execution. It is input for preparing execution. The model does not do less work: value extraction, conversation, and tool candidate matching stay with the model.
 
-Two decision authorities move out of the model. Definition authority, the authority to decide what gets checked, goes to whoever declares the checklist. Verdict authority, the authority to judge whether every checklist item has been checked, goes to the counting code. The verdict ends in a record, and execution is left to an external party that reads that record.
+Two decision authorities move out of the model. Definition authority, the authority to decide what gets validated, goes to whoever declares the checklist. Verdict authority, the authority to judge whether every checklist item has been confirmed, goes to the counting code. The verdict ends in a record, and execution is left to an external party that reads that record.
 
 For a verdict to serve as grounds for execution, each of these questions needs an answer.
 
@@ -46,9 +46,9 @@ For a verdict to serve as grounds for execution, each of these questions needs a
 ### 0.1 Relationship to existing assets
 
 - This is not a new architecture. It extends two assets that already exist: the tool list and the input schema.
-- It does not replace format validators or the validation a tool server performs. This specification only produces a verdict record; both of those stay on the execution path.
-- **It does not replace a permission layer. Authority is granted to a party, so whether a grant still holds and when it is revoked have to be handled separately, and that belongs to the executing party or a policy layer. What this specification looks at is not a party's authority but the state at execution time (3.2, 3.5).**
-- It does not replace a layer that validates after the fact either. This specification counts whether the intent, values, and conditions were confirmed from declared sources before execution, and settles deterministically whether the state is executable (3.5). The aim is not to block but to reach a state in which execution can proceed. The verdict record becomes the grounds for execution and for whatever validation follows.
+- It does not replace format validators or the validation a tool server performs. This specification only produces a decision record; both of those stay on the execution path.
+- **It does not replace a permission layer. Permission is granted to a party, so whether a grant still holds and when it is revoked have to be handled separately, and that belongs to the executing party or a policy layer. What this specification looks at is not a party's permission but the state at execution time (3.2, 3.5).**
+- It does not replace a layer that validates after the fact either. This specification counts whether the intent, values, and conditions were confirmed from declared sources before execution, and rules deterministically on whether the state is executable (3.5). The aim is not to block but to reach a state in which execution can proceed. The decision record becomes the grounds for execution and for whatever validation follows.
 
 ---
 
@@ -62,9 +62,9 @@ This specification is not applied to every tool call across the board. What it c
 - Does not apply: read-only calls are not gated.
 - The trade: statements about answer quality are removed from the grounds for a verdict, and input completeness is gained in return. For reversible execution, the gain does not cover the cost. Checking the result and fixing it is the cheaper control.
 
-#### Deciding what counts as irreversible
+#### Ruling on what counts as irreversible
 
-An execution is reversible when the party that ran it can restore the prior state on its own. It is irreversible when restoring requires the other party's consent or a third party's cooperation. The presence of an undo does not decide this.
+An execution is reversible when the party that ran it can restore the prior state on its own. It is irreversible when restoring requires the other party's consent or a third party's cooperation. The ruling does not go by whether an undo exists.
 
 | Execution | Undo | What remains |
 |---|---|---|
@@ -73,17 +73,17 @@ An execution is reversible when the party that ran it can restore the prior stat
 | File delete | Trash restore | The change already propagated to outside systems |
 | Robot motion | Stop | It may already have touched a person or an object |
 
-An undo restores the state held by the party that ran the execution. It does not restore what was left outside. That is what this decides on.
+An undo restores the state held by the party that ran the execution. It does not restore what was left outside. The ruling is about the latter.
 
-#### Deciding what counts as one execution unit
+#### Ruling on what counts as one execution unit
 
-One tool call is not necessarily one execution unit. What is judged is the state change left outside, not the call.
+One tool call is not necessarily one execution unit. What is ruled on is the state change left outside, not the call.
 
 A call that leaves no state change is not an execution unit. A call that produces more than one state change is that many execution units. Several calls that together make one state change are one execution unit. Each execution unit passes the gate on its own (3.4).
 
 One delegation can produce several execution units. It is not one gate per delegation but one gate per state change.
 
-An alternative taken when an execution is blocked or fails (withdrawing from another account, reducing the amount, cancelling an existing booking to book again) is not a continuation of the original execution but a new execution unit. If it is not among the execution units the user stated or approved, it is not attempted. No unit can be added to the ones the user set.
+An alternative taken when an execution is blocked or fails (withdrawing from another account, reducing the amount, cancelling an existing booking to book again) is not a continuation of the original execution but a new execution unit. If it is not among the execution units the user stated, it is not attempted. No unit can be added to the ones the user set.
 
 Which state changes count as execution units is declared by the party that built the tool. A state change nobody declared does not become an execution unit, so the gate never sees it. Here the change of default in Section 0 does not hold: whatever nothing prohibits still runs. This is a residual risk of the same kind as 8.1.
 
@@ -91,7 +91,7 @@ Which state changes count as execution units is declared by the party that built
 
 - Domains with immediate execution only: no trigger slot.
 - Systems with a single tool: no tool-matching item in the intent slot.
-- When the same party owns the agent and the tools: the agent's own checklist is still needed, and the per-tool checklist goes where the input schema goes.
+- When the same party owns the agent and the tools: the agent's own checklist is still needed, and the per-tool checklist goes in the tool's definition (4.2.1).
 
 There is no reduction rule for the user checklist. The fixed checklist settles the execution unit, and provider conditions only add reasons not to execute; this is the only place where the user sets the ranges of values and state. That question is present in every deployment that executes.
 
@@ -123,16 +123,16 @@ Premise: the model is an engine that fills blanks. This is not a defect but trai
 
 - A looked-up value and an invented one have the same string form. Nothing in the result tells them apart. Not for the user, and not for a validator.
 - Adding another validator (LLM-as-a-Judge) does not solve this. What the judge receives is a call that has already been assembled, and the information needed to tell the two apart is not in it.
-- Passing the value along with a source label does not work either. The label is produced by the model, so an invented value gets a source too.
+- Passing the value along with a provenance label does not work either. The label is produced by the model, so an invented value gets provenance too.
 
 ### 2.5 No place to declare conditions
 
 - The input schema is a format for assembling a call, so only arguments get fields. There is no field for conditions.
 - The chain: nowhere to write it → not something to validate → nobody declares it → the model assumes it.
 - Current validators check schema conformance only. They don't check whether a value is real or whether a condition is missing.
-- This is the space where every argument is present and correctly typed, yet execution should not happen. Examples: insufficient balance, a recipient that doesn't exist, unsettled timing, no permission.
-- Tool servers sometimes check conditions. But a check after the call means unnecessary calls. A tool server's rejection reason doesn't end up in a decision record, and it can become a hint for the model to change the value and retry.
-- Conditions written as free text in the description go unverified as well, since there is no way to confirm the model took them in.
+- This is the space where every argument is present and correctly typed, yet execution should not happen. Examples: insufficient balance, a recipient that doesn't exist, unsettled timing, a cancelled order.
+- Tool servers sometimes validate conditions. But validation after the call means unnecessary calls. A tool server's rejection reason doesn't end up in a decision record, and it can become a hint for the model to change the value and retry.
+- Conditions written as free text in the description go unvalidated as well, since there is no way to confirm the model took them in.
 
 ### 2.6 Failure types
 
@@ -184,7 +184,7 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
                                                  unknown_count
                                                        │
               ┌────────────────────────────────────────┘
-              │  (executing party reads the decision record)
+              │  (executing party looks up the decision record)
               ▼
               [Execution Path] ─> [Schema Syntax Check] ─> API Execution
                                        (existing validator kept)
@@ -193,52 +193,52 @@ LLM Output ─> [External Declarative Slots] ─> [Deterministic Gate Counter]
 ### 3.2 Changing what the verdict is about (right answer → correct execution)
 
 - In irreversible execution, what has to be correct is not the generated text but the action taken. An action is correct when it is the action the user intended and it meets the conditions the provider requires.
-- What this specification judges is input completeness, the precondition for that correctness. Correctness can only be assessed once intent, values, and conditions are all declared and every slot is confirmed from its designated source. Whether the confirmed requirements are met is recorded separately.
-- Moving the verdict from the generated answer to the action has three consequences. An action is a fact, not a probability, so it is judged by counting, not scoring. An unconfirmed intent, value, or condition is in every case the same action, "proceeding without checking," so one counter covers all three. And an action is decided before it happens, so the verdict can come before execution.
-- This axis sits at a different layer from an actor's authority. Authority asks whether this actor may perform this action. This specification asks what has to be declared for this execution to stand, and whether it was confirmed. The question is not who holds the authority but whether the grounds for the execution were expressed and verified. The two do not replace each other, and judging authority is outside the scope of this specification.
+- What this specification rules on is input completeness, the precondition for that correctness. Correctness can only be assessed once intent, values, and conditions are all declared and every slot is confirmed from its designated source. Whether the confirmed requirements are met is recorded separately.
+- Moving the verdict from the generated answer to the action has three consequences. An action is a fact, not a probability, so the verdict comes from counting, not scoring. An unconfirmed intent, value, or condition is in every case the same action, "proceeding without checking," so one counter covers all three. And an action is decided before it happens, so the verdict can come before execution.
+- This axis sits at a different layer from an actor's permission. Permission asks whether this actor may perform this action. This specification asks what has to be declared for this execution to stand, and whether it was confirmed. The question is not who holds the permission but whether the grounds for the execution were expressed and confirmed. The two do not replace each other, and ruling on permission is outside the scope of this specification.
 
 ### 3.3 Adding intent and conditions (Intent, Condition)
 
-Verification today looks at values only. The input schema checks a value's type and format, and has no place for intent or conditions (2.5). This specification adds intent and conditions to what is verified, alongside values.
+Validation today looks at values only. The input schema checks a value's type and format, and has no place for intent or conditions (2.5). This specification adds intent and conditions to what is validated, alongside values.
 
 - Intent: the execution unit the user wants in this request. It has three parts.
   - Act: what state change is wanted, and for what. It is settled from the user's words in this request, with its location specified (5.2), and nothing else fills it. The user may call the act by a name other than the tool name the system set, and which name points to which tool differs from user to user.
   - Timing: whether it runs now, or at a given time or when a given event happens. A time inside the act is an argument, not a timing. Only when the call itself is put off is it scheduled or conditional.
   - Tool: whether that tool actually provides the requested state change.
-- Value: what goes into that unit's tool arguments. What is needed, its format, and what counts as the value, the provider declares; the blanks that remain, the user fills.
-  - Words are easily misread. A range or a negation the user stated can be read as a value, and the gate checks only that the words are in the user's text (5.2). That is why criteria are needed. For example, a time is a single point, and a range is not a value.
-  - Who may give a value is marked with a label. A value that may be confirmed only from a system source is marked [Required]; it is not filled from the user's words or answers. A value the user must give is marked [Verify]; a value the user did not give directly becomes the value only with the user's approval.
+- Value: what goes into that unit's tool arguments. What is needed, its format, and what counts as the value, the provider declares; the blanks that remain, the user fills, and a value only the system can answer, the system fills.
+  - Words are easily misread. A range or a negation the user stated can be read as a value, and the gate only compares the words with the user's text (5.2). That is why criteria for the ruling are needed. For example, a time is a single point, and a range is not a value.
+  - Who may give a value is marked with a label. A value that may be confirmed only from a system source is marked [Required]; it is not filled from the user's words or answers. A value the user must give is marked [Verify]; a value the user did not give directly becomes the value only with the user's approval. A value confirmed by measurement inside a range the user set is approved in advance by that range.
   - A value settled at execution time, one the user does not set when instructing but that is decided by the state at execution, needs a range. The user sets that range at instruction time (4.5). Without a range, the value does not confirm the slot even if it was measured. If the situation changes at execution time, the value is judged within that range. Which values are settled at execution time is declared by whoever declares the slot.
-- Condition: what must be confirmed to hold before execution. The provider declares the conditions under which the tool must not run; the user declares the ranges of values and state. A condition never creates a reason to execute; it only adds reasons not to. The grounds for execution come from the execution unit the user stated or approved (Section 0).
-  - Conditions split three ways by what they require. The split does not depend on who declares them: whether the provider or the user declares it, a condition is one of the three.
+- Condition: what must be confirmed to hold before execution. The provider declares the conditions under which the tool must not run; the user declares the ranges of values and state. A condition never creates a reason to execute; it only adds reasons not to. The grounds for execution come from the execution unit the user stated (Section 0).
+  - A condition carries one of three labels. The split does not depend on who declares them: whether the provider or the user declares it, a condition is one of the three.
     - [Required]: something that must be confirmed. It is confirmed only from a declared system source, and user approval does not satisfy it. If it does not hold, the execution does not run.
     - [Verify]: something that needs the user's approval. It creates a user approval slot.
-    - [Notice]: something the user must be told before execution. It does not block.
+    - [Notice]: something the user must be told before execution. It is not a condition to confirm, so it is not counted, and the user is not asked to acknowledge it. Telling is the executing party's, and when it cannot be told, the execution does not happen.
   - A condition can be declared as a range, by the provider or by the user. If a value or state confirmed by measurement at execution time falls within that range, the condition is met and the user is not asked again. Who produced the value is not considered; only whether it was confirmed by measurement. A value the model read is not a measurement (5.2).
   - Conditions are declared in natural language. When a sentence is clear, the user, the provider and a third party can all check it. A declared sentence is put into a form that can be compared, and at execution time only that form is compared. A user's condition is confirmed by the user, who is asked when the meaning is not clear. A condition that could not be put into a form, and one that had to be confirmed and was not, stay unconfirmed (4.5).
 
 #### 3.3.1 Slots on the same footing (Intent, Value, Condition)
 
-- Intent, values and conditions are all treated as verification slots. Because the verdict is about the action, conditions need no separate mechanism. Counting works the same way for all three, and in the order of settling, intent comes first.
+- Intent, values and conditions are all treated as validation slots. Because the verdict is about the action, conditions need no separate mechanism. Counting works the same way for all three, and in the order of settling, intent comes first.
 - Confidence scores are not used. A slot's state is decided by whether it was looked up in a declared source, which is a fact, not a probability.
-- Once the verdict is separated from execution, "the condition was not checked" can exist as a slot state. Only then do free-text conditions become something that can be verified.
+- Once the verdict is separated from execution, "the condition was not checked" can exist as a slot state. Only then do free-text conditions become something that can be validated.
 
 ### 3.4 Deterministic slot counter gate
 
 - The verdict involves no model reasoning and no scoring.
-- An external validator tallies slot states and, when Unknown Count == 0, judges the check complete. A complete check does not mean the requirements are met.
+- An external validator tallies slot states and, when Unknown Count == 0, rules the check complete. A complete check does not mean the requirements are met.
 - The gate runs once per execution unit (1.1).
 
 ### 3.5 Changing what is computed (whether to execute → unconfirmed slots)
 
 - The goal of the computation is not whether to execute but pinning down the unconfirmed slots.
 - When the model decides what counts as unresolved, it can hide what is unresolved. When an external checklist decides, the system can detect it.
-- What a person receives is blanks. The blanks are finite, each one carries its source, and the person answers only the items only they can answer.
+- What a person receives is blanks. The blanks are finite, each one carries its provenance, and the person answers only the items only they can answer.
 - The gate only checks unconfirmed slots and records the result.
 - The executing party sits outside this specification and decides separately whether to execute, consulting only the decision record.
 - A structure that branches on the return value of the verdict function is not separation. There must be no execution path that does not go through the record.
-- The gate does not judge an actor's authority. Authority is granted to an actor, so whether a grant still holds and when it is revoked have to be handled separately, and that belongs to the executing party or a policy layer. The gate compares declared conditions against the state at execution time, so an execution outside those conditions is not one whose authority expired. It was outside what the conditions allowed from the start.
-- The grounds for execution have no validity period. What the user declared (instruction, answers, pre-set settings) holds until the user changes it (a one-use setting ends once it has been used), and a change is a new declaration that is judged again (6.1, 6.3). A changed checklist is judged again as well (6.1). System state is never carried over: it is measured again at trigger time (4.5), and the gap between that measurement and execution is closed at execution (8.3). The validity period of an actor's authority is a separate matter and outside the scope of this specification.
+- The gate does not rule on an actor's permission. Permission is granted to an actor, so whether a grant still holds and when it is revoked have to be handled separately, and that belongs to the executing party or a policy layer. The gate compares declared conditions against the state at execution time, so an execution outside those conditions is not one whose permission expired. It was outside what the conditions allowed from the start. When a provider declares the state of a permission as a condition, the gate compares that state; it does not judge whether the permission should be required.
+- The grounds for execution have no validity period. What the user declared (instruction, answers, pre-set settings) holds until the user changes it (a one-use setting ends once it has been used), and a change is a new declaration that is ruled on again (6.1, 6.3). A changed checklist is ruled on again as well (6.1). System state is never carried over: it is measured again at trigger time (4.5), and the gap between that measurement and execution is closed at execution (8.3). The validity period of an actor's permission is a separate matter and outside the scope of this specification.
 
 ---
 
@@ -261,17 +261,17 @@ Every intent, value, and condition item is registered in an external checklist, 
 └───────────────────────────────────────┘ └───────────────────────────────────────┘
 ```
 
-### 4.1 Fixed Checklist: settles the execution unit. Applies to every tool call.
+### 4.1 Fixed Checklist: settles the execution unit. Applies to every call that goes through the gate (Section 1).
 
 - Intent (3.3) is confirmed here: the act, the timing and the tool.
 - The act is settled only from the user's words in this request, and nothing else fills it.
 
-**Role of the fixed checklist: the minimum needed to settle the execution unit. Tool matching depends on it, so it comes before the user checklist.**
+**Role of the fixed checklist: the minimum needed to settle the execution unit. Tool matching depends on the act and the timing, so it comes before the user checklist.**
 
 #### 4.1.1 The record of what the user calls a tool
 
-- Other names the user uses for a tool are recorded with the user's consent (6.2), and used only as reference material in tool matching.
-- This record is not pre-set data and confirms no slot. It never stands in for what the user said in this request, so if the user did not name the act, the user is asked again (4.5). When the record changes, tool matches based on it are judged again (6.1).
+- Other names the user uses for a tool are recorded with the user's consent (6.2), and used only as material to compare against in tool matching.
+- This record is not pre-set data and confirms no slot. It never stands in for what the user said in this request, so if the user did not name the act, the user is asked again (4.5). When the record changes, tool matches based on it are ruled on again (6.1).
 
 ### 4.2 Provider Checklist: varies per tool.
 
@@ -286,18 +286,18 @@ Every intent, value, and condition item is registered in an external checklist, 
 - Providers already write conditions in the tool description. Written with the labels for the three kinds of condition (3.3), [Required], [Verify] and [Notice], those sentences become the checklist, since the description arrives with the tool list.
 - To use labeled sentences as an enforced checklist, the declaring party must be trusted. The gate reads the definition as its provider declared it, not a copy kept on the agent's side. When the same party builds the agent and the tool, that party is the provider. The sentences are put into a form that can be compared and compared only in that form (3.3), and the record keeps which definition the verdict was made under.
 - For a value the user can give and the system can also measure, the sentence says whether the system's value counts too. Left unsaid, the same sentence can be put into a different form each time it is translated. A sentence about such a value has its translated form marked for review. The mark does not change the verdict.
-- The meaning of the labels does not reach a model that does not know this specification. The model choosing a tool may read the labelled sentences as conditions to meet before calling, so the description says in a sentence that they are checked after the tool is chosen and before it runs. The verdict does not depend on what the model read. A model that makes no call leaves the gate nothing to judge, and nothing is executed.
+- The meaning of the labels does not reach a model that does not know this specification. The model choosing a tool may read the labelled sentences as conditions to meet before calling, so the description says in a sentence that they are checked after the tool is chosen and before it runs. The verdict does not depend on what the model read. A model that makes no call leaves the gate nothing to rule on, and nothing is executed.
 
 ### 4.3 User Checklist: varies per user and environment.
 
 - The context within the execution unit, ranges of values and state, checks before execution or termination, safety, user preferences (conditions in 3.3).
-- Of the values the provider declares, the blanks that remain are filled by the user (values in 3.3).
+- Of the values the provider declares, the blanks the user is to give are filled by the user (values in 3.3).
 
 **Role of the user checklist: sets the ranges of values and state within the settled execution unit. It is filled in after the unit is settled, so it comes after the fixed checklist.**
 
 ### 4.4 When checklists are obtained and slots are created
 
-- Slots are created when each of the three checklists is obtained. The fixed checklist comes before tool selection. The provider checklist comes from the tool's declarations once the tool is settled. The user checklist comes from the trusted segments of the instruction once the execution unit is settled.
+- Slots are created when each of the three checklists is obtained. The act and the timing of the fixed checklist come before tool selection; its tool item is compared once the tool is settled. The provider checklist comes from the tool's declarations once the tool is settled. The user checklist comes from the trusted segments of the instruction once the execution unit is settled.
 - The user checklist can grow until execution. The user is still in the conversation until the call starts and can add conditions while answering.
 - A condition the user approved in advance as a standing setting also enters the user checklist. The adopting system loads it at instruction time, and it is compared the same way as a condition stated in this instruction (5.2).
 - When the tool changes, the execution unit changes. The new unit's checklists are obtained anew, and the earlier unit's records are left as they are.
@@ -322,7 +322,7 @@ Items are counted the same way, but resolve differently when unconfirmed. An imp
 - What the model decides is the form of the asking. It can ask several items at once, choose the order, explain why it is asking, and gather answers that arrive across several turns.
 - What the model does not decide is the list itself. It does not drop items or add them, and it does not mark a slot confirmed because an answer came back. The answer is looked up again, and the verdict stays with code.
 - Nothing is asked that does not need asking. Items the system can measure never reach the user (previous section), and a value that came up earlier in the conversation is looked up rather than asked again (5.3, 6.2).
-- The gate stands only in front of irreversible execution (1). Reversible calls such as reads do not go through this at all.
+- The gate stands only in front of irreversible execution (1). Reversible calls such as lookups do not go through this at all.
 - This part gets better as models get better. Because the verdict sits outside the model, a gain in capability goes into the quality of the asking rather than into more authority.
 
 ### 4.7 Omission reports
@@ -333,37 +333,37 @@ Items are counted the same way, but resolve differently when unconfirmed. An imp
 
 ---
 
-## 5. Whitelist lookup pipeline
+## 5. Whitelist search pipeline
 
 ### 5.1 Three-state slot model
 
-- KNOWN: the data source was confirmed by whitelist lookup, or approval is complete.
-- NULL (no result): written down by whoever performed the check. Either there is no source to check, or the check ran and there was nothing. The first case is a gap in the declaration, so definition repair is a route that remains (4.5c). It can be written from the first round, and the slot is NULL once every declared check has reported this and no route remains.
-- A source that reports it cannot answer has not confirmed the slot. A lookup that ran but was not valid for the question is not a confirmation of "nothing there." A source's availability is declared as a condition rather than becoming a fourth state, so that it too has a source of its own.
-- UNKNOWN: a required check has not finished yet. This is what remains after the lookup ends, not something the model reports about itself.
+- KNOWN: the data's provenance was confirmed by whitelist search, or approval is complete.
+- NULL (no result): written down by whoever performed the check. It reports that the check ran and there was nothing. A report that there is no place to check is a different one: it is a gap in the declaration, so definition repair is a route that remains (4.5c), and it does not make the slot NULL. It can be written from the first round, and the slot is NULL once every declared check has reported no result and no route remains.
+- A source that reports it cannot answer has not confirmed the slot. A lookup that ran but was not valid for the question is not a confirmation of "nothing there." A source's availability is declared as a condition rather than becoming a fourth state, so that it too has provenance of its own.
+- UNKNOWN: a required check has not finished yet. This is what remains after the search ends, not something the model reports about itself.
 - UNKNOWN does not mean "question for the user." Asking the user is only one of the three routes in 4.5.
 - Why NULL is its own state: the way to stop invention is not to prohibit it, but to offer "nothing there" as a normal thing to write down.
 - NULL can be reported; UNKNOWN cannot. A model does not recognize what it does not know (2.3), so it cannot tell you that it does not know. What it can tell you is where it looked and what came back, which is a statement about an action it performed rather than about its own state. So confirmation is reported and non-confirmation is counted. A design that asks the model for UNKNOWN hands the verdict back to the model (8.7).
 - The three states distinguish whether the check happened. Whether requirements are met is not a state; unmet items are recorded separately.
 
-### 5.2 Lookup cascade
+### 5.2 Search order
 
-The order below is a search order, not a trust tier. Once a value is confirmed at an earlier source, the lookup stops there. No per-source trust weights are computed. But when a value confirmed in the instruction differs from a value stored for the same field in pre_set_data, the lookup does not stop there: both values are shown, and the user chooses. And when the user states a value for a field after approving one for it (user_answer), the lookup does not stop at the approval: the later words are read. When a source reports "nothing," the lookup does not stop — it moves to the next source, and the fact that this source was checked stays on the record. No report and a report of nothing are different things: the first means the source was not checked.
+The order below is a lookup order, not a trust tier. Once a value is confirmed at an earlier source, the lookup stops there. No per-source trust weights are computed. But when a value confirmed in the instruction differs from a value stored for the same field in pre_set_data, the lookup does not stop there: both values are shown, and the user chooses. And when the user states a value for a field after approving one for it (user_answer), the lookup does not stop at the approval: the later words are read. When a source reports "nothing," the lookup does not stop — it moves to the next source, and the fact that this source was checked stays on the record. No report and a report of nothing are different things: the first means the source was not checked.
 
 user_answer → instruction → pre_set_data → measured_data → prior_state
 
-- user_answer: a response the user entered directly after an ask_user interaction. Empty on the first round.
+- user_answer: a value or a choice the gate showed that the user approved or picked, or the user's answer that there is none. Empty on the first round. A value the user typed while answering is instruction (5.3).
 - instruction: a value taken, with its location specified, from a segment the user typed directly. When segments are labeled as the user's, pasted text, forwarded or quoted text, and attachments are excluded; they stay in the input as untrusted segments, even inside the user's message. The labels are set by the adopting system when the message arrives, before the model sees it, never by the model. Where the input path does not preserve that distinction, the labels cannot be trusted either.
-- pre_set_data: settings the user approved and stored in advance. A value that was used, or a value the model proposed, can become pre_set_data when the user approves it. A pre-set setting is either standing, holding until the user changes it, or one-use, ending once it has been used. The system stores the approved value as approved; the model does not (6.3). The record of what the user calls a tool is not part of it (4.1.1).
+- pre_set_data: settings the user approved and stored in advance. A value that was used, or a value the model proposed, can become pre_set_data when the user agrees to store it. A value approved for this execution is user_answer. A pre-set setting is either standing, holding until the user changes it, or one-use, ending once it has been used. The system stores the approved value as approved; the model does not (6.3). The record of what the user calls a tool is not part of it (4.1.1).
 - measured_data: system state confirmed on the spot by calling a system API. The lookup must be a live measurement, and a measurement used in a verdict must be from that verdict. A measurement whose target depends on another value is made once that value is confirmed.
 - prior_state: a value inherited from a previous execution that the record confirms was executed. Applies to values only; conditions are not inherited. Inheritance alone does not confirm a slot. The value counts only after the user confirms it.
-  - A value found at this source does not end the lookup. Once the user confirms it, it is confirmed as user_answer.
-- If no value is confirmed by the last step, the slot is UNKNOWN. It is NULL only when every declared check has reported nothing and no route remains (5.1). A route that ended at its ceiling has not reported nothing (4.5). Even when the model offers a value, that is only a claim about a location, and the gate checks whether a value is actually there. This structure does not assume the model is honest.
+  - A value found at this source does not end the search. Once the user confirms it, it is confirmed as user_answer.
+- If no value is confirmed by the last step, the slot is UNKNOWN. It is NULL only when every declared check has reported nothing and no route remains (5.1). A route that ended at its ceiling has not reported nothing (4.5). Even when the model offers a value, that is only a claim about a location, and the gate compares it with what is actually there. This structure does not assume the model is honest.
 
 ### 5.3 What instruction covers
 
 - Users start vague and settle on a tool after several exchanges. So instruction covers not just the last prompt, but the whole conversation about that execution unit. What the user says in answering questions is part of it.
-- Implement it as a single prompt, and a value mentioned N turns earlier (an account number, for example) is found in no source, which leads to needless re-asking.
+- Implement it as a single prompt, and a value mentioned N turns earlier (an account number, for example) is looked up in no source, which leads to needless re-asking.
 
 ---
 
@@ -372,7 +372,7 @@ user_answer → instruction → pre_set_data → measured_data → prior_state
 ### 6.1 How to split checklist, principles, and code
 
 - Checklist: items the owning party decides. They differ by tool, by user, and by regulation, and change without a deploy.
-- Principles (prompt): items whose violation code can detect. The prompt is a way to reduce how often the gate catches something, and when it fails, the verdict still filters it out. An item whose violation cannot be observed from outside cannot live in the prompt. It has to become a slot, with a source and a slot state, before it can be observed.
+- Principles (prompt): items whose violation code can detect. The prompt is a way to reduce how often the gate catches something, and when it fails, the verdict still filters it out. An item whose violation cannot be observed from outside is not enforced by the prompt. It has to become a slot, with a source and a slot state, before it can be observed. An item that cannot become a slot goes in the principles with the statement that it is not detected (6.2).
 - Code (gate): a procedure that is the same whoever the party is: counting, comparing, recording. It does not change as checklists grow.
 - Prompts get diluted as a conversation grows long, and there is no way to confirm whether something was dropped. Principles are applied again in every tool-related exchange.
 - When a checklist changes, any earlier verdict based on it no longer holds. A change of state and a change of condition are different. The first is handled by re-checking at trigger time; the second requires a new verdict rather than a re-check. The decision record carries which version of the checklist the verdict was made against. The same goes for the pre-set settings (pre_set_data) used in the verdict. A user changing a setting is a new declaration, and earlier verdicts based on that setting no longer hold.
@@ -399,34 +399,35 @@ With a gate, the asking and looking up above are the gate's. The model is told i
 
 ### 6.3 Responsibilities of the code gate
 
-- Build the checklist and count UNKNOWN slots. If the declaration the checklist rests on cannot be obtained, no checklist is built and nothing executes. When Unknown Count == 0, judge the check complete. What is counted is whether checks happened.
+- Build the checklist and count UNKNOWN slots. If the declaration the checklist rests on cannot be obtained, no checklist is built and nothing executes. When Unknown Count == 0, rule the check complete. What is counted is whether checks happened.
 - Compare each confirmed slot with its declared requirement, and record the ones that fall short as unmet. A requirement is the standard the checklist declares on the slot (for a value, whether it is required; for a condition, what prohibits or permits). This covers a confirmed condition that prohibits execution (hold) and a required value confirmed as NULL. Unmet items are not counted. The comparison must be deterministic. A condition that cannot be compared stays UNKNOWN and routes to definition repair.
-- Walk the search order in 5.2, and check that a value actually exists at the location the slot points to. If it does not match, that source has not confirmed the slot, and the lookup moves to the next one.
-- Route each UNKNOWN slot to one of the three routes in 4.5, and record the route taken on that slot in the decision record. What the model receives is the list of blanks produced by the ask-the-user route (4.6).
+- Walk the search order in 5.2, and compare what the slot claims with what is actually at the location it points to. If they do not match, that source has not confirmed the slot, and the search moves to the next one.
+- Route each UNKNOWN slot to one of the three routes in 4.5, and record the route taken on that slot in the decision record. A slot whose routes have all reached their ceiling stays UNKNOWN, and that is recorded (4.5). What the model receives is the list of blanks produced by the ask-the-user route (4.6).
 - Read labels, expand them into slots, and include them in the verdict.
 - Bind each approval to a {slot_id, value} pair, invalidate it when the value changes, and record in the approval record the set of slots that were shown with it.
 - Record the verdict. The gate's output is the decision record.
 
 ### 6.4 Decision record and execution record
 
-- The record is the only grounds for the next execution.
+- This record is all the executing party reads when it decides whether to execute.
 - Runs that were not executed are recorded too.
 - Which slot failed, and how, is recorded along with it.
 - Records for the same execution unit accumulate under one key. Both instruction time and trigger time must be kept.
 - An agent session starts without memory of earlier runs. A stopped execution continues from the records under its key, not from the model's memory.
 
-Field names and structure are up to the adopting system. The decision record must hold each slot's state, source, and kind; the route each UNKNOWN took; unknown_count; the unmet items; and the name the user used, with the tool it was matched against. When no verdict has been made yet, unknown_count is stored as a distinct value, not as 0.
+Field names and structure are up to the adopting system. The decision record must hold each slot's state, provenance, and kind; the route each UNKNOWN took; unknown_count; the unmet items; and the name the user used, with the tool it was compared with. When no verdict has been made yet, unknown_count is stored as a distinct value, not as 0.
 
 ```json
 {
   "action_key": "u_1042:transfer_funds",
   "phase": "at_trigger",
   "tool_name": "transfer_funds",
+  "user_action_name": "send money",
   "slots": [
-    {"slot_id": "recipient_account",     "status": "known",   "source": "user_answer"},
-    {"slot_id": "amount",                "status": "known",   "source": "instruction"},
-    {"slot_id": "daily_limit_check",     "status": "known",   "source": "measured_data"},
-    {"slot_id": "account_balance_check", "status": "unknown", "source": null,
+    {"slot_id": "recipient_account",     "kind": "value",     "status": "known",   "source": "user_answer"},
+    {"slot_id": "amount",                "kind": "value",     "status": "known",   "source": "instruction"},
+    {"slot_id": "daily_limit_check",     "kind": "condition", "status": "known",   "source": "measured_data"},
+    {"slot_id": "account_balance_check", "kind": "condition", "status": "unknown", "source": null,
      "allowed_sources": ["measured_data"], "lookup_failed": true,
      "route": "definition_repair"}
   ],
@@ -441,7 +442,7 @@ Field names and structure are up to the adopting system. The decision record mus
 }
 ```
 
-The executing party reads this record and writes its own decision to a separate record.
+The executing party looks up this record and writes its own decision to a separate record.
 
 ```json
 {
@@ -474,7 +475,7 @@ With authority outside the model, decisions and accountability stay with the par
 
 ### 7.2 What adoption brings
 
-- Conditions become something to verify. A validator that only looked at values now walks the conditions too.
+- Conditions become something to validate. A validator that only looked at values now walks the conditions too.
 - Rules are written as sentences and value formats as schemas, not as code. A rule written as one line of plain language becomes an item that must pass before execution, and developers do not write a branch for each rule or deploy each time one changes. The line may be long: what matters is that it is clear, not that it is short. The same line brings both safety and developer productivity. A sentence that could not be put into a form that can be compared does not pass: it stays unknown and routes to definition repair (6.3).
 - A tool provider's conditions, your own rules, and rules set by alignment, policy bodies, companies or regulators are all written the same way, and the rules in force can be listed in full. A rule that applies to a tool goes in that tool's provider checklist, and one that applies to a user in that user's checklist. A rule that applies to every tool is written in the principles (6.2), so the model knows it first; where it needs checking, it is added to the provider checklist of each tool it concerns (6.1). A principle from alignment, once written as a line, is no longer something the model is hoped to follow but a condition checked before execution. Rules are changed by whoever is responsible for them, and developers maintain the verdict structure.
 - Adding a tool does not change the execution path. A new tool adds a declaration, not new execution logic.
@@ -498,13 +499,13 @@ With authority outside the model, decisions and accountability stay with the par
 ### 8.1 Tool selection errors
 
 - A tool name is a label, separate from what the tool can do. Different names can produce the same state change, and a matching name can come with a different capability.
-- Tool selection is not verified by code. Narrow down to a single candidate without asking, and a tool may be chosen just because it is on the list. Whether it passes is then decided by that tool's input schema.
+- Tool selection is not validated by code. Narrow down to a single candidate without asking, and a tool may be chosen just because it is on the list. Whether it passes is then decided by that tool's input schema.
 - Mitigation: state-change declarations depend on the description, so this point leans more on intent confirmation. Recording what the user calls the action (4.1.1) helps.
 
 ### 8.2 Forged records and hook implementation
 
 - Separating the verdict from execution exposes an execution without a verdict as an execution without grounds. It does not expose an execution grounded on a forged decision record.
-- This specification does not define how hooks are implemented. If a hook calls a model to decide, that decision is probabilistic, and the gate does not check what the hook returns.
+- This specification does not define how hooks are implemented. If a hook calls a model to reach a verdict, that verdict is probabilistic, and the gate does not judge again what the hook judged. What the hook pointed to, it does compare with what is at that place (6.3).
 - Mitigation — keep the decision record append-only, somewhere the agent process cannot rewrite. The store's integrity belongs to the adopting system; this specification does not enforce it.
 
 ### 8.3 The gap between check and execution
@@ -512,7 +513,7 @@ With authority outside the model, decisions and accountability stay with the par
 - A gap remains between the measurement at trigger time and the actual execution. The gate does not execute, so it cannot close this gap.
 - The gap has to be closed at execution: the tool enforces the condition together with the effect, at the moment it executes (conditional execution: checking the condition and producing the effect happen as one step, e.g. compare-and-swap, a lock, a transaction). An idempotency key and a measurement afterwards do not close this gap. The key prevents a duplicate effect, and the measurement establishes what happened; neither prevents the first effect after the condition has changed.
 - If a tool cannot guarantee the condition at execution time, the provider declares that. The user is informed in advance through [Notice], and whether to accept the risk is the adopting system's policy.
-- What the system cannot guarantee is not replaced with user confirmation. The user cannot verify the state at that moment, so the confirmation becomes a click-through (2.2).
+- What the system cannot guarantee is not replaced with user confirmation. The user cannot validate the state at that moment, so the confirmation becomes a click-through (2.2).
 
 ### 8.4 Conflicts between requests and conditions
 
@@ -533,30 +534,30 @@ With authority outside the model, decisions and accountability stay with the par
 
 ### 8.7 Alternatives considered
 
-- Putting the checklist in the prompt and receiving JSON back hands the authority to decide what to ask back to the model. If the model is the one judging that a slot is empty, its report that the slot was filled cannot be verified from outside.
+- Putting the checklist in the prompt and receiving JSON back hands the authority to decide what to ask back to the model. If the model is the one judging that a slot is empty, its report that the slot was filled cannot be validated from outside.
 - This specification requires two things: the checklist lives outside the prompt, and code does the counting.
 
 ### 8.8 Approving a proposal
 
-- A value the model proposed and the user approved can become pre-set data (5.2). A proposed act cannot. The act is settled only from the user's words in this request (4.1), so an approval that carries no act, such as "yes", does not settle the intent.
-- This specification does not decide whether an approval may serve as the source of the act. Whether pressing a button that names the act counts as the user's words is an example. If it does, an act the user never stated can become theirs (1.1).
-- Whether to allow it, and whether a value the model introduced first and the user then repeated in their own words must also go through a one-use setting's approval (by default it is a value the user typed, 5.2), is for a regulator's rules or the adopting system's policy; this specification provides the decision record needed for that judgment, and the adopting system the conversation record.
+- A value the model proposed and the user approved becomes the value for that execution (user_answer), and can become pre-set data when the user agrees to store it (5.2). A proposed act cannot. The act is settled only from the user's words in this request (4.1), so an approval that carries no act, such as "yes", does not settle the intent.
+- This specification does not rule on whether an approval may count as the provenance of the act. Whether pressing a button that names the act counts as the user's words is an example. If it does, an act the user never stated can become theirs (1.1).
+- Whether to allow it, and whether a value the model introduced first and the user then repeated in their own words must also be approved (by default it is a value the user typed, 5.2), is for a regulator's rules or the adopting system's policy; this specification provides the decision record needed for that judgment, and the adopting system the conversation record.
 
 ---
 
 ## 9. Relationship to prior work
 
-This specification does not criticize or replace what recent frameworks have achieved. It builds on them. Those achievements are isolating tools and context behind a protocol (MCP), binding output to a schema so that values and their sources can be extracted together, and agent orchestration (LangGraph and others).
+This specification does not criticize or replace what recent frameworks have achieved. It builds on them. Those achievements are isolating tools and context behind a protocol (MCP), binding output to a schema so that values and where they are can be extracted together, and agent orchestration (LangGraph and others).
 
 ### 9.1 Provenance-based gates and clarification research
 
 Provenance-based gates have been explored in injection defense, and the blank problem in research on asking clarifying questions. This specification sits between the two.
 
-| Area | Target problem | Who judges | Focus |
+| Area | Target problem | Who rules | Focus |
 | --- | --- | --- | --- |
 | **CaMeL ([arXiv:2503.18813v2](https://arxiv.org/abs/2503.18813v2)) / Fides ([arXiv:2505.23643v2](https://arxiv.org/abs/2505.23643v2))** | Unauthorized actions caused by prompt injection and information flow | Policy and information-flow control outside the model | Controlling malicious external input and information flow |
 | **Ask-when-Needed ([arXiv:2409.00557v4](https://arxiv.org/abs/2409.00557v4))** | Missing arguments and unclear instructions | The model's judgment (prompt-guided) | Recovering missing information by asking back |
-| **This specification** | Omissions and guesses that occur even without an attack | Verification code outside the model | Declaring what to check, having code judge unconfirmed state, and separating the verdict from execution |
+| **This specification** | Omissions and guesses that occur even without an attack | Validation code outside the model | Declaring what to confirm, having code rule on unconfirmed state, and separating the verdict from execution |
 
 ---
 
@@ -564,11 +565,11 @@ Provenance-based gates have been explored in injection defense, and the blank pr
 
 - This specification is not a technique for removing hallucination. The model's output remains, as it is, the input for preparing execution.
 - Its goal is not to block execution, but to establish what execution needs and settle an executable state. Safety follows from that.
-- It widens what is verified. To values, the only thing checked today, it adds intent and conditions (3.3), and counts all three the same way: whether each was confirmed from a declared source.
-- It changes the default. Instead of running whatever is not prohibited, only what is confirmed, in an execution unit the user stated or approved, reaches an executable state.
-- The black box is not fully opened. What is opened is what went into the verdict and what came out. After an incident, what you usually need is not the model's internal state but where the values came from, so this much already answers a good share of the questions.
+- It widens what is validated. To values, the only thing validated today, it adds intent and conditions (3.3), and counts all three the same way: whether each was confirmed from a declared source.
+- It changes the default. Instead of running whatever is not prohibited, only what is confirmed, in an execution unit the user stated, reaches an executable state.
+- The black box is not fully opened. What is opened is what went into the verdict and what came out. After an incident, what you usually need is not the model's internal state but the provenance of the values, so this much already answers a good share of the questions.
 
-The authority to decide what gets checked and the authority to judge whether it was checked belong outside the model. Things went wrong not because these authorities were in the model, but because they were nowhere. The model filled the empty place. What narrows is the model's authority. What widens is what the model can be used for.
+The authority to decide what gets validated and the authority to rule on whether it was validated belong outside the model. Things went wrong not because these authorities were in the model, but because they were nowhere. The model filled the empty place. What narrows is the model's authority. What widens is what the model can be used for.
 
 ---
 
