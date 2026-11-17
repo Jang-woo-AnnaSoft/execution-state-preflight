@@ -224,6 +224,7 @@ const r = await judge.run({ unitKey, conversation, toolCall, userChecklist });
 if (r.questions.length > 0) {
   // show your model's words, then r.block exactly as it is; add the reply to the conversation; run again
 } else {
+  // readyToExecute, notify and callTool are yours: judge-only-example.js has one of each
   const record = (await storage.list(r.key)).at(-1);       // the record this round wrote
   if (readyToExecute(record, toolCall.name)) {              // your own reading of it
     const { toShow } = await judge.notices(record);         // the provider's notices not shown with a question
@@ -236,16 +237,32 @@ if (r.questions.length > 0) {
 }
 ```
 
-To try it:
+To watch a whole run first, with stand-in models and no API key:
+
+```
+cd adopt-example && npm install
+cd ../provider-checklist-example
+node trial-real-model.js --stub --id g1-01 --reply yes
+```
+
+The gate asks about the time, the stand-in user answers yes, and the tool runs. The output shows each
+model call, the question as shown, each value with its source, and each of the provider's lines with
+the form it was checked in.
+
+To try it with your own model:
 
 ```
 cd adopt-example
 npm install
 npm install --no-save @langchain/anthropic@1.5.13   # or your provider's package
+export ANTHROPIC_API_KEY=...                        # the provider's package reads its key from the environment
 MODEL=anthropic:<model-name> node judge-only-example.js "Set up the pickup for LST-2291, 2pm this Saturday, Hongdae station lockers."
 ```
 
-As shipped, nothing is connected: the `[Required]` lines are unverified, and nothing runs. The six things that stay yours, and the whole flow, are in the [adopt example](./adopt-example/#4-use-it-your-agent-executes-judge-onlyjs).
+As shipped, nothing is connected: the `[Required]` lines are unverified, and nothing runs. The run asks
+nothing and ends by saying it did not run and which lines could not be checked. That is the gate
+failing closed, not a fault: fill in `MEASUREMENTS` and `TOOLS` in `connect.js` and it asks and executes.
+The seven things that stay yours, and the whole flow, are in the [adopt example](./adopt-example/#4-use-it-your-agent-executes-judge-onlyjs).
 
 <details>
 <summary>Calling the library directly</summary>
