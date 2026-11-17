@@ -330,6 +330,6 @@ only what you keep. They check:
 - the MCP connection kept as comments is still code once uncommented;
 - the model calls the tool, the gate asks, the user replies in words, and the tool runs;
 - judging returns no arguments and no decision, and executes nothing; the agent's side executes from
-  the record, and reads every verdict record the same way the gate decided;
+  the record, and reads every decision record the same way the gate decided;
 - in the demonstration too, the executing step starts from the record and writes the result back;
 - on the same 35 inputs, the first decision here equals the reference run.
