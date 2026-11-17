@@ -81,6 +81,11 @@ The lines below are checked after this tool is called and before it runs: [Requi
   anywhere else counts only once the user approves it.
 - `[Notice]` is shown to the user and blocks nothing.
 
+A label starts its line, in the tool's description. A list marker, a quote or heading mark, or emphasis
+before it changes nothing. A line with one of the three labels in an argument's description is not read
+as a condition and is not dropped either: the run stops for definition repair until it is moved to the
+tool's description or reworded.
+
 Build the tool itself from the same declaration. Changing a rule is changing its line: there is no
 code to change and nothing to redeploy on the agent's side.
 
