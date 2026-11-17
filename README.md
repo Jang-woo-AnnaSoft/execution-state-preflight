@@ -47,7 +47,7 @@ Where work can be undone, let the model act and verify the result; fixing it aft
 | Harness | Builds the environment around the model and limits what it can reach | Which tools and data the agent can reach, and whether inputs and outputs match their formats | People set the bounds; within them, the AI fills the arguments |
 | This specification | Checks that what people declared was met, and records it | Where the intent, each value and each condition of this call came from, and who confirmed it, just before execution | People. The AI does not judge |
 
-Loop engineering is a method that runs across these: act, verify, record, repeat. It checks the result after the act, and the checker is often another model. This checks before the act, and moves the criteria and the decision into a separate, declared domain model and code.
+Loop engineering is a method that runs across these: act, verify, record, repeat. It checks the result after the act, and the checker is often another model. This checks before the act, and moves the criteria and the decision into a separate, declared model of execution and code. It is not a model of a business domain: each tool's own rules stay in the checklists its provider and the user write.
 
 Governance, harness and loop together come close to the domain modeling and finite-state machines of earlier systems. Which values are allowed, and which transitions are possible from which state, are fixed outside the model, and the model moves inside them. That frame is already being built. This does not replace it. It adds back one premise the frame cannot restore.
 
