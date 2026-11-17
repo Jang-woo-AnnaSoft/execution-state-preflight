@@ -345,15 +345,24 @@ function itemRuleHash(item, wording) {
 //   A label with nothing after it is a line too, with no words: it cannot be put into a form, so it is
 //   held for definition repair rather than dropped.
 //   A task-list box after a list marker ("- [ ] …", "- [x] …") is not a label.
+//   The same holds for the other ways a description's layout or its editor can dress the line (1.37):
+//   a quote or heading mark before it ("> [Required] …", "### [Required] …"), brackets a Markdown
+//   editor escaped ("\\[Required\\] …"), full-width brackets from an East Asian input method
+//   ("［Required］ …", "【Required】 …"), and characters that cannot be seen (zero-width space, joiners,
+//   a byte-order mark) anywhere in the line. Each of these was read as prose, and a [Required] line
+//   that did not hold let the tool run.
+//   What is still prose: a label after other words on the line ("Conditions: [Required] …": the line
+//   that explains the labels has that shape), round brackets, and HTML. A label starts its line.
 //   NOTE: a prose line that happens to start with brackets ("[Beta] …") is read as a label too, and held
 //     for definition repair. That is the fail-closed reading, and the provider can reword it.
-const LABEL_LINE = /^\s*((?:[-*+\u2022]|\d+[.)])\s+)?([*_`]*)\[([^\]\n]+)\]([*_`]*)\s*(.*?)\s*$/;
+const LABEL_INVISIBLE = /[\u200b-\u200d\u2060\ufeff]/g;
+const LABEL_LINE = /^\s*((?:(?:>+|#{1,6}|[-*+\u2022]|\d+[.)])\s+|>+)*)([*_`]*)(?:\\?\[|\uff3b|\u3010)([^\]\n\\\uff3d\u3011]+)(?:\\?\]|\uff3d|\u3011)([*_`]*)\s*(.*?)\s*$/;
 function readLabelLine(line) {
-  const m = String(line ?? "").match(LABEL_LINE);
+  const m = String(line ?? "").replace(LABEL_INVISIBLE, "").match(LABEL_LINE);
   if (!m) return null;
   const [, marker, open, rawLabel, close, rest] = m;
   const label = rawLabel.trim();
-  if (marker && (label === "" || label === "x" || label === "X")) return null;
+  if (/[-*+\u2022]|\d/.test(marker) && (label === "" || label === "x" || label === "X")) return null;
   // Emphasis opened before the bracket and closed at the end of the line is around the whole line.
   const text = open && !close && rest.endsWith(open) ? rest.slice(0, -open.length).trim() : rest;
   return { label, text };
@@ -376,6 +385,29 @@ function toolsForModel(tools) {
     ...t,
     description: String(t?.description ?? "").split("\n").filter(l => !isLabelLine(l)).join("\n").trim(),
   }));
+}
+
+// [LABEL OUT OF PLACE] A line with one of the three labels, written in the description of an argument
+//   (anywhere in the input schema) and not in the tool's description. 4.2.1 has the provider's conditions
+//   in the tool's description, and that is the only place the gate reads them from. Read as nothing, a
+//   provider who wrote "[Required] The order must be open." under the argument it is about had the
+//   condition dropped without a trace, and the tool ran. The gate does not guess that it was meant as a
+//   condition, and does not drop it: the run goes to definition repair, and the note says where the line
+//   is. Only the three labels: "[Optional] …" or "[ISO 8601] …" in an argument's description is prose.
+//   → [{ label, text, at }]   at: the path of the description in the input schema
+function labelsOutOfPlace(inputSchema) {
+  const out = [];
+  const walk = (node, at, depth) => {
+    if (!node || typeof node !== "object" || depth > 12) return;
+    if (Array.isArray(node)) { node.forEach((n, i) => walk(n, `${at}[${i}]`, depth + 1)); return; }
+    for (const [k, v] of Object.entries(node)) {
+      if (k === "description" && typeof v === "string") {
+        for (const l of labelledLines(v)) if (PROVIDER_LABELS.has(l.label.trim().toLowerCase())) out.push({ label: l.label, text: l.text, at });
+      } else if (v && typeof v === "object") walk(v, at ? `${at}.${k}` : k, depth + 1);
+    }
+  };
+  walk(inputSchema, "", 0);
+  return out;
 }
 
 // [PRIOR EXECUTION] Where a later run finds the last execution to carry values over from (prior_state,
@@ -2981,6 +3013,15 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
       ? await withConfirmedForm(h, c, { declared_by: "provider", tool: mcpTool?.name ?? null, userId, mcpTool }, formRequests)
       : c);
   }
+  // [LABEL OUT OF PLACE] A labelled line in an argument's description: not read as a condition, not
+  //   dropped. It joins the checklist as an item no form is written for, and the loop below sends it to
+  //   definition repair. The gate adds these itself, whatever getProviderConditions returned.
+  for (const l of labelsOutOfPlace(mcpTool?.inputSchema)) {
+    providerConditions.push({
+      id: `${mcpTool?.name ?? "tool"}:${ruleHash(`${l.at}:[${l.label}] ${l.text}`)}`,
+      label: l.label, description: l.text, constrains: [], compare: null, declared_in: `inputSchema:${l.at}`,
+    });
+  }
 
   // [USER CONDITIONS] The conditions the user stated in this instruction join the user checklist
   //   (4.4: made at instruction time, from the trusted part of the instruction). See extractUserConditions.
@@ -3681,6 +3722,14 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
     const label = normalizeProviderLabel(cond?.label);
     const base = { ...cond, id: cond?.id ?? null, label: cond?.label ?? null };
 
+    if (typeof cond?.declared_in === "string" && cond.declared_in.startsWith("inputSchema:")) {
+      // [LABEL OUT OF PLACE] Written where the gate does not read conditions from. The declaration is the gap.
+      finalProviderChecklist.push({ ...base, status: "unverified", source: null, route: "definition_repair",
+        note: `a labelled line in an argument's description (${cond.declared_in.slice("inputSchema:".length)}) is not read as a condition: ` +
+              "write it in the tool's description, or reword it" });
+      continue;
+    }
+
     if (label === null) {
       // Not a condition we can act on, and not one we may drop. The declaration itself is the gap.
       finalProviderChecklist.push({ ...base, status: "unverified", source: null,
@@ -4187,7 +4236,11 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.36",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.37",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.37: labelled lines are also read behind a quote or heading mark, with escaped or full-width
+    //        brackets, and with characters that cannot be seen in the line. A line with one of the three
+    //        labels in an argument's description is a provider_checklist item declared_in
+    //        "inputSchema:<path>", unverified, routed to definition_repair ([LABEL OUT OF PLACE]).
     //   1.36: [SAID AFTER] also reads the segment that approved: a value the user's words give the field
     //        in the same message as the yes supersedes the approval (before 1.36 only a later segment did),
     //        unless those words are the approved value itself (a choice typed out).
