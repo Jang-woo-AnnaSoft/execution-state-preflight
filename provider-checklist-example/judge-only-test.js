@@ -761,7 +761,7 @@ function askAllGiven(id) {
   }
 
   console.log("\n--- 5. the agent's side reads the record the same way the gate decided ---");
-  // Every verdict record of the 35 runs, each carried on through the seller's yes. The agent's side does
+  // Every decision record of the 35 runs, each carried on through the seller's yes. The agent's side does
   //   not read execution_decision; this checks that what it does read comes to the same thing.
   const disagree = [], firstMismatch = [];
   let verdicts = 0, ready = 0;
@@ -784,7 +784,7 @@ function askAllGiven(id) {
     }
   }
   check("35 runs: the first verdict is the arm's", firstMismatch, []);
-  check("every verdict record: ready exactly when the gate decided execute", disagree, []);
+  check("every decision record: ready exactly when the gate decided execute", disagree, []);
   check("  and some of them were ready (the check is not empty)", [verdicts > 35, ready > 0], [true, true]);
 
   console.log(failed ? `\n${failed} FAILED` : "\nall ok");

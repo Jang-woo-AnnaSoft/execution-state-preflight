@@ -166,7 +166,7 @@ over-eager one also quotes the seller's limits.
 - that a record that is not ready is not executed, for each thing the agent's side reads;
 - that a call that does not complete is recorded as failed;
 - that its first decision equals this folder's in all 35 runs, and that the agent's side reads every
-  verdict record the same way the gate decided.
+  decision record the same way the gate decided.
 
 ## In a LangGraph graph
 
@@ -209,17 +209,20 @@ ajv-formats 3.0.1, @langchain/langgraph 1.5.2, @langchain/core 1.2.20, zod 4.6.7
 
 ## What this folder does not do yet
 
-- **No API runs.** The model is the stub, so this shows what the declarations change, not how real
-  models behave against them. The runner, arms A and B and the analyser are still only in v1. They
-  move here once the declarations are settled.
-- **No real model for the forms, the readings or the replies.** The forms a model writes for each line
+- **No API calls in the tests or the table.** The model there is the stub, so they show what the
+  declarations change, not how real models behave against them. The forms a model writes for each line
   and condition, its reading of time words, and where a reply says yes come from the stand-in
   (`stub.js`). What the gate does with them is the real library.
+- **One run at a time with a real model, and no repeated runs.** [`trial-real-model.js`](./trial-real-model.js)
+  runs one instruction through `adopt-example/judge-only-example.js` with your model (`MODEL`, and the
+  key in the environment), or with the stand-in (`--stub`, no key), and prints every model call and the
+  last record. Its output is not kept in this folder. The runner, arms A and B and the analyser are
+  still only in v1.
 - **No real MCP server.** The MCP connection in `adopt-example/connect.js` is kept as comments and is
   checked only for syntax here.
 - **Model judgments the gate does not check.** Two remain, as the specification states. Whether to
   run now or later (C1) is the model's classification, taken as returned. Whether this act is this
   tool is the model's judgment, recorded as such (spec 8.1, 8.2); the stand-in always says yes.
-- **Verdict and execution in one process.** In the graph the `execute` node reads only the gate's
-  arguments, but it still runs in the same process as the gate. Spec 3.5 separates them, and 8.2
+- **Verdict and execution in one process.** In the graph the `execute` node reads only the
+  record, but it still runs in the same process as the gate. Spec 3.5 separates them, and 8.2
   keeps the record where the agent process cannot rewrite it; here the record is in memory.
