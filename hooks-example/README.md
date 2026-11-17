@@ -106,7 +106,7 @@ The gate reads the definition of the tool the model called — its description a
 
 ### `buildActionKey`
 
-The `prior_state` source finds earlier execution records by this key, and verdict records accumulate under it. If the key is broad, values from other executions are looked up as candidates. A value found this way does not settle a slot; it becomes a candidate for the user to confirm (spec 5.2). This folder's implementation makes a unique key for each run, so nothing carries over through `prior_state`.
+The `prior_state` source finds earlier execution records by this key, and decision records accumulate under it. If the key is broad, values from other executions are looked up as candidates. A value found this way does not settle a slot; it becomes a candidate for the user to confirm (spec 5.2). This folder's implementation makes a unique key for each run, so nothing carries over through `prior_state`.
 
 ### `extractUserActionName`
 
@@ -136,7 +136,7 @@ This folder's implementation always approves, because there is only one tool. So
 
 ## Optional hooks
 
-The library has more hooks with default implementations. Some of those defaults verify nothing. If you don't plug them, their names appear in `preflight.unsafeDefaults`, and that list is kept in every verdict record. The source list is the library's `UNSAFE_DEFAULT_HOOKS`. To see what is currently unplugged, look at the last output of `declaration-test.js` and at `unsafe_defaults` in the result files.
+The library has more hooks with default implementations. Some of those defaults verify nothing. If you don't plug them, their names appear in `preflight.unsafeDefaults`, and that list is kept in every decision record. The source list is the library's `UNSAFE_DEFAULT_HOOKS`. To see what is currently unplugged, look at the last output of `declaration-test.js` and at `unsafe_defaults` in the result files.
 
 Optional hooks this folder plugs:
 
@@ -239,7 +239,7 @@ Slot states are `known` · `unknown` · `"null"` (a string).
 - `prior_state` does not settle a slot. Its value goes into the question as `prior_candidate`, and is settled as `user_answer` when the user confirms it (spec 5.2).
 - The library does not call `storage.load`. The caller fetches it with `preflight.getPriorExecutionState(key)` and passes it as `priorExecutionState`.
 
-### Locations in the verdict record
+### Locations in the decision record
 
 A value settled from `instruction` is recorded with its location.
 
@@ -427,7 +427,7 @@ Arms A and B call the model once per run; arm C calls it per hook (extraction on
 | `version.js` | The code information written into result files |
 | `analyze.js`, `provenance.js`, `claims.js` | Aggregation, source classification and record audit, pre-registered predictions |
 | `c2-stub.js` | A located C2 answer for tests unrelated to C2 |
-| `crosscheck/` | Runs someone else's case file through the actual library and compares decisions ([`crosscheck/README.md`](./crosscheck/README.md)). Not part of `npm run check` |
+| `crosscheck/` | Runs someone else's case file through the actual library and compares decisions ([`crosscheck/README.md`](./crosscheck/README.md)). Running a case file is not part of `npm run check`; the runner's own test (`crosscheck/runner-test.js`) is |
 | `*-test.js`, `selftest.js` | Offline checks (above) |
 | `results/` | Run results and analysis output ([`results/README.md`](./results/README.md)) |
 
