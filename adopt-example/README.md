@@ -18,9 +18,20 @@ graph. What you write (`tool.md`) and what you connect (`connect.js`) are the sa
 | Who runs the flow (ask, wait, call again) | Your agent's own loop | `gate.js`, a LangGraph graph |
 | Who executes the tool | Your agent, after reading the record | The graph's executing step, after reading the record |
 | The gate and the executing side | Two parties: the gate ends with the record | **Departs from spec 3.5**: the gate and the executing step are in one graph |
-| What you must keep yourself | Six things, listed in [section 4](#4-use-it-your-agent-executes-judge-onlyjs) | Nothing in the flow |
+| What you must keep yourself | Seven things, listed in [section 4](#4-use-it-your-agent-executes-judge-onlyjs) | Nothing in the flow |
 
 Sections 1 to 3 are for both. Section 4 is `judge-only.js`. Section 5 is the demonstration.
+
+**To watch a whole run first, with stand-in models and no API key:**
+
+```
+npm install
+cd ../provider-checklist-example
+node trial-real-model.js --stub --id g1-01 --reply yes
+```
+
+It has the measurements and the tool connected, which this folder as shipped does not (section 3).
+The gate asks about the time, the stand-in user answers yes, and the tool runs.
 
 | File | What you do |
 |---|---|
@@ -56,6 +67,8 @@ Two places, and nothing else:
 Schedule an in-person pickup for a marketplace item. The buyer sees it at once. Times are in the time zone of the seller's account region.
 The lines below are checked after this tool is called and before it runs: [Required] by the platform from its own data, [Verify] with the user, and [Notice] is told to the user. Call it with what the user said; what is missing is asked or checked then.
 [Required] The sale must be agreed, as shown by the order status. Only the status "agreed" means agreed.
+[Required] The listing must be the seller's own, as shown by the listing's owner on the platform.
+[Verify] The item is the listing the seller names.
 [Verify] The time is the one the seller states, or the time of a pickup request the buyer sent in the app inside a range the seller set for this pickup. It is one moment.
 [Verify] The location is the place the seller names, not a place read from the platform.
 [Required] The buyer's contact is read from the platform.
@@ -114,15 +127,20 @@ be compared by code, the same way every time: no model judges at run time whethe
 | The tools' definitions | `listTools`, `readToolDefinition` | Nothing: they read `tool.md` (or the files in `TOOLS_FILE`). For an MCP server, uncomment the MCP connection |
 | Your system's values | `MEASUREMENTS` | Calls to your own APIs. The gate calls one when it needs it, with the values it has settled (`values.item_id`). Never from the conversation |
 | Who wrote what | `labelInput(message)` | Your input path marks what the user typed. Pasted or quoted text, other people's messages and tool output are untrusted |
+| The provider's notices | `notify(lines)` | How your app shows a `[Notice]` line to the user before the tool runs, when no question carried it. As shipped it prints them. With no `notify`, a run that has a notice to show and nothing to show it with does not execute |
 | The tool call | `TOOLS` | Your tool, by name: it takes the arguments in the gate's record and does the thing. For an MCP server, the commented `mcpCallTool` |
+| The user's settings | `readPreSet(userId, toolName)` | Optional. What the user saved for this tool, read from your own storage. As shipped it returns none |
 | Records | `store` | Append-only, somewhere the agent cannot rewrite. It also needs `list(key)`: the gate reads what a conversation was asked, and the kept forms, with it |
 | Waiting conversations | `checkpointer` | A persistent LangGraph checkpointer, for example Postgres |
 
 **Keys.** Keys and addresses come from environment variables only. Never write them into these
-files.
+files. The provider's package reads its own key: `ANTHROPIC_API_KEY` for `@langchain/anthropic`,
+`OPENAI_API_KEY` for `@langchain/openai`.
 
 **Fail-closed.** As shipped, the tool is declared but nothing is connected: no measurement, so the
-`[Required]` lines are unverified, and no tool to call. Nothing runs.
+`[Required]` lines are unverified, and no tool to call. Nothing runs: the example asks nothing and ends
+by saying it did not run and which lines could not be checked. That is the expected first result.
+Fill in `MEASUREMENTS` and `TOOLS` and it asks and executes.
 
 **When an MCP server asks for more input.** Under MCP 2026-07-28 a server may answer a tool call with
 `input_required`. The commented MCP client is set not to answer it itself (`autoFulfill: false`):
@@ -145,6 +163,7 @@ if (r.questions.length > 0) {
 } else if (r.ask && r.message) {
   // the gate could not tell what is wanted: show r.message as it is; the user says it again; run again
 } else {
+  // readyToExecute, notify and callTool are yours: judge-only-example.js has one of each
   const record = (await storage.list(r.key)).at(-1);       // the record this round wrote
   if (readyToExecute(record, toolCall.name)) {              // your own reading of it
     const { toShow } = await judge.notices(record);         // the provider's notices not shown with a question
@@ -162,12 +181,13 @@ if (r.questions.length > 0) {
 ```
 npm install
 npm install --no-save @langchain/anthropic@1.5.13   # or your provider's package, in a version that takes @langchain/core 1.2.20
+export ANTHROPIC_API_KEY=...                        # the provider's package reads its key from the environment
 MODEL=anthropic:<model-name> node judge-only-example.js "Set up the pickup for LST-2291, 2pm this Saturday, Hongdae station lockers."
 ```
 
 `judge-only.js` needs only the library and the validator (Ajv). It does not load LangGraph.
 
-**Six things are yours to keep.** Nothing checks them for you, and
+**Seven things are yours to keep.** Nothing checks them for you, and
 breaking one leaves a record that is right about an execution that was not.
 
 1. **Label who wrote each part of a message on arrival**, before the model sees it (spec 5.2). Only
@@ -196,6 +216,10 @@ breaking one leaves a record that is right about an execution that was not.
    as its own words took it back, on the next turn, as made up. Where you hand the model its tool
    list yourself you may also take the labelled lines out (`judge.toolsForModel`); a host that lists
    a server's tools itself shows the whole description. The gate reads the full definition either way.
+7. **Show the provider's notices before the tool runs** (spec 3.3). They go with every question. When
+   a run asks nothing, `judge.notices(record)` gives the ones not yet shown: show them (`notify`), then
+   call the tool, and `recordResult` records which were told. A run that has a notice to show and no
+   way to show it does not execute.
 
 **When nothing runs, tell the user why.** `writeStop` (in `judge-only.js`) hands your model the
 library's `stopFacts` for the record: the condition in its own words, whose it is, what was found.
@@ -231,7 +255,8 @@ end.
 MODEL=anthropic:<model-name> node agent.js "Set up the pickup for LST-2291, 2pm this Saturday, Hongdae station lockers."
 ```
 
-The model calls the tool. The gate reads the tool's definition from `tool.md` and judges. Here the
+With `MEASUREMENTS` and `TOOLS` connected (as shipped, the run stops first: section 3), the model
+calls the tool. The gate reads the tool's definition from `tool.md` and judges. Here the
 time is missing: "2pm this Saturday" is not a date-time. The model asks, and under its words code shows
 the value it read, as it will be used:
 
