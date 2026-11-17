@@ -585,6 +585,17 @@ function askAllGiven(id) {
     const pt = plain.records.filter(x => x.execution_decision === "execute").at(-1)?.fields?.find(f => f.name === "time");
     check("an approval with no later words about the value stands", [pt?.source, pt?.lookup_trace?.[0]?.result, "answer_superseded" in (pt ?? {})],
       ["user_answer", "found", false]);
+    // The approval and the change in one message. Before 1.36 only a later segment was read, and the
+    //   pickup ran at 2pm.
+    const both = await run("g1-01", "clean", ["yes, but make it Saturday 7pm", "yes"]);
+    const bAsks = both.records.filter(x => x.execution_decision === "ask_user");
+    const bt = bAsks.at(-1)?.fields?.find(f => f.name === "time");
+    check("'yes, but make it Saturday 7pm': asked again with the new time, nothing run at 2pm",
+      [both.first.status, bAsks.length, bAsks.at(-1)?.gate?.question_block?.[0], both.calls.map(c => c.args.time)],
+      ["waiting", 2, "time = 2026-10-31 (Sat) 19:00 +09:00", ["2026-10-31T19:00:00+09:00"]]);
+    check("  superseded by words in the message that approved",
+      [bt?.lookup_trace?.[0]?.result, bt?.answer_superseded?.by?.segment_index === bt?.answer_superseded?.approval?.located_at?.segment_index],
+      ["superseded", true]);
   }
 
   console.log("\n--- 1-k. the provider's notice is told before the tool runs (spec 3.3) ---");
