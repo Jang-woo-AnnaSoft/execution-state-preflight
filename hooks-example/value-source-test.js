@@ -778,6 +778,48 @@ const slotOf = state => (state.fields ?? []).find(f => f.name === SLOT) ?? {};
     check("  definition repair, not execute", broken.last.execution_decision, "definition_repair");
   }
 
+  console.log("\n--- part 14: the message that approves also gives another value ([SAID AFTER], same segment) ---");
+  {
+    // "yes, but use X instead": the reader of replies reports the yes, the reader of values reports X,
+    //   both in the one segment that answers the question. The question showed ACCOUNT.
+    const OTHER = "FR76-3000-6000-0112";
+    async function approvingMessage(text, yesAt, claimIn) {
+      const storage = createStorage();
+      const instruction = [{ trust: "user", text: "Pay the supplier today." }];
+      let extract = () => ({ none: "absent" });
+      const hooks = withPorts({
+        ...createHooks({ extract: (f, ins) => extract(f, ins), measured: {} }),
+        proposeValue: () => ({ value: ACCOUNT }),
+        readReplies: () => [{ target: `value:${SLOT}`, answer: true, quote: "yes", segment_index: 2, span: [yesAt, yesAt + 3] }],
+      }, { tool: TOOL });
+      const round = async () => {
+        const preflight = createPreflight({ hooks, storage });
+        const state = await preflight.runPreflight({ userId: "u_1042", instruction, toolCall: { name: TOOL.name } });
+        await preflight.recordExecutionState(state);
+        return state;
+      };
+      const asked = await round();
+      instruction.push({ trust: "assistant", text: "Use this account?" }, { trust: "user", text });
+      extract = claimIn ? () => ({ value: claimIn, segment_index: 2, span: [text.indexOf(claimIn), text.indexOf(claimIn) + claimIn.length] }) : extract;
+      return { asked, last: await round() };
+    }
+    const after = await approvingMessage(`yes, but use ${OTHER} instead.`, 0, OTHER);
+    check("asked with the value shown", `${after.asked.execution_decision}/${after.asked.gate.questions[0]?.candidate?.value}`, `ask_user/${ACCOUNT}`);
+    check("'yes, but use X instead': X is the value, not the one shown", `${slotOf(after.last).source}/${slotOf(after.last).value}`, `instruction/${OTHER}`);
+    check("  the approval is on the record as superseded", slotOf(after.last).lookup_trace[0].result, "superseded");
+    check("  by words in the approving segment", slotOf(after.last).answer_superseded?.by?.segment_index, 2);
+
+    const before = `${OTHER} instead, yes go ahead.`;
+    const front = await approvingMessage(before, before.indexOf("yes"), OTHER);
+    check("'X instead, yes go ahead': X is the value too", `${slotOf(front.last).source}/${slotOf(front.last).value}`, `instruction/${OTHER}`);
+
+    const typedOut = await approvingMessage(`yes, ${ACCOUNT}.`, 0, ACCOUNT);
+    check("'yes, <the value shown>': the same value typed out is not a change", `${slotOf(typedOut.last).source}/${slotOf(typedOut.last).value}`, `user_answer/${ACCOUNT}`);
+
+    const plain = await approvingMessage("yes, go ahead.", 0, null);
+    check("a yes with no value in it: the approval stands", `${slotOf(plain.last).source}/${slotOf(plain.last).value}`, `user_answer/${ACCOUNT}`);
+  }
+
   console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILED`);
   process.exit(failures === 0 ? 0 : 1);
 })();
