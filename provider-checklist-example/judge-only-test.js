@@ -133,7 +133,21 @@ function askAllGiven(id) {
     check("lines written as a list, or with the label in bold, are taken out the same way; a task-list box is prose and stays",
       toolsForModel([{ name: "t", description: "Does a thing.\n- [Required] Must be agreed.\n1. **[Verify]** The place.\n**[Notice] Told.**\n- [x] shipped" }])[0].description,
       "Does a thing.\n- [x] shipped");
+    check("lines behind a quote or heading mark, or with escaped or full-width brackets, are taken out too",
+      toolsForModel([{ name: "t", description: "Does a thing.\n> [Required] Must be agreed.\n### \\[Verify\\] The place.\n\uff3bNotice\uff3d Told.\nConditions: [Required] stays." }])[0].description,
+      "Does a thing.\nConditions: [Required] stays.");
     check("a tool with no description is left as it is", toolsForModel([{ name: "t" }]), [{ name: "t", description: "" }]);
+    // Through judge-only-example: a line dressed by an editor is still the condition, and one written
+    //   under an argument stops the run. Before 1.37 both tools ran.
+    const quoted = { ...TOOL, description: TOOL.description.split("\n").map(l => (/^\[Required\] The sale/.test(l) ? `> ${l.replace("[", "\\[").replace("]", "\\]")}` : l)).join("\n") };
+    const qc = await run("g1-01", "order_cancelled", ["yes"], { tool: quoted });
+    check("a [Required] line behind a quote mark with escaped brackets: a cancelled order does not run",
+      [qc.last.status, qc.calls.length, qc.records.filter(x => x.actor !== "executor").at(-1)?.execution_decision], ["not_executed", 0, "hold"]);
+    const under = { ...TOOL, inputSchema: { ...TOOL.inputSchema, properties: { ...TOOL.inputSchema.properties,
+      item_id: { ...TOOL.inputSchema.properties.item_id, description: "[Required] The listing must not be archived." } } } };
+    const uc = await run("g1-01", "clean", ["yes"], { tool: under });
+    check("a labelled line in an argument's description: the run stops for definition repair, nothing called",
+      [uc.last.status, uc.calls.length, uc.records.filter(x => x.actor !== "executor").at(-1)?.execution_decision], ["not_executed", 0, "definition_repair"]);
     const seen = g1.shown.flat().map(t => t?.description ?? "");
     check("in the run, every list the model was given had no labelled line", [g1.shown.length > 0, seen.some(d => /^\[(Required|Verify|Notice)\]/m.test(d))], [true, false]);
     // Where a host lists the server's tools itself, the model sees the whole description. The gate reads

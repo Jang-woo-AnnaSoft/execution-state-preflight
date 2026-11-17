@@ -60,6 +60,14 @@ async function run(id, condition, over = {}) {
      "**[Required]** X.", "- **[Required]** X.", "**[Required] X.**", "`[Required]` X.", "  - [Required] X."]
       .map(l => labelledLines(l)), Array(11).fill([{ label: "Required", text: "X." }]));
   check("a label with nothing after it is a line, with no words", labelledLines("[Required]"), [{ label: "Required", text: "" }]);
+  // How an editor or an input method dresses the line is not part of the rule either. Each of these was
+  //   read as prose, and a [Required] line that did not hold let the tool run.
+  check("a quote or heading mark, escaped or full-width brackets, an unseen character: the same line",
+    ["> [Required] X.", ">> [Required] X.", "> - [Required] X.", "### [Required] X.", "\\[Required\\] X.", "- \\[Required\\] X.",
+     "\uff3bRequired\uff3d X.", "\u3010Required\u3011 X.", "\u200b[Required] X.", "\ufeff[Required] X.", "[Requ\u200bired] X."]
+      .map(l => labelledLines(l)), Array(11).fill([{ label: "Required", text: "X." }]));
+  check("a label after other words, round brackets, HTML: prose, as before",
+    labelledLines("Conditions: [Required] X.\n(Required) X.\n<br>[Required] X.\n# Heading\n> quoted words"), []);
   check("a task-list box is not a label; a label in the middle of a line is prose",
     labelledLines("- [ ] todo\n- [x] done\n* [X] done\nNote: [Required] later in the line"), []);
   check("the stand-in model has a form for every line but the notice", labelledLines(TOOL.description)
@@ -104,6 +112,30 @@ async function run(id, condition, over = {}) {
   const liCancelled = await run("g1-01", "order_cancelled", { tool: listed, userAnswers: SAT_2PM });
   check("  and a cancelled order is held on the [Required] line, as with the plain lines",
     [liCancelled.outcome, liCancelled.provider_checklist.find(c => c.status === "unmet")?.description], ["hold", line(g1, SALE).description]);
+  // The same declaration as an editor or an input method may leave it.
+  const DRESS = [l => `> ${l}`, l => l.replace("[", "\\[").replace("]", "\\]"), l => l.replace("[", "\uff3b").replace("]", "\uff3d"),
+                 l => `### ${l}`, l => `\u200b${l}`, l => l.replace("[", "\u3010").replace("]", "\u3011"), l => `>${l}`];
+  const dressed = clone(TOOL);
+  let dn = 0;
+  dressed.description = dressed.description.split("\n").map(l => (/^\[/.test(l) ? DRESS[dn++ % DRESS.length](l) : l)).join("\n");
+  const dr = await run("g1-01", "clean", { tool: dressed, userAnswers: SAT_2PM });
+  check("the lines dressed seven ways: all seven read, the same ids, executed as before",
+    [dr.provider_checklist.length, dr.provider_checklist.map(c => c.id), dr.outcome], [7, g1.provider_checklist.map(c => c.id), g1.outcome]);
+  const drCancelled = await run("g1-01", "order_cancelled", { tool: dressed, userAnswers: SAT_2PM });
+  check("  and a cancelled order is held on the [Required] line",
+    [drCancelled.outcome, drCancelled.provider_checklist.find(c => c.status === "unmet")?.description], ["hold", line(g1, SALE).description]);
+  // A labelled line under the argument it is about, not in the tool's description ([LABEL OUT OF PLACE]).
+  const misplaced = clone(TOOL);
+  misplaced.inputSchema.properties.item_id = { ...misplaced.inputSchema.properties.item_id, description: "The listing.\n[Required] The listing must not be archived." };
+  const mp = await run("g1-01", "clean", { tool: misplaced, userAnswers: SAT_2PM });
+  const mpItem = mp.provider_checklist.at(-1);
+  check("a labelled line in an argument's description: not read as a condition, not dropped, held for definition repair",
+    [mp.provider_checklist.length, mpItem.declared_in, mpItem.status, mpItem.route, mp.outcome],
+    [8, "inputSchema:properties.item_id", "unverified", "definition_repair", "definition_repair"]);
+  const noted = clone(TOOL);
+  noted.inputSchema.properties.item_id = { ...noted.inputSchema.properties.item_id, description: "[Optional] The listing number, as on the listing page. Not [Required] by every seller." };
+  const nt = await run("g1-01", "clean", { tool: noted, userAnswers: SAT_2PM });
+  check("  another bracketed word there, or a label later in the line, is prose: executed as before", [nt.provider_checklist.length, nt.outcome], [7, g1.outcome]);
   const bare = clone(TOOL);
   bare.description += "\n[Required]";
   const ba = await run("g1-01", "clean", { tool: bare, userAnswers: SAT_2PM });
