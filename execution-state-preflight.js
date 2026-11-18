@@ -1920,7 +1920,7 @@ async function listRecords(h, key) {
 const NOT_VALUE_ASKS = new Set(["intent_undetermined", "intent_undetermined_exhausted", "tool_undetermined",
                                 "tool_undetermined_exhausted", "branch_unresolved", "branch_conflict"]);
 async function unitHistory(h, actionKey, phase) {
-  const none = { available: false, asked: new Map(), askings: [], ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0, conditions: null, values: {} };
+  const none = { available: false, asked: new Map(), askings: [], ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0, conditions: null, values: {}, answers: new Map() };
   if (typeof actionKey !== "string" || actionKey === "") return none;
   const all = await listRecords(h, actionKey);
   if (!all) return { ...none, unlisted: true };
@@ -1928,7 +1928,7 @@ async function unitHistory(h, actionKey, phase) {
   for (let i = all.length - 1; i >= 0; i--) if (all[i]?.execution_decision === "executed") { start = i + 1; break; }
   const recs = all.slice(start).filter(r => r && typeof r === "object" && r.kind !== FORM_APPROVAL_KIND &&
     r.kind !== FORM_TRANSLATION_KIND);
-  const out = { available: true, asked: new Map(), askings: [], ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0, conditions: null, values: {} };
+  const out = { available: true, asked: new Map(), askings: [], ask_attempts: 0, lookup_attempts: 0, tool_attempts: 0, conditions: null, values: {}, answers: new Map() };
   for (const r of recs) {
     // The executing side's record is the verdict it read, with its own decision on it: counted once, as
     //   the verdict.
@@ -1944,6 +1944,15 @@ async function unitHistory(h, actionKey, phase) {
     }
     // The conditions taken from the user's words, and how far those words were read ([USER CONDITIONS]).
     //   The latest record that read them is the one carried.
+    // The answers an earlier round accepted, and where ([ANSWER CARRIED]). The latest record that accepted
+    //   one for a target is the one carried.
+    for (const c of Array.isArray(r.value_checks) ? r.value_checks : []) {
+      if (c?.kind === "answer" && c.status === "checked" && c.source === "user_answer" && typeof c.target === "string" &&
+          Number.isInteger(c.located_at?.segment_index) && Array.isArray(c.located_at?.span) &&
+          (typeof c.answer === "boolean" || c.answer === "none")) {
+        out.answers.set(c.target, { answer: c.answer, located_at: { segment_index: c.located_at.segment_index, span: c.located_at.span.slice(0, 2) } });
+      }
+    }
     const took = (Array.isArray(r.value_checks) ? r.value_checks : []).find(c => c?.id === "user_conditions" && Number.isInteger(c?.read_through));
     if (took) out.conditions = { read_through: took.read_through, items: (r.user_checklist ?? []).filter(i => i?.extracted === true) };
     const through = Number.isInteger(g.asked_through) ? g.asked_through : null;
@@ -2067,9 +2076,9 @@ async function readUserReplies(h, instruction, history) {
   if (raw?.none === "absent") {
     out.checks.push({ id: "replies", kind: "answer", target: null, slot: null, status: "checked", source: "instruction",
                       note: "no reply to the questions asked" });
-    return out;
   }
-  if (!Array.isArray(raw)) {
+  const claims = raw?.none === "absent" ? [] : raw;
+  if (!Array.isArray(claims)) {
     out.checks.push({ id: "replies", kind: "answer", target: null, slot: null, status: "unverified", source: null,
                       note: "readReplies returned neither a list nor { none: \"absent\" }" });
     return out;
@@ -2077,7 +2086,9 @@ async function readUserReplies(h, instruction, history) {
   // The latest located answer per target wins: a user may change their mind. Two different answers in
   //   one segment say both, and neither counts.
   const valid = new Map();   // target → located claims
-  for (const c of raw) {
+  const said = new Map();    // target → the answers this round's claims gave, kept or not
+  for (const c of claims) {
+    if (typeof c?.target === "string") said.set(c.target, [...(said.get(c.target) ?? []), c?.none === "absent" ? "none" : c?.answer]);
     const target = typeof c?.target === "string" ? c.target : null;
     const reject = why => out.checks.push(entry(target ?? "(none)", { status: "rejected", source: "user_answer", note: why }));
     const a = target ? history.asked.get(target) : null;
@@ -2106,6 +2117,37 @@ async function readUserReplies(h, instruction, history) {
     valid.set(target, [...(valid.get(target) ?? []), { target, q, answer: isNone ? null : (isChoice ? true : c.answer), none: isNone,
                                                         ...(isChoice && !isNone ? { choice: c.choice } : {}), located_at: loc.located_at }]);
   }
+  // [ANSWER CARRIED] An answer an earlier round of this unit accepted, when this round's reader gives no
+  //   claim for that question that holds. The reader reads the whole conversation again each round, and a
+  //   real one moved a yes it had placed right onto a later "yes" that answered another question: the claim
+  //   was rejected ([REPLY IN FRONT]), the earlier one was not reported again, and an approval the user
+  //   gave was lost. The run asked again until the ceiling, and ended with nothing done.
+  //   What is carried is the place, not the reader's word for it: the earlier claim is checked again here,
+  //   against this conversation, by the same rules as a new one (the user's segment, after the latest
+  //   asking of that question, before the next asking). A question asked again since has its answer after
+  //   that asking, so an older one is not carried. A claim this round that gives that question another
+  //   answer, kept or rejected, is a reason not to: nothing is carried, and the question is asked.
+  //   A question with choices is not carried: the record keeps no index of which one.
+  for (const [target, prev] of history.asked.size ? (history.answers ?? new Map()) : []) {
+    if (valid.has(target)) continue;
+    const a = history.asked.get(target);
+    if (!a || (a.question.kind === "value" && Array.isArray(a.question.choices))) continue;
+    const other = (said.get(target) ?? []).filter(x => x !== prev.answer);
+    if (other.length) {
+      out.checks.push(entry(target, { status: "rejected", source: "user_answer", located_at: prev.located_at,
+        note: "an earlier answer is not carried: this round's reply reader gives this question another answer" }));
+      continue;
+    }
+    const seg = instruction?.[prev.located_at.segment_index];
+    const quote = typeof seg?.text === "string" ? seg.text.slice(prev.located_at.span[0], prev.located_at.span[1]) : "";
+    const loc = checkLocatedQuote({ quote, segment_index: prev.located_at.segment_index, span: prev.located_at.span }, instruction, a.asked_through);
+    const next = history.askings.filter(t => t > a.asked_through).sort((x, y) => x - y)[0];
+    if (!loc.ok || (next !== undefined && loc.located_at.segment_index >= next)) continue;
+    const isNone = prev.answer === "none";
+    if (isNone && a.question.kind !== "value") continue;
+    if (!isNone && prev.answer === true && a.question.kind === "value" && !a.question.candidate) continue;
+    valid.set(target, [{ target, q: a.question, answer: isNone ? null : prev.answer, none: isNone, located_at: loc.located_at, carried: true }]);
+  }
   const accepted = new Map();
   for (const [target, claims] of valid) {
     const last = Math.max(...claims.map(c => c.located_at.segment_index));
@@ -2121,7 +2163,7 @@ async function readUserReplies(h, instruction, history) {
     }
     const q = c.q;
     out.checks.push(entry(target, { status: "checked", source: "user_answer", located_at: c.located_at,
-      answer: c.none ? "none" : c.answer }));
+      answer: c.none ? "none" : c.answer, ...(c.carried ? { carried: true, note: "accepted in an earlier round; its place checked again ([ANSWER CARRIED])" } : {}) }));
     if (q.kind === "value") {
       if (c.none) out.userAnswers[q.slot] = { none: "absent" };
       else if (Array.isArray(q.choices) && Number.isInteger(c.choice)) {
@@ -4236,7 +4278,10 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.37",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.38",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.38: an answer an earlier round accepted is carried when this round's reply reader gives no claim
+    //        for it that holds, its place checked again ([ANSWER CARRIED]). value_checks answer entries may
+    //        carry carried: true.
     //   1.37: labelled lines are also read behind a quote or heading mark, with escaped or full-width
     //        brackets, and with characters that cannot be seen in the line. A line with one of the three
     //        labels in an argument's description is a provider_checklist item declared_in
