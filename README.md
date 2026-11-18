@@ -262,7 +262,7 @@ MODEL=anthropic:<model-name> node judge-only-example.js "Set up the pickup for L
 As shipped, nothing is connected: the `[Required]` lines are unverified, and nothing runs. The run asks
 nothing and ends by saying it did not run and which lines could not be checked. That is the gate
 failing closed, not a fault: fill in `MEASUREMENTS` and `TOOLS` in `connect.js` and it asks and executes.
-The seven things that stay yours, and the whole flow, are in the [adopt example](./adopt-example/#4-use-it-your-agent-executes-judge-onlyjs).
+The eight things that stay yours, and the whole flow, are in the [adopt example](./adopt-example/#4-use-it-your-agent-executes-judge-onlyjs).
 
 <details>
 <summary>Calling the library directly</summary>
