@@ -44,22 +44,70 @@ const { createPreflight, labelledLines, toolsForModel, stopFacts, keepForPrior, 
   catch (e) { if (e.code !== "MODULE_NOT_FOUND") throw e; return require("../execution-state-preflight"); }
 })();
 
-const Ajv = require("ajv");
+const Ajv07 = require("ajv");
+const Ajv2020 = require("ajv/dist/2020");
 const addFormats = require("ajv-formats");
 
-// The validator. strict: a keyword it does not know is an error, not something to skip — a declared
-//   check that cannot be run must not read as a check that passed.
-const ajv = new Ajv({ strict: true, allErrors: true });
-addFormats(ajv);
-const compiled = new WeakMap();
+// "date-time" as RFC 3339 writes it (section 5.6), which JSON Schema's format names: "T" between the
+//   date and the time, seconds, and an offset, "Z" or "+hh:mm" / "-hh:mm". ajv-formats also takes
+//   "2026-10-31 14:00:00+09:00" and "+0900"; a value in the tool's declared form is the form the
+//   standard writes. The offset is the value's own time standard: a date-time without one is not one.
+const RFC3339_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(\.\d+)?([Zz]|([+-])(\d{2}):(\d{2}))$/;
+function isRfc3339DateTime(text) {
+  const m = RFC3339_DATE_TIME.exec(text);
+  if (!m) return false;
+  const [y, mo, d, h, mi, sec] = [m[1], m[2], m[3], m[4], m[5], m[6]].map(Number);
+  const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mo - 1];
+  if (!days || d < 1 || d > days || h > 23 || mi > 59 || sec > 60) return false;
+  if (m[9] && (Number(m[10]) > 23 || Number(m[11]) > 59)) return false;
+  if (sec === 60) {
+    // A leap second is 23:59:60 in UTC.
+    const off = m[9] ? (m[9] === "+" ? 1 : -1) * (Number(m[10]) * 60 + Number(m[11])) : 0;
+    const utc = ((h * 60 + mi - off) % 1440 + 1440) % 1440;
+    if (utc !== 23 * 60 + 59) return false;
+  }
+  return true;
+}
+
+const DATE_TIME_COMPARE = require("ajv-formats/dist/formats").fullFormats["date-time"].compare;
+
+// The validators. A tool's schema is read in the dialect MCP gives it: JSON Schema 2020-12 when it
+//   names none, draft-07 when its $schema says so (MCP specification 2025-11-25, Basic: JSON Schema
+//   usage). A schema naming another dialect is not run: unverified, not passed. strict: a keyword the
+//   validator does not know is an error, not something to skip — a declared check that cannot be run
+//   must not read as a check that passed.
+function makeValidator(Ajv) {
+  const v = new Ajv({ strict: true, allErrors: true });
+  addFormats(v);
+  // Compared as moments, as ajv-formats compares them (formatMinimum, formatMaximum).
+  v.addFormat("date-time", { type: "string", validate: isRfc3339DateTime, compare: DATE_TIME_COMPARE });
+  return v;
+}
+const VALIDATORS = { "2020-12": makeValidator(Ajv2020), "draft-07": makeValidator(Ajv07) };
+const DIALECTS = new Map([
+  ["https://json-schema.org/draft/2020-12/schema", "2020-12"],
+  ["http://json-schema.org/draft-07/schema#", "draft-07"], ["http://json-schema.org/draft-07/schema", "draft-07"],
+  ["https://json-schema.org/draft-07/schema#", "draft-07"], ["https://json-schema.org/draft-07/schema", "draft-07"],
+]);
+function dialectOf(declared) {
+  if (declared === undefined || declared === null) return "2020-12";
+  return DIALECTS.get(String(declared).trim()) ?? null;
+}
+const compiled = { "2020-12": new WeakMap(), "draft-07": new WeakMap() };
 
 // { ok: true|false, errors } when the value was checked; { error } when the schema cannot be compiled.
-function checkAgainst(schema, value) {
+//   dialect: the $schema of the schema the value is checked against, or of the tool's input schema when
+//   that is a property's schema inside it.
+function checkAgainst(schema, value, declared = schema?.$schema) {
   if (!schema || typeof schema !== "object") return { error: "no schema" };
-  let validate = compiled.get(schema);
+  const dialect = dialectOf(declared);
+  if (!dialect) return { error: `the schema names a dialect this validator does not run: ${JSON.stringify(declared)}` };
+  const ajv = VALIDATORS[dialect];
+  let validate = compiled[dialect].get(schema);
   if (!validate) {
     try { validate = ajv.compile(schema); } catch (e) { return { error: e.message }; }
-    compiled.set(schema, validate);
+    compiled[dialect].set(schema, validate);
   }
   const ok = validate(value);
   return { ok, errors: ok ? null : ajv.errorsText(validate.errors) };
@@ -246,7 +294,7 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
     //   cannot compile is a check not made: unverified, which the library sends to definition repair.
     validateFieldSchema(value, schema, ctx, fieldName) {
       if (!schema) return null;
-      const out = checkAgainst(schema, value);
+      const out = checkAgainst(schema, value, schema.$schema ?? tool?.inputSchema?.$schema);
       if (out.error) return { unverified: `"${fieldName}" has a schema the validator cannot run: ${out.error}` };
       return out.ok ? null : `"${fieldName}" does not match its declared schema: ${out.errors}; got ${JSON.stringify(value)}`;
     },

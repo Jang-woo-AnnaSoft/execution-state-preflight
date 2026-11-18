@@ -190,7 +190,9 @@ export ANTHROPIC_API_KEY=...                        # the provider's package rea
 MODEL=anthropic:<model-name> node judge-only-example.js "Set up the pickup for LST-2291, 2pm this Saturday, Hongdae station lockers."
 ```
 
-`judge-only.js` needs only the library and the validator (Ajv). It does not load LangGraph.
+`judge-only.js` needs only the library and the validator (Ajv). It does not load LangGraph. The validator reads a tool's input schema as MCP does: JSON Schema 2020-12
+when it names no `$schema`, draft-07 when it says so, and no other. `format: "date-time"` is RFC
+3339's, with its offset: the value carries its own time standard.
 
 **Eight things are yours to keep.** Nothing checks them for you, and
 breaking one leaves a record that is right about an execution that was not.
