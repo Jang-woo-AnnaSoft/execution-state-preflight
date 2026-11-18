@@ -599,6 +599,31 @@ function askAllGiven(id) {
     const pt = plain.records.filter(x => x.execution_decision === "execute").at(-1)?.fields?.find(f => f.name === "time");
     check("an approval with no later words about the value stands", [pt?.source, pt?.lookup_trace?.[0]?.result, "answer_superseded" in (pt ?? {})],
       ["user_answer", "found", false]);
+    // [ANSWER CARRIED] A real run (Haiku 5.5, 1.37): the item line was put in the form of a user approval,
+    //   asked with the time, and approved in "yes, but make it Saturday 7pm". The next round asked the new
+    //   time only. In the round after, the reader placed the item's yes on the last "yes", which answered
+    //   the time question: rejected, the first one not reported again, and the run ended at the ceiling.
+    //   The stand-in reader places every answer on the latest yes, the same way.
+    const itemByApproval = inner => async (m, system, user, hook) => (hook === "comparable_form" && /The item is the listing/.test(user)
+      ? { form: { compare: { kind: "user_approval" }, constrains: ["item_id"] } } : inner(m, system, user, hook));
+    const carried = await run("g1-01", "clean", ["yes, but make it Saturday 7pm", "yes"], { ask: itemByApproval(makeAsk("g1-01")) });
+    const cg = carried.records.filter(x => x.actor !== "executor");
+    const itemAnswer = cg.at(-1)?.value_checks?.find(c => c.kind === "answer" && c.status === "checked" && /^approve:/.test(c.target));
+    check("an approval given in an earlier round, its yes placed later by the reader: carried, run at 19:00",
+      [cg.map(x => x.execution_decision), carried.calls.map(c => c.args.time), itemAnswer?.carried, cg[0]?.gate?.question_block?.length],
+      [["ask_user", "ask_user", "execute"], ["2026-10-31T19:00:00+09:00"], true, 2]);
+    // The same, but in the last round the reader reports a no for that question, misplaced too: the yes is
+    //   not carried over it.
+    const noInLastRound = inner => async (m, system, user, hook) => {
+      const out = await inner(m, system, user, hook);
+      // the round after the plain "yes" was typed: its claim for the item says no
+      if (hook === "replies" && /"text":\s*"yes"/.test(user)) for (const r of out.replies ?? []) if (/^approve:/.test(r.target)) r.answer = false;
+      return out;
+    };
+    const contrary = await run("g1-01", "clean", ["yes, but make it Saturday 7pm", "yes"], { ask: noInLastRound(itemByApproval(makeAsk("g1-01"))) });
+    check("  this round's reader gives that question another answer: nothing carried, nothing run",
+      [contrary.calls.length, contrary.records.filter(x => x.actor !== "executor").at(-1)?.value_checks?.some(c => /not carried/.test(c.note ?? ""))],
+      [0, true]);
     // The approval and the change in one message. Before 1.36 only a later segment was read, and the
     //   pickup ran at 2pm.
     const both = await run("g1-01", "clean", ["yes, but make it Saturday 7pm", "yes"]);
