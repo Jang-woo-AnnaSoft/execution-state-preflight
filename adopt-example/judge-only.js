@@ -484,8 +484,11 @@ async function writeQuestion({ ask, say, model = "model" }, { questions, convers
 //   What the gate said after a call goes back as that call's result, not as the model's own words: a
 //   real model, shown the gate's reason as something it had said itself, took it back on the next turn
 //   as made up ("I never called the scheduling tool"). A segment from afterCall carries the call.
+//   waiting: a real model (Opus 5.5), told only that the system was asking, took the user's yes as the end
+//   of it, did not call again, and told the user the pickup had been sent. Nothing had run.
 const CALL_RESULT = {
-  waiting: "Not run yet. The system is asking the user first. The user was shown:",
+  waiting: "Not run yet, and nothing has been sent. The system is asking the user first. When the user answers, " +
+           "call the tool again with the same request: the system reads the answer then. The user was shown:",
   not_executed: "Not run. The user was told:",
   executed: "Run.",
   failed: "The call failed:",

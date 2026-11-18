@@ -18,7 +18,7 @@ graph. What you write (`tool.md`) and what you connect (`connect.js`) are the sa
 | Who runs the flow (ask, wait, call again) | Your agent's own loop | `gate.js`, a LangGraph graph |
 | Who executes the tool | Your agent, after reading the record | The graph's executing step, after reading the record |
 | The gate and the executing side | Two parties: the gate ends with the record | **Departs from spec 3.5**: the gate and the executing step are in one graph |
-| What you must keep yourself | Seven things, listed in [section 4](#4-use-it-your-agent-executes-judge-onlyjs) | Nothing in the flow |
+| What you must keep yourself | Eight things, listed in [section 4](#4-use-it-your-agent-executes-judge-onlyjs) | Nothing in the flow |
 
 Sections 1 to 3 are for both. Section 4 is `judge-only.js`. Section 5 is the demonstration.
 
@@ -192,7 +192,7 @@ MODEL=anthropic:<model-name> node judge-only-example.js "Set up the pickup for L
 
 `judge-only.js` needs only the library and the validator (Ajv). It does not load LangGraph.
 
-**Seven things are yours to keep.** Nothing checks them for you, and
+**Eight things are yours to keep.** Nothing checks them for you, and
 breaking one leaves a record that is right about an execution that was not.
 
 1. **Label who wrote each part of a message on arrival**, before the model sees it (spec 5.2). Only
@@ -225,6 +225,9 @@ breaking one leaves a record that is right about an execution that was not.
    a run asks nothing, `judge.notices(record)` gives the ones not yet shown: show them (`notify`), then
    call the tool, and `recordResult` records which were told. A run that has a notice to show and no
    way to show it does not execute.
+8. **Judge the waiting call again when the user answers** (`waitingCall`). A model may take the answer
+   as the end of it and not call again, and tell the user it was done. The call the gate is waiting on
+   goes to the gate again either way, and the user sees what the gate decides, not the model's words.
 
 **When nothing runs, tell the user why.** `writeStop` (in `judge-only.js`) hands your model the
 library's `stopFacts` for the record: the condition in its own words, whose it is, what was found.

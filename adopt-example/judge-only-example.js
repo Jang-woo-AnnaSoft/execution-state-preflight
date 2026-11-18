@@ -5,7 +5,7 @@
  * this file is to be read and adapted, unlike judge-only.js, which you leave as it is.
  *
  * Your agent keeps its loop and executes the tool itself. judge-only.js judges and writes the record, and
- * nothing else. Seven things are yours to keep, and nothing checks them for you:
+ * nothing else. Eight things are yours to keep, and nothing checks them for you:
  *
  *   1. Label who wrote each part of a message when it arrives, before the model sees it (labelInput).
  *      Only what the user typed is the user's.
@@ -22,6 +22,8 @@
  *      hand it the tool list, you may also take the labelled lines out (judge.toolsForModel, hideLines).
  *   7. Show the provider's notices to the user before the tool runs (spec 3.3). They go with every
  *      question; when nothing was asked, show them before the call (judge.notices, connect.notify).
+ *   8. When the user answers a question, put the call that waits on it to the gate again, whether or not
+ *      the model calls (waitingCall). Show the gate's verdict, not the model's words.
  *
  *   const { createMain } = require("./judge-only-example");
  *   const main = createMain();
@@ -29,6 +31,7 @@
  *   // r.status "waiting": show r.question.message, then pass the user's answer as the next turn
  *   r = await main.turn({ threadId, message: { typed: "yes" } });
  *   // r.status "executed", or "replied", "not_executed" (r.message tells the user why), "call_failed", "tool_error"
+ *   // r.resubmitted: the model did not call again after the answer, and the waiting call was judged again
  *
  * Or from a terminal: node judge-only-example.js "Set up the pickup for LST-2291, 2pm this Saturday,
  * Hongdae station lockers."
@@ -108,24 +111,39 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
     const listed = await connect.listTools();
     const tools = hideLines ? judge.toolsForModel(listed) : listed;                           // 6
     const out = await connect.chat({ system, messages: messagesFor(conversation), tools });
+    let toolCall, resubmitted = false;
     if (!out?.toolCall || typeof out.toolCall.name !== "string") {
-      const text = typeof out?.text === "string" ? out.text : "";
-      if (text) conversation.push({ trust: "assistant", text });
-      return { status: "replied", reply: text };
+      // 8. A call the gate is waiting on, and the user has answered: it goes to the gate again, whether
+      //   or not the model calls. A real model (Opus 5.5) took the user's yes as the end of it, did not
+      //   call, and told the user the pickup had been sent; nothing had run. Only the gate's verdict says
+      //   what happens next, so the model's words are not shown: the user sees what the gate decides
+      //   (it runs, it asks, or it tells why not). A user who asked something else in between gets the
+      //   gate's question again, not the model's answer: that is the cost of not showing words that
+      //   may say something ran. Change it here if your app shows both.
+      const pending = waitingCall(conversation);
+      if (!pending) {
+        const text = typeof out?.text === "string" ? out.text : "";
+        if (text) conversation.push({ trust: "assistant", text });
+        return { status: "replied", reply: text };
+      }
+      toolCall = pending;
+      resubmitted = true;
+    } else {
+      toolCall = { name: out.toolCall.name, arguments: out.toolCall.arguments ?? null, id: out.toolCall.id ?? null };
     }
-    const toolCall = { name: out.toolCall.name, arguments: out.toolCall.arguments ?? null, id: out.toolCall.id ?? null };
 
     const r = await judge.run({ unitKey: threadId, conversation, toolCall, userChecklist });   // 3
     if (r.questions.length > 0) {
       const question = await askUser(conversation, r);                                         // 2
       conversation.push(afterCall(toolCall, "waiting", question.message, r.settled));
-      return { status: "waiting", question, notices: r.notices };
+      return { status: "waiting", question, notices: r.notices, ...(resubmitted ? { resubmitted } : {}) };
     }
     // The gate could not tell what is wanted, or which tool it maps to. Its own words are shown as they
     //   are; the user says it again, and the next turn judges again.
     if (r.ask && r.message) {
       conversation.push(afterCall(toolCall, "waiting", r.message));
-      return { status: "waiting", question: { text: r.message, block: [], message: r.message, options: r.options }, notices: r.notices };
+      return { status: "waiting", question: { text: r.message, block: [], message: r.message, options: r.options }, notices: r.notices,
+               ...(resubmitted ? { resubmitted } : {}) };
     }
 
     // 4. Nothing to ask. Read the record this round wrote, and decide from it.
@@ -138,7 +156,8 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
         : await writeStop({ ask: connect.ask, say: connect.say, model }, { record, conversation });
       if (record?.action_key) await judge.recordResult(record, { executed: false, why, ...extra });      // 5
       conversation.push(afterCall(toolCall, "not_executed", stop.message));
-      return { status: "not_executed", reason: record?.reason ?? r.reason, message: stop.message, stop: stop.facts, notices: r.notices };
+      return { status: "not_executed", reason: record?.reason ?? r.reason, message: stop.message, stop: stop.facts, notices: r.notices,
+               ...(resubmitted ? { resubmitted } : {}) };
     };
     const why = whyNotReady(record, toolCall.name);
     if (why !== null) return notRun(why);
@@ -172,10 +191,25 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
     }
     await judge.recordResult(record, { ok: true, told });                                      // 5
     conversation.push(afterCall(toolCall, "executed"));
-    return { status: "executed", executedWith: args, notices: r.notices, told };
+    return { status: "executed", executedWith: args, notices: r.notices, told, ...(resubmitted ? { resubmitted } : {}) };
   }
 
   return { turn };
+}
+
+// The call the gate is waiting on (8): the latest call's result is "waiting", and only the user has
+//   written since. Its name, arguments and id are the model's call as it was made; nothing is added.
+function waitingCall(conversation) {
+  for (let i = (conversation ?? []).length - 1; i >= 0; i--) {
+    const s = conversation[i];
+    if (s?.after_call) {
+      const c = s.after_call;
+      return c.status === "waiting" && typeof c.name === "string" && i < conversation.length - 1
+        ? { name: c.name, arguments: c.arguments ?? null, id: c.id ?? null } : null;
+    }
+    if (s?.trust === "assistant") return null;
+  }
+  return null;
 }
 
 module.exports = { createMain, readyToExecute, whyNotReady, systemPrompt };
