@@ -441,7 +441,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.39");
+    check("schema_version", persisted?.schema_version, "1.40");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -605,19 +605,12 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     check("  the user's yes keeps it, and it is compared in this run: executes", [it3.form_approval?.approved_by, it3.status, convYes.r.execution_decision],
       ["user:u", "verified", "execute"]);
 
-    // [FORM TRIED] The question shows what the proposed form says about the values shown with it, computed
-    //   by the same comparison the gate runs. A wrong form shows as wrong, before the user confirms it.
-    const tried = (await Promise.all([NOT_AFTER, { compare: { kind: "not_after", hhmm: "12:00" }, constrains: ["time"] }].map(async form => {
-      const r = await run({ storage: memStorage(), text: said, extract: ex, measured: ALL_MEASURED,
-        over: { extractUserConditions: extract([claim]), proposeComparableForm: req => (req.declared_by === "user" ? form : undefined), verifyUserChecklistItem: evening } });
-      const q = (r.r.gate?.questions ?? []).find(x => x.kind === "confirm_form") ?? {};
-      return [q.tried?.result, (r.r.gate?.question_block ?? []).some(l => l.endsWith(`for time = 2026-10-31 (Sat) 14:00 +09:00: ${q.tried?.result}`))];
-    })));
-    check("a proposed form is tried on the value shown: a right one holds, a wrong one does not, and the block says so",
-      tried, [["holds", true], ["does not hold", true]]);
-    const notTried = await run({ storage: memStorage(), text: said, extract: ex, measured: ALL_MEASURED,
-      over: { extractUserConditions: extract([claim]), proposeComparableForm: req => (req.declared_by === "user" ? { compare: { kind: "user_approval" }, constrains: ["time"] } : undefined) } });
-    check("  a form with nothing to compute is not tried", ((notTried.r.gate?.questions ?? []).find(x => x.kind === "confirm_form") ?? {}).tried ?? null, null);
+    // The question shows the form in words and nothing computed from it (1.40: [FORM TRIED] removed).
+    const shownForm = await run({ storage: memStorage(), text: said, extract: ex, measured: ALL_MEASURED,
+      over: { extractUserConditions: extract([claim]), proposeComparableForm: req => (req.declared_by === "user" ? NOT_AFTER : undefined), verifyUserChecklistItem: evening } });
+    const sq = (shownForm.r.gate?.questions ?? []).find(x => x.kind === "confirm_form") ?? {};
+    check("a proposed form is shown in words, with no result worked out on the values shown",
+      ["tried" in sq, (shownForm.r.gate?.question_block ?? []).some(l => / — will be checked like this: /.test(l) && !/: (holds|does not hold|cannot be checked)$/.test(l))], [false, true]);
 
     // [NO FORM] The model looked and no form fits ("public places only"): not left pending, but asked
     //   like an item with no form, the user approving it for the values shown.
