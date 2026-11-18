@@ -1981,15 +1981,11 @@ function lowerValue(fieldName, ctx, allowed) {
   return null;
 }
 
-// [CALL DISAGREES] A value the user approved, shown to them as a proposal, and the model's call says
-//   another. The call's arguments are never a value (5.2), so the call does not change what runs; but the
-//   two differing is a reason to ask once more before running. A real run: a smaller model proposed
-//   2026-11-01 for "this Saturday", the seller's yes approved it, the agent's model saw the date was wrong
-//   and called with 2026-10-31, and the run executed on the Sunday. The slot goes back to ask, the
-//   approved value shown again with what the call says; a yes given with that shown settles it, and the
-//   same difference is not asked about again. Only a value from user_answer with an approval: a value
-//   from the user's own words or from the system is not a proposal, and its spelling in the call
-//   ("Hongdae station lockers" for "the Hongdae station lockers") is not a reason to ask.
+// Whether the model's call carries a value as it is, for [SETTLED]: the same value, or the same moment
+//   written another way. Not a check of the value: the call's arguments are never a value (5.2).
+//   (Before 1.39 the gate also asked again when the call differed from a value the user had approved,
+//   [CALL DISAGREES]. Whether a proposed value is the one the user means is the user's to confirm, and
+//   what it is measured in, the provider's to write (4.2); code does not judge it a second time.)
 function sameCallValue(a, b, schema) {
   if (JSON.stringify(a) === JSON.stringify(b)) return true;
   if (typeof a === "string" && typeof b === "string") {
@@ -2000,28 +1996,6 @@ function sameCallValue(a, b, schema) {
     }
   }
   return false;
-}
-//   And only a call value in the field's declared form: one that is not a value the tool would take is
-//   not another value, and a model's filler ("", "the model's own guess") asks nothing.
-async function callDisagrees(h, ctx, f, args, schema) {
-  if (f?.status !== "known" || f.source !== "user_answer" || !f.approval) return f;
-  //   Only a value the gate made from the user's words: there the model's call is another reading of the
-  //   same words. A stored value or the last execution's, the user approved as it is, and a choice they
-  //   made between two: a call that says otherwise has no words of its own behind it. A real model,
-  //   after the seller approved the remembered place, called again with the seller's "my usual spot".
-  if (f.approval.chosen_from || f.approval.shown_from === "stored" || f.approval.shown_from === "prior_state") return f;
-  if (!args || typeof args !== "object" || !(f.name in args)) return f;
-  const said = args[f.name];
-  if (said === undefined || said === null || said === "") return f;
-  if (sameCallValue(said, f.value, schema)) return f;
-  if ("disagreed_with" in f.approval && sameCallValue(said, f.approval.disagreed_with, schema)) return f;
-  if (schema === undefined || schema === null) return f;
-  const v = await safeHook(h.validateFieldSchema, [said, schema, ctx, f.name], () => "unreadable");
-  if (v !== null && v !== undefined) return f;
-  const { value, approval, ...rest } = f;
-  return { ...rest, status: "unknown", source: null, origin_source: null, route: "ask_user",
-           call_disagrees: { approved: value, call: said, approval },
-           note: "the user approved one value and the model's call says another: asked again, both shown" };
 }
 
 // [REPLIES] The user's answers, read from their own words. The model asked in conversation; the user's
@@ -2174,8 +2148,7 @@ async function readUserReplies(h, instruction, history) {
       } else if (c.answer === true) {
         out.userAnswers[q.slot] = q.candidate.value;
         out.valueApprovals[q.slot] = { answer: true, shown: { [q.slot]: q.candidate.value }, located_at: c.located_at,
-                                       shown_from: q.candidate.from ?? null,
-                                       ...(q.disagrees ? { disagreed_with: q.disagrees.call_value } : {}) };
+                                       shown_from: q.candidate.from ?? null };
       }
     } else if (q.kind === "approve") {
       out.checklistAnswers[q.id] = { answer: c.answer, shown: q.shown ?? {}, rule_hash: q.rule_hash ?? null,
@@ -3173,8 +3146,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
         continue;
       }
       let proposal, from = null;
-      if (f.call_disagrees) { proposal = f.call_disagrees.approved; from = "approved"; }
-      else if (f.stored_candidate) { proposal = f.stored_candidate.value; from = "stored"; }
+      if (f.stored_candidate) { proposal = f.stored_candidate.value; from = "stored"; }
       else if (f.prior_candidate) { proposal = f.prior_candidate.value; from = "prior_state"; }
       else {
         let failure = null;
@@ -3201,12 +3173,10 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
         }
       }
       if (candidate) tryOn.set(f.name, { value: candidate.value, shown: " (shown above)" });
-      const disagrees = candidate && f.call_disagrees
-        ? { call_value: f.call_disagrees.call, call_shown: renderValue(f.call_disagrees.call, schema) } : null;
       questions.push({ target: `value:${f.name}`, kind: "value", slot: f.name, schema: schema ?? null, lines,
-                       ...(candidate ? { candidate } : {}), ...(disagrees ? { disagrees } : {}) });
+                       ...(candidate ? { candidate } : {}) });
       block.push(candidate
-        ? `${f.name} = ${candidate.shown_text}${candidate.from_text ? ` (${candidate.from_text})` : ""}${disagrees ? ` — the assistant's call has ${disagrees.call_shown}` : ""}`
+        ? `${f.name} = ${candidate.shown_text}${candidate.from_text ? ` (${candidate.from_text})` : ""}`
         : `${f.name}: not given yet`);
     }
     for (const it of approveItems) {
@@ -3307,7 +3277,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
   const lookupOrder = [...candidates].sort((a, b) => ranks.get(a) - ranks.get(b));
   const resolvedAll = [];
   for (const fieldName of lookupOrder) {
-    const f = await callDisagrees(h, ctx, await resolveField(h, fieldName, ctx), tool_call.arguments, ctx.fieldSchemas?.[fieldName]);
+    const f = await resolveField(h, fieldName, ctx);
     if (f.status === "known") settledValues[fieldName] = f.value;
     resolvedAll.push(f);
   }
@@ -3382,16 +3352,16 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
   });
   // [SAID OPTIONAL] An optional argument the user gave a value for is part of what the user asked for.
   //   When that value did not settle — the words are not in the field's form ("2pm this Saturday" for a
-  //   date-time), a stored value says otherwise, the model's call disagrees with what was approved — the
+  //   date-time), a stored value says otherwise — the
   //   argument is a slot of this run: counted, and asked about like any blank. Left among the extras, as
   //   it was, it was neither asked about nor sent, and the run executed without a value the user had
   //   stated, with nothing in the record saying so.
-  //   "Gave a value for": the user's words were found for it (lookup_trace instruction "found"), or the
-  //   user approved one (call_disagrees). Not when the user then said there is none: that takes it back.
+  //   "Gave a value for": the user's words were found for it (lookup_trace instruction "found"). Not when
+  //   the user then said there is none: that takes it back.
   //   An optional argument nobody gave anything for stays an extra: not asked, not counted, not sent.
   const saidOptional = f => f.status === "unknown" && !slotNames.has(f.name) &&
     !(f.lookup_trace ?? []).some(t => t.source === "user_answer" && t.result === "absent") &&
-    ((f.lookup_trace ?? []).some(t => t.source === "instruction" && t.result === "found") || Boolean(f.call_disagrees));
+    (f.lookup_trace ?? []).some(t => t.source === "instruction" && t.result === "found");
   for (const f of resolvedAll) {
     if (!saidOptional(f)) continue;
     slotNames.add(f.name);
@@ -4278,7 +4248,10 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.38",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.39",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.39: [CALL DISAGREES] removed. A value the user approved stands when the model's call says another:
+    //        the call's arguments are not values (5.2), and a proposed value is the user's to confirm. No
+    //        field call_disagrees, no question disagrees, no approval.disagreed_with.
     //   1.38: an answer an earlier round accepted is carried when this round's reply reader gives no claim
     //        for it that holds, its place checked again ([ANSWER CARRIED]). value_checks answer entries may
     //        carry carried: true.

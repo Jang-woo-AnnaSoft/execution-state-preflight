@@ -276,6 +276,7 @@ Every intent, value, and condition item is registered in an external checklist, 
 ### 4.2 Provider Checklist: varies per tool.
 
 - The values needed, their format, and what counts as the value (values in 3.3).
+- The provider also writes what a value is measured in: for a date and time, which time standard; for a length or a weight, which unit.
 - The conditions under which this tool must not run, and how each is checked: ownership, access permission, checks before execution or termination, safety, permitted execution modes (whether split execution is allowed, and so on) (conditions in 3.3).
 - The state change that execution causes.
 
