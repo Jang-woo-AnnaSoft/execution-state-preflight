@@ -493,7 +493,7 @@ function askAllGiven(id) {
         [(first?.gate?.settled_block ?? []).some(l => l.startsWith("item_id")), usual.first.question?.message?.includes("Already settled") ?? false],
         [false, false]);
     }
-    // [CALL DISAGREES] compares the call only with a value made from the seller's words. A real model,
+    // A real model,
     //   after the seller approved the remembered place, called again with the seller's "my usual spot".
     const pointing = async () => ({ toolCall: { name: TOOL.name, arguments: { time: "2026-10-31T14:00:00+09:00", location: "my usual spot" } } });
     const memCall = await run("g6-02", "clean", ["yes"], { chat: pointing });
