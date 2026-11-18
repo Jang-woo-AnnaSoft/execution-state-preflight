@@ -588,6 +588,27 @@ function askAllGiven(id) {
     const pt = plain.records.filter(x => x.execution_decision === "execute").at(-1)?.fields?.find(f => f.name === "time");
     check("an approval with no later words about the value stands", [pt?.source, pt?.lookup_trace?.[0]?.result, "answer_superseded" in (pt ?? {})],
       ["user_answer", "found", false]);
+    // The validator reads a tool's schema as MCP says: JSON Schema 2020-12 when it names no $schema,
+    //   draft-07 when it says so, and no other. "date-time" is RFC 3339's: a "T", seconds, and an offset.
+    const { checkAgainst } = require(path.join(ADOPT, "judge-only"));
+    const DT = { type: "string", format: "date-time" };
+    check("date-time as RFC 3339 writes it: with an offset, a T, seconds; a real date",
+      ["2026-10-31T14:00:00+09:00", "2026-10-31T05:00:00Z", "2026-10-31T14:00:00", "2026-10-31T14:00:00+0900",
+       "2026-10-31 14:00:00+09:00", "2026-10-31T14:00+09:00", "2026-02-29T14:00:00Z"].map(v => checkAgainst(DT, v).ok),
+      [true, true, false, false, false, false, false]);
+    const tuple = { type: "array", prefixItems: [{ type: "string" }], items: false, minItems: 1 };
+    check("no $schema: 2020-12, so its keywords are run, not refused",
+      [checkAgainst(tuple, ["a"]).ok, checkAgainst(tuple, ["a", "b"]).ok], [true, false]);
+    check("  draft-07 when the schema says so; another dialect is not run (unverified, not passed)",
+      [checkAgainst({ $schema: "http://json-schema.org/draft-07/schema#", type: "array", items: { type: "string" } }, ["a"]).ok,
+       /dialect this validator does not run/.test(checkAgainst({ $schema: "https://json-schema.org/draft/2019-09/schema", type: "string" }, "a").error ?? "")],
+      [true, true]);
+    // A proposal outside the form is not shown: the seller is asked for the time with nothing to approve.
+    const loose = inner => async (m, system, user, hook) => (hook === "propose_value" ? { value: "2026-10-31 14:00:00+09:00" } : inner(m, system, user, hook));
+    const lp = await run("g1-01", "clean", [], { ask: loose(makeAsk("g1-01")) });
+    const lpv = lp.records.filter(x => x.actor !== "executor").at(-1);
+    check("  a proposed date-time with a space for the T is not shown: the time is asked with nothing to approve",
+      [lp.first.status, lp.first.question?.block?.[0], lpv?.value_checks?.find(c => c.id === "time:candidate")?.status], ["waiting", "time: not given yet", "rejected"]);
     // A real run (Opus 5.5, 1.37): after the seller's yes the model did not call again, and said the
     //   pickup had been sent. The waiting call goes to the gate again (judge-only-example, 8).
     const SAID_SENT = "You've confirmed the time, so the pickup request is going ahead. Here's what I sent.";
