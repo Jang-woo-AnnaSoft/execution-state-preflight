@@ -124,14 +124,13 @@ async function run(id, condition, over = {}) {
   const drCancelled = await run("g1-01", "order_cancelled", { tool: dressed, userAnswers: SAT_2PM });
   check("  and a cancelled order is held on the [Required] line",
     [drCancelled.outcome, drCancelled.provider_checklist.find(c => c.status === "unmet")?.description], ["hold", line(g1, SALE).description]);
-  // A labelled line under the argument it is about, not in the tool's description ([LABEL OUT OF PLACE]).
+  // Only the tool's description is read (4.2.1). A labelled line under an argument is prose, as an MCP
+  //   tool may write "[Required] The order ID." there (1.40; 1.37 to 1.39 held the run).
   const misplaced = clone(TOOL);
   misplaced.inputSchema.properties.item_id = { ...misplaced.inputSchema.properties.item_id, description: "The listing.\n[Required] The listing must not be archived." };
   const mp = await run("g1-01", "clean", { tool: misplaced, userAnswers: SAT_2PM });
-  const mpItem = mp.provider_checklist.at(-1);
-  check("a labelled line in an argument's description: not read as a condition, not dropped, held for definition repair",
-    [mp.provider_checklist.length, mpItem.declared_in, mpItem.status, mpItem.route, mp.outcome],
-    [8, "inputSchema:properties.item_id", "unverified", "definition_repair", "definition_repair"]);
+  check("a labelled line in an argument's description is prose: the seven lines, executed as before",
+    [mp.provider_checklist.length, mp.outcome], [7, g1.outcome]);
   const noted = clone(TOOL);
   noted.inputSchema.properties.item_id = { ...noted.inputSchema.properties.item_id, description: "[Optional] The listing number, as on the listing page. Not [Required] by every seller." };
   const nt = await run("g1-01", "clean", { tool: noted, userAnswers: SAT_2PM });

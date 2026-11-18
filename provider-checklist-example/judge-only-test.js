@@ -146,8 +146,8 @@ function askAllGiven(id) {
     const under = { ...TOOL, inputSchema: { ...TOOL.inputSchema, properties: { ...TOOL.inputSchema.properties,
       item_id: { ...TOOL.inputSchema.properties.item_id, description: "[Required] The listing must not be archived." } } } };
     const uc = await run("g1-01", "clean", ["yes"], { tool: under });
-    check("a labelled line in an argument's description: the run stops for definition repair, nothing called",
-      [uc.last.status, uc.calls.length, uc.records.filter(x => x.actor !== "executor").at(-1)?.execution_decision], ["not_executed", 0, "definition_repair"]);
+    check("a labelled line in an argument's description is prose: it runs as before",
+      [uc.last.status, uc.calls.length], ["executed", 1]);
     const seen = g1.shown.flat().map(t => t?.description ?? "");
     check("in the run, every list the model was given had no labelled line", [g1.shown.length > 0, seen.some(d => /^\[(Required|Verify|Notice)\]/m.test(d))], [true, false]);
     // Where a host lists the server's tools itself, the model sees the whole description. The gate reads
@@ -207,7 +207,7 @@ function askAllGiven(id) {
       ["ai", "schedule_pickup", "tool", true]);
   }
 
-  console.log("\n--- 1-c. the seller's own condition, put into a form by the model, is tried on the value shown ---");
+  console.log("\n--- 1-c. the seller's own condition, put into a form by the model, shown in words for the seller to confirm ---");
   {
     // The form a real model wrote for "Nothing after 8pm": it matches a bare time of day, never a
     //   date-time, so no time could ever pass. The seller was shown only the form, and said yes.
@@ -223,8 +223,8 @@ function askAllGiven(id) {
     };
     const r = await run("g2-01", "clean", [], { ask, userChecklist: [] });
     const line = (r.first.question?.block ?? []).find(l => l.startsWith('"Nothing after 8pm"')) ?? "";
-    check("the form is shown with what it says about the time shown above: does not hold",
-      line.endsWith("for time = 2026-10-31 (Sat) 15:00 +09:00 (shown above): does not hold"), true);
+    check("the form is shown in words, with nothing worked out on the time shown (1.40)",
+      [line.startsWith('"Nothing after 8pm" — will be checked like this: '), /for time = .*: (holds|does not hold|cannot be checked)$/.test(line)], [true, false]);
     const formPrompt = r.prompts.find(p => p.hook === "comparable_form" && /Condition: Nothing after 8pm/.test(p.user))?.user ?? "";
     check("the model putting it into a form is told each field's declared form", /time: string, format date-time/.test(formPrompt), true);
     const rec = r.records.at(-1);

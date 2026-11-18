@@ -68,8 +68,8 @@ ask: the model asks, and code holds the answer to what was shown.
 **Reading the lines.** A line that starts with a bracketed word is a condition, and the word is its
 label. This is matching, not interpretation. A word the library does not know, such as a typo like
 `[Requried]`, is held for definition repair, not dropped as prose. The label starts its line: list, quote and heading
-marks, emphasis, escaped or full-width brackets before or around it are layout, not part of the rule. A
-line with one of the three labels in an argument's description is held for definition repair too.
+marks, emphasis, escaped or full-width brackets before or around it are layout, not part of the rule. Only
+the tool's description is read: a labelled line in an argument's description is prose.
 
 **How a line is checked.** A sentence cannot be compared as it stands (spec 3.3). The first time the
 gate reads a line, a model puts it into a form code can compare. The gate keeps that form under the

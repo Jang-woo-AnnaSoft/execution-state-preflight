@@ -174,7 +174,7 @@ function project(state, preflight) {
       id: c.id, label: c.label, description: c.description ?? null, status: c.status ?? null, source: c.source ?? null, route: c.route ?? null, note: c.note ?? null,
       compare: c.compare ?? null, form_translation: c.form_translation ?? null, form_untranslated: c.form_untranslated ?? null,
       rule_hash: c.rule_hash ?? null, approval: c.approval ?? null, approval_voided: c.approval_voided ?? null,
-      // Where the line was declared: "description", or "inputSchema:<path>" for one out of place (library 1.37).
+      // Where the line was declared ("description" for one read from the tool's description).
       declared_in: c.declared_in ?? null })),
     value_checks: (state.value_checks ?? []).map(c => ({ id: c.id, kind: c.kind, status: c.status, note: c.note ?? null })),
     checklist_digest: state.checklist_digest ?? null,
