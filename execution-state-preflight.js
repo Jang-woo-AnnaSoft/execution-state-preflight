@@ -387,29 +387,6 @@ function toolsForModel(tools) {
   }));
 }
 
-// [LABEL OUT OF PLACE] A line with one of the three labels, written in the description of an argument
-//   (anywhere in the input schema) and not in the tool's description. 4.2.1 has the provider's conditions
-//   in the tool's description, and that is the only place the gate reads them from. Read as nothing, a
-//   provider who wrote "[Required] The order must be open." under the argument it is about had the
-//   condition dropped without a trace, and the tool ran. The gate does not guess that it was meant as a
-//   condition, and does not drop it: the run goes to definition repair, and the note says where the line
-//   is. Only the three labels: "[Optional] …" or "[ISO 8601] …" in an argument's description is prose.
-//   → [{ label, text, at }]   at: the path of the description in the input schema
-function labelsOutOfPlace(inputSchema) {
-  const out = [];
-  const walk = (node, at, depth) => {
-    if (!node || typeof node !== "object" || depth > 12) return;
-    if (Array.isArray(node)) { node.forEach((n, i) => walk(n, `${at}[${i}]`, depth + 1)); return; }
-    for (const [k, v] of Object.entries(node)) {
-      if (k === "description" && typeof v === "string") {
-        for (const l of labelledLines(v)) if (PROVIDER_LABELS.has(l.label.trim().toLowerCase())) out.push({ label: l.label, text: l.text, at });
-      } else if (v && typeof v === "object") walk(v, at ? `${at}.${k}` : k, depth + 1);
-    }
-  };
-  walk(inputSchema, "", 0);
-  return out;
-}
-
 // [PRIOR EXECUTION] Where a later run finds the last execution to carry values over from (prior_state,
 //   5.2). The gate never looks the record up itself: the caller hands priorExecutionState in. These two
 //   functions are for the caller: one keeps an executed record where the next can find it, the other
@@ -3028,15 +3005,6 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
       ? await withConfirmedForm(h, c, { declared_by: "provider", tool: mcpTool?.name ?? null, userId, mcpTool }, formRequests)
       : c);
   }
-  // [LABEL OUT OF PLACE] A labelled line in an argument's description: not read as a condition, not
-  //   dropped. It joins the checklist as an item no form is written for, and the loop below sends it to
-  //   definition repair. The gate adds these itself, whatever getProviderConditions returned.
-  for (const l of labelsOutOfPlace(mcpTool?.inputSchema)) {
-    providerConditions.push({
-      id: `${mcpTool?.name ?? "tool"}:${ruleHash(`${l.at}:[${l.label}] ${l.text}`)}`,
-      label: l.label, description: l.text, constrains: [], compare: null, declared_in: `inputSchema:${l.at}`,
-    });
-  }
 
   // [USER CONDITIONS] The conditions the user stated in this instruction join the user checklist
   //   (4.4: made at instruction time, from the trusted part of the instruction). See extractUserConditions.
@@ -3129,8 +3097,6 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
   //   will be used, rendered by code ([RENDERED VALUES]). A yes approves exactly what was shown there.
   async function buildQuestions({ askFields, approveItems, formItems, withdrawItems = [], values = [] }) {
     const questions = [], block = [], checks = [];
-    // The values a form is tried on: those settled, and the candidates shown in this same block.
-    const tryOn = new Map(values.filter(f => f?.status === "known").map(f => [f.name, { value: f.value, shown: "" }]));
     for (const f of askFields) {
       const schema = ctx.fieldSchemas?.[f.name];
       const lines = providerConditions
@@ -3172,7 +3138,6 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
               : `not shown: its format could not be checked (${v?.unverified ?? "unreadable reply"})` });
         }
       }
-      if (candidate) tryOn.set(f.name, { value: candidate.value, shown: " (shown above)" });
       questions.push({ target: `value:${f.name}`, kind: "value", slot: f.name, schema: schema ?? null, lines,
                        ...(candidate ? { candidate } : {}) });
       block.push(candidate
@@ -3188,10 +3153,9 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
       block.push(`${it.description ?? it.id}${vals ? ` — for ${vals}` : ""}`);
     }
     for (const r of formItems) {
-      const tried = await tryFormOn(r.proposal, tryOn);
       questions.push({ target: `form:${r.item_id}`, kind: "confirm_form", id: r.item_id, wording: r.wording,
-                       form: r.proposal, text: r.proposal_text, key: r.key, tried });
-      block.push(`"${r.wording}" — will be checked like this: ${r.proposal_text}${tried ? ` — ${tried.text}` : ""}`);
+                       form: r.proposal, text: r.proposal_text, key: r.key });
+      block.push(`"${r.wording}" — will be checked like this: ${r.proposal_text}`);
     }
     // withdraw  a condition the user's later words take back, shown with those words: yes removes it.
     for (const it of withdrawItems) {
@@ -3210,27 +3174,6 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
                    !(f.name in args && sameCallValue(args[f.name], f.value, ctx.fieldSchemas?.[f.name])))
       .map(f => `${f.name} = ${renderValue(f.value, ctx.fieldSchemas?.[f.name])} (${FROM_TEXT[f.source]})`);
     return { questions, block, checks, settled };
-  }
-  // [FORM TRIED] What a proposed form says about the values shown with it, computed by code with the
-  //   same comparison the gate will run (verifyUserChecklistItem). A form is code the user cannot read;
-  //   its result on their own values they can. "with time = … : does not hold" shows a wrong form for
-  //   what it is, where the form's text alone would be approved unread. Nothing is decided here: the
-  //   result is shown, the user answers, and the confirmed form is compared at the trigger as always.
-  //   null when the form names no value, a value it names is not known or shown, or it is not a schema.
-  async function tryFormOn(proposal, tryOn) {
-    const c = proposal?.compare;
-    const slots = Array.isArray(proposal?.constrains) ? proposal.constrains : [];
-    // Not tried: a form about who gives a value or that the user approves (nothing to compute), and one
-    //   that names a measurement (it is measured at the trigger, not from the values shown).
-    if (!c || typeof c !== "object" || c.kind === "value_source" || c.kind === "user_approval" ||
-        c.source === "measured_data" || slots.length === 0) return null;
-    if (!slots.every(n => tryOn.has(n))) return null;
-    const trialFields = slots.map(n => ({ name: n, status: "known", value: tryOn.get(n).value, source: null }));
-    const out = await safeHook(h.verifyUserChecklistItem,
-      [{ id: "form-trial", compare: c, constrains: slots }, { ...ctx, fields: trialFields, extra_fields: [] }], () => null);
-    const on = slots.map(n => `${n} = ${renderValue(tryOn.get(n).value, ctx.fieldSchemas?.[n])}${tryOn.get(n).shown}`).join(", ");
-    const result = out?.status === "verified" ? "holds" : out?.status === "unmet" ? "does not hold" : "cannot be checked";
-    return { on, result, text: `for ${on}: ${result}` };
   }
   const askedThrough = Array.isArray(instruction) ? instruction.length : 0;
 
@@ -3733,14 +3676,6 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
   for (const cond of providerConditions) {
     const label = normalizeProviderLabel(cond?.label);
     const base = { ...cond, id: cond?.id ?? null, label: cond?.label ?? null };
-
-    if (typeof cond?.declared_in === "string" && cond.declared_in.startsWith("inputSchema:")) {
-      // [LABEL OUT OF PLACE] Written where the gate does not read conditions from. The declaration is the gap.
-      finalProviderChecklist.push({ ...base, status: "unverified", source: null, route: "definition_repair",
-        note: `a labelled line in an argument's description (${cond.declared_in.slice("inputSchema:".length)}) is not read as a condition: ` +
-              "write it in the tool's description, or reword it" });
-      continue;
-    }
 
     if (label === null) {
       // Not a condition we can act on, and not one we may drop. The declaration itself is the gap.
@@ -4248,7 +4183,11 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.39",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.40",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.40: [LABEL OUT OF PLACE] and [FORM TRIED] removed. A labelled line in an argument's description is
+    //        prose, as before 1.37 (the provider's conditions are read from the tool's description, 4.2.1). A
+    //        confirm_form question no longer carries tried, and its block line no longer says what the form
+    //        gives on the values shown.
     //   1.39: [CALL DISAGREES] removed. A value the user approved stands when the model's call says another:
     //        the call's arguments are not values (5.2), and a proposed value is the user's to confirm. No
     //        field call_disagrees, no question disagrees, no approval.disagreed_with.
