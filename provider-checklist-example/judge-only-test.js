@@ -198,7 +198,7 @@ function askAllGiven(id) {
     const heard = g1.heard[1] ?? [];
     const at = heard.findIndex(m => m.role === "assistant" && m.tool_calls?.length);
     check("the gate asked: the model's next turn has its call, then the result: the question the seller was shown",
-      [at >= 0, heard[at + 1]?.role, String(heard[at + 1]?.content).startsWith("Not run yet. The system is asking the user first. The user was shown:\n"), heard.at(-1)],
+      [at >= 0, heard[at + 1]?.role, String(heard[at + 1]?.content).startsWith("Not run yet, and nothing has been sent. The system is asking the user first. When the user answers, call the tool again with the same request: the system reads the answer then. The user was shown:\n"), heard.at(-1)],
       [true, "tool", true, { role: "user", content: "yes" }]);
     const { coerceMessageLikeToMessage } = require(path.join(__dirname, "..", "adopt-example", "node_modules", "@langchain", "core", "messages"));
     const lc = heard.map(m => coerceMessageLikeToMessage(m));
@@ -578,27 +578,29 @@ function askAllGiven(id) {
 
   console.log("\n--- 1-j. a value the user approved, then changed in later words: the later words are read ([SAID AFTER]) ---");
   {
-    // The seller approves 2pm; the assistant then answers in words, without calling; the seller types
-    //   another time. The gate judges on the next call. Before 1.31 the lookup ended at the approval, and
-    //   the pickup ran at 2pm.
-    let turnNo = 0;
-    const r = await run("g1-01", "clean", ["yes", "Make it Saturday 7pm instead.", "yes"],
-      { chat: (a, inner) => (++turnNo === 2 ? { text: "Noted." } : inner(a)) });
-    const asks = r.records.filter(x => x.execution_decision === "ask_user");
-    const second = asks.at(-1), time = second?.fields?.find(f => f.name === "time");
-    check("the seller's yes, then a new time: asked again, the new time shown, nothing run on the old one",
-      [asks.length, second?.gate?.question_block?.[0], r.calls.map(c => c.args.time)],
-      [2, "time = 2026-10-31 (Sat) 19:00 +09:00", ["2026-10-31T19:00:00+09:00"]]);
-    check("  the record says the approval no longer counts, and which words replaced it",
-      [time?.lookup_trace?.[0], time?.answer_superseded?.value, Number.isInteger(time?.answer_superseded?.by?.segment_index),
-       time?.answer_superseded?.by?.segment_index > time?.answer_superseded?.approval?.located_at?.segment_index],
-      [{ source: "user_answer", result: "superseded" }, SAT_2PM, true, true]);
-    check("  the seller's yes to the new time settles it: executed once, at 7pm", [r.last.status, r.calls.length], ["executed", 1]);
+    // Through this example, an approval and a change in a later message no longer meet: the waiting call is
+    //   judged on the reply itself (judge-only-example, 8), so a yes runs before a later message arrives.
+    //   (Before this change to the example, the assistant could answer the yes in words, the seller then typed
+    //   another time, and the next call met both.) The library's own case, approval then later words, is
+    //   hooks-example/value-source-test.js part 13; the same message, below.
     // Words before the approval change nothing: the plain run still settles on the approved value.
     const plain = await run("g1-01", "clean", ["yes"]);
     const pt = plain.records.filter(x => x.execution_decision === "execute").at(-1)?.fields?.find(f => f.name === "time");
     check("an approval with no later words about the value stands", [pt?.source, pt?.lookup_trace?.[0]?.result, "answer_superseded" in (pt ?? {})],
       ["user_answer", "found", false]);
+    // A real run (Opus 5.5, 1.37): after the seller's yes the model did not call again, and said the
+    //   pickup had been sent. The waiting call goes to the gate again (judge-only-example, 8).
+    const SAID_SENT = "You've confirmed the time, so the pickup request is going ahead. Here's what I sent.";
+    const noRecall = (a, inner) => (a?.messages?.at(-1)?.content === "yes" && a.messages.at(-2)?.role === "tool" ? { text: SAID_SENT } : inner(a));
+    const rs = await run("g1-01", "clean", ["yes"], { chat: noRecall });
+    check("the model answers the seller's yes in words, without calling: the waiting call is judged again and runs",
+      [rs.last.status, rs.last.resubmitted, rs.calls.map(c => c.args.time), rs.records.filter(x => x.actor !== "executor").map(x => x.execution_decision)],
+      ["executed", true, ["2026-10-31T14:00:00+09:00"], ["ask_user", "execute"]]);
+    check("  and what the model said is not shown or kept: it said the pickup had been sent before anything ran",
+      [rs.last.reply, rs.heard.flat().some(m => String(m?.content ?? "").includes("going ahead"))], [undefined, false]);
+    const rc = await run("g1-01", "order_cancelled", ["yes"], { chat: noRecall });
+    check("  after a call that did not run, nothing waits: the model's words are its reply, nothing judged again",
+      [rc.last.status, rc.last.resubmitted, rc.calls.length, rc.records.filter(x => x.actor !== "executor").length], ["replied", undefined, 0, 1]);
     // [ANSWER CARRIED] A real run (Haiku 5.5, 1.37): the item line was put in the form of a user approval,
     //   asked with the time, and approved in "yes, but make it Saturday 7pm". The next round asked the new
     //   time only. In the round after, the reader placed the item's yes on the last "yes", which answered
