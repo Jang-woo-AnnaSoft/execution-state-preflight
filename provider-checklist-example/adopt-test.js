@@ -210,6 +210,21 @@ function askAllGiven(id) {
   const cancelled = await run("g1-01", "clean", {}, ["CANCEL"]);
   check("the seller stops: nothing runs", [cancelled.last.status, cancelled.calls.length], ["cancelled", 0]);
 
+  console.log("\n--- 3-y. the model's settings, from the environment ---");
+  {
+    const { modelOptions } = require("../adopt-example/connect");
+    const err = env => { try { modelOptions(env); return null; } catch (e) { return e.message; } };
+    check("nothing set: nothing sent", modelOptions({}), {});
+    check("TEMPERATURE=0: sent", modelOptions({ TEMPERATURE: "0" }), { temperature: 0 });
+    check("MODEL_OPTIONS: given as it is", modelOptions({ MODEL_OPTIONS: '{"useResponsesApi":true,"reasoning":{"effort":"low"}}' }),
+      { useResponsesApi: true, reasoning: { effort: "low" } });
+    check("both: TEMPERATURE over MODEL_OPTIONS", modelOptions({ MODEL_OPTIONS: '{"temperature":1,"useResponsesApi":true}', TEMPERATURE: "0" }),
+      { temperature: 0, useResponsesApi: true });
+    check("MODEL_OPTIONS not JSON, or not an object: an error",
+      [/not JSON/.test(err({ MODEL_OPTIONS: "useResponsesApi=true" }) ?? ""), /JSON object/.test(err({ MODEL_OPTIONS: "[1]" }) ?? ""),
+       /JSON object/.test(err({ MODEL_OPTIONS: "true" }) ?? "")], [true, true, true]);
+  }
+
   console.log("\n--- 3-z. a model's answer that is not JSON keeps what it wrote ---");
   {
     const { readJsonReply } = require("../adopt-example/connect");
