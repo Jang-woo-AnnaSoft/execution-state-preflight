@@ -140,6 +140,9 @@ be compared by code, the same way every time: no model judges at run time whethe
 files. The provider's package reads its own key: `ANTHROPIC_API_KEY` for `@langchain/anthropic`,
 `OPENAI_API_KEY` for `@langchain/openai`.
 
+**Model settings.** `MODEL_OPTIONS` takes a JSON object and gives it to the provider's package as it
+is. Some OpenAI models call tools only through the Responses API: `MODEL_OPTIONS='{"useResponsesApi":true}'`.
+
 **Fail-closed.** As shipped, the tool is declared but nothing is connected: no measurement, so the
 `[Required]` lines are unverified, and no tool to call. Nothing runs: the example asks nothing and ends
 by saying it did not run and which lines could not be checked. That is the expected first result.

@@ -20,6 +20,9 @@
  *                    Install that provider's package too (e.g. npm install @langchain/anthropic).
  *                    The provider package reads its own key from the environment
  *                    (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY).
+ *   MODEL_OPTIONS    optional: a JSON object given to that package as it is, e.g. '{"useResponsesApi":true}'
+ *                    for an OpenAI model that calls tools only through the Responses API
+ *   TEMPERATURE      optional: sent only when set, e.g. TEMPERATURE=0
  *   TOOLS_FILE       your declaration of the tools: files in the format of tool.md, separated by
  *                    commas (default ./tool.md, beside this file)
  *   MCP_SERVER_URL   only with the MCP connection below, uncommented: the server that serves the tools
@@ -50,12 +53,23 @@ function model() {
   if (!modelPromise) {
     if (!process.env.MODEL) throw new Error("set MODEL, e.g. MODEL=anthropic:<model-name>");
     const { initChatModel } = require("langchain/chat_models/universal");
-    // No sampling setting is sent unless you set one: some models refuse a temperature other than their
-    //   default. TEMPERATURE=0 sends it, for a model that takes it.
-    const temperature = process.env.TEMPERATURE;
-    modelPromise = initChatModel(process.env.MODEL, temperature === undefined || temperature === "" ? {} : { temperature: Number(temperature) });
+    modelPromise = initChatModel(process.env.MODEL, modelOptions());
   }
   return modelPromise;
+}
+// The provider's own settings, from MODEL_OPTIONS: a JSON object, given as it is. This file reads
+//   nothing in it; which settings there are is the provider package's. Not a JSON object: an error,
+//   before any model is called.
+// No sampling setting is sent unless you set one: some models refuse a temperature other than their
+//   default. TEMPERATURE=0 sends it, for a model that takes it, over one in MODEL_OPTIONS.
+function modelOptions(env = process.env) {
+  let options = {};
+  if (env.MODEL_OPTIONS !== undefined && env.MODEL_OPTIONS !== "") {
+    try { options = JSON.parse(env.MODEL_OPTIONS); } catch (e) { throw new Error(`MODEL_OPTIONS is not JSON (${e.message})`); }
+    if (options === null || typeof options !== "object" || Array.isArray(options)) throw new Error("MODEL_OPTIONS must be a JSON object");
+  }
+  const temperature = env.TEMPERATURE;
+  return temperature === undefined || temperature === "" ? options : { ...options, temperature: Number(temperature) };
 }
 const MODEL_NAME = process.env.MODEL ?? "model";
 const textOf = res => (typeof res.content === "string" ? res.content
@@ -309,6 +323,6 @@ async function readPreSet(userId, toolName) {
 const checkpointer = new MemorySaver();
 
 module.exports = { ask, say, chat, listTools, readToolDefinition, measure, labelInput, notify, callTool, store, readPreSet, checkpointer,
-                   MEASUREMENTS, TOOLS, MODEL_NAME, readToolFile, readJsonReply };
+                   MEASUREMENTS, TOOLS, MODEL_NAME, readToolFile, readJsonReply, modelOptions };
 // With the MCP connection above uncommented:
 //   listTools: mcpListTools, readToolDefinition: mcpReadToolDefinition, callTool: mcpCallTool
