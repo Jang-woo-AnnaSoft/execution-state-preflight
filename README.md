@@ -101,6 +101,20 @@ Not a new layer. It does for the owner of each value what the frame already does
 
 [The case report](./case-muse-marketplace.en.md) maps this incident's message log onto the checklists and is explicit about what this gate would **not** have caught.
 
+### What it costs, and where it fits
+
+The work is not new. To make a call, a model already reads when to run, which act, which tool, the user's limits and the arguments. The gate takes those readings out as separate steps, each with where it was read; code rules on them and writes the record.
+
+The cost is in model calls. In the example, each turn the gate judged took about five more calls. These are the readings above: what a model does inside, turned into steps. They are counted as calls because the call's arguments are not taken as values (spec 5.2): the model reads once inside, and the gate asks again. Each blank the user had to fill took about three more. The provider's lines are translated once per tool definition and kept.
+
+Where it fits: executions that are hard to undo, such as a transfer, a payment, a door unlocked or a machine started (spec 1.1). It runs once per state change; a read such as a balance check need not go through it.
+
+Where it does not: control loops that run in milliseconds. The calls take seconds.
+
+The gate's model reads the user's words. Which model that is, and where it runs, is the adopting system's choice; it can differ from the agent's model (`adopt-example/connect.js` says where to split).
+
+Tested with eight models from two providers (Claude, OpenAI), twelve runs each on the example's scenarios: no wrong execution. A small model could not translate one of the provider's lines, and those runs stopped for definition repair. It also translated another line into a weaker check; a kept translation carries such a mistake until someone reads it. Not tested: banking, payments or physical systems.
+
 ---
 
 ## The three checklists

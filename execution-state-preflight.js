@@ -3095,8 +3095,15 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
   //     confirm_form  a condition the user stated, shown with what it would check, for the user to confirm
   //   question_block is what code writes for the user to see with the model's question: each value as it
   //   will be used, rendered by code ([RENDERED VALUES]). A yes approves exactly what was shown there.
-  async function buildQuestions({ askFields, approveItems, formItems, withdrawItems = [], values = [] }) {
+  //   [SHOWN TOGETHER] waitingItems: items the user approves (no form fits, or kind user_approval) that
+  //   wait on a blank. When this question shows a value for every blank one waits on, the item is asked
+  //   in the same question, for those values (4.6: several items at once). The approval is bound to them
+  //   (6.3): if the user settles another value, it is void and the item is asked again. Without this,
+  //   a yes to the value only made the item askable, and it took the next question; a real model's run
+  //   ran out of asks on "between 1pm and 6pm" after the seller had said "Saturday 3pm".
+  async function buildQuestions({ askFields, approveItems, formItems, withdrawItems = [], values = [], waitingItems = [] }) {
     const questions = [], block = [], checks = [];
+    const shownValues = {};
     for (const f of askFields) {
       const schema = ctx.fieldSchemas?.[f.name];
       const lines = providerConditions
@@ -3138,13 +3145,21 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
               : `not shown: its format could not be checked (${v?.unverified ?? "unreadable reply"})` });
         }
       }
+      if (candidate) shownValues[f.name] = candidate.value;
       questions.push({ target: `value:${f.name}`, kind: "value", slot: f.name, schema: schema ?? null, lines,
                        ...(candidate ? { candidate } : {}) });
       block.push(candidate
         ? `${f.name} = ${candidate.shown_text}${candidate.from_text ? ` (${candidate.from_text})` : ""}`
         : `${f.name}: not given yet`);
     }
-    for (const it of approveItems) {
+    const valuesByName = new Map(values.map(f => [f?.name, f]));
+    const shownWith = waitingItems.filter(it => Array.isArray(it.waiting_on) && it.waiting_on.length > 0 &&
+      it.waiting_on.every(n => n in shownValues)).map(it => {
+      const shown = { ...approvalPrompt(it, valuesByName).shown };
+      for (const n of it.waiting_on) shown[n] = shownValues[n];
+      return { id: it.id, description: it.description ?? it.stated_as ?? null, approve: { rule_hash: it.rule_hash ?? null, shown } };
+    });
+    for (const it of [...approveItems, ...shownWith]) {
       const shown = it.approve?.shown ?? {};
       const shown_text = Object.fromEntries(Object.entries(shown).map(([k, v]) => [k, renderValue(v, ctx.fieldSchemas?.[k])]));
       questions.push({ target: `approve:${it.id}`, kind: "approve", id: it.id, label: it.label ?? null,
@@ -4071,6 +4086,8 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
       formItems: formRequests.filter(r => r.proposal && unverifiedItems.some(i => i.form_pending && i.id === r.item_id)),
       withdrawItems: unverifiedItems.filter(i => i.withdrawal?.status === "proposed"),
       values: [...fields, ...extra_fields],
+      waitingItems: finalUserChecklist.filter(i => i.status === "pending_on_slot" && !i.form_pending &&
+        (i.form_none || i.compare?.kind === "user_approval")),
     });
     value_checks.push(...asked.checks);
     gate.questions = asked.questions;
@@ -4183,7 +4200,10 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.40",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.41",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.41: [SHOWN TOGETHER] an item the user approves (no form fits, or kind user_approval) that waits on a
+    //        blank is asked in the same question when the question shows a value for that blank, for that
+    //        value. gate.questions may carry approve questions for items that are pending_on_slot.
     //   1.40: [LABEL OUT OF PLACE] and [FORM TRIED] removed. A labelled line in an argument's description is
     //        prose, as before 1.37 (the provider's conditions are read from the tool's description, 4.2.1). A
     //        confirm_form question no longer carries tried, and its block line no longer says what the form
