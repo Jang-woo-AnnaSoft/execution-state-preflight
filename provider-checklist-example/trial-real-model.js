@@ -16,7 +16,7 @@
  *     each --reply is what the seller says next, whether the gate asked or the assistant did
  *   add --no-checklist to have the seller's conditions taken from their words and put into a form by
  *     the model, instead of handed in with the forms the test data already wrote
- *   add --form to answer the gate's questions through the form (answerSchema/answerText), not in words.
+ *   add --form to answer the gate's questions through the form (answerSchema; each field a segment of the user's), not in words.
  *     A --reply is then "yes" or "no" (every yes-or-no field), or JSON: a slot's name with the value
  *     typed for it ("time": "Saturday 3pm"), a target with its answer, a condition's words for whether it
  *     holds for the values shown and whether it goes ("Nothing after 8pm": false: it does not hold, and it

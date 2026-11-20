@@ -885,12 +885,16 @@ function askAllGiven(id) {
   check("every decision record: ready exactly when the gate decided execute", disagree, []);
   check("  and some of them were ready (the check is not empty)", [verdicts > 35, ready > 0], [true, true]);
 
-  console.log("\n--- 6. answers from a form, as LangGraph's interrupt takes them (responseSchema) ---");
+  console.log("\n--- 6. answers from a form: each field a segment of the user's, the field its location (5.2) ---");
   {
-    // [FORM ANSWERS] The questions as a form: one field per question. The answers are checked by the same
-    //   validator, written as the seller's words in fixed lines, and read by code, not by a model.
-    const { answerSchema, answerText, checkAgainst: ca } = require(path.join(ADOPT, "judge-only"));
+    // [FORM FIELDS] The questions as a form, one field per question (formSchema). The answers come in as
+    //   the user's segments, one per field (formSegments): a yes or no or a choice is read by code, a value
+    //   typed into a field is the user's words for that slot. Neither is read by a model as words.
+    const { answerSchema, checkAgainst: ca } = require(path.join(ADOPT, "judge-only"));
+    const { formSegments } = require(path.join(__dirname, "..", "execution-state-preflight"));
     const yesTo = qs => Object.fromEntries(qs.filter(q => q.kind !== "value" || q.candidate).map(q => [q.target, true]));
+    const keep = (qs, words) => Object.fromEntries(qs.filter(q => q.kind !== "value" || q.candidate)
+      .map(q => [q.target, !((q.kind === "approve" || q.kind === "withdraw") && [q.description, q.stated_as].includes(words))]));
     const a1 = await run("g1-01", "clean", []);
     const qs1 = a1.first.question?.questions ?? [];
     const sc = answerSchema(qs1);
@@ -899,37 +903,64 @@ function askAllGiven(id) {
     check("  a yes, another value typed, a number, a field not asked: what the form takes",
       [ca(sc, { "value:time": true }).ok, ca(sc, { "value:time": "Saturday 3pm" }).ok, ca(sc, { "value:time": 3 }).ok, ca(sc, { "value:item": true }).ok],
       [true, true, false, false]);
-    const thrown = f => { try { f(); return null; } catch (e) { return e.message; } };
-    check("  answers that do not fit are not taken: no words are written for them",
-      [/do not fit the form/.test(thrown(() => answerText(qs1, { "value:time": 3 })) ?? ""), /no answer/.test(thrown(() => answerText(qs1, {})) ?? "")], [true, true]);
-    check("  the words written, one line per answer", answerText(qs1, { "value:time": true }), "Answers to the questions:\n- value:time: yes");
+    check("the answers as segments: a yes or no without words, a typed value as words, both the user's and named by the field",
+      formSegments({ "value:time": true, "value:location": "Gangnam station exit 3" }),
+      [{ trust: "user", field: "value:time", answer: true }, { trust: "user", field: "value:location", text: "Gangnam station exit 3" }]);
+    check("  MCP's accept carries the answers in content; decline and cancel are no answer: nothing is written",
+      [formSegments({ action: "accept", content: { "value:time": false } }), formSegments({ action: "decline" }), formSegments({ action: "cancel" })],
+      [[{ trust: "user", field: "value:time", answer: false }], [], []]);
     const f1 = await run("g1-01", "clean", [{ answers: yesTo(qs1) }]);
-    const readsAfterAsk = f1.prompts.filter(p => p.hook === "replies").length;
-    check("g1-01 answered by a form: executes, and no model reads the reply", [f1.last.status, readsAfterAsk], ["executed", 0]);
     const f1r = f1.records.filter(x => x.execution_decision === "execute").at(-1);
-    check("  the time is the seller's, bound to what was shown, located in the form's words",
-      [f1r?.fields?.find(f => f.name === "time")?.source, f1r?.fields?.find(f => f.name === "time")?.approval?.shown?.time], ["user_answer", SAT_2PM]);
-    // Values the seller types into the form: read from the seller's words as any value is, then shown.
+    const t1 = f1r?.fields?.find(f => f.name === "time");
+    check("g1-01 answered by a form: executes, no model reads the reply, and the yes is located at its field",
+      [f1.last.status, f1.prompts.filter(p => p.hook === "replies").length, t1?.source, t1?.approval?.shown?.time,
+       (f1r?.value_checks ?? []).find(c => c.target === "value:time" && c.status === "checked")?.located_at?.field],
+      ["executed", 0, "user_answer", SAT_2PM, "value:time"]);
+    // Values the seller types into the form are the seller's words for the slot (instruction, 5.3).
     const g2 = await run("g2-01", "clean", [], { userChecklist: [] });
     const qs2 = g2.first.question?.questions ?? [];
     const typed = { "value:time": "Saturday 3pm", "value:location": "Hongdae station lockers", ...yesTo(qs2) };
     const f2 = await run("g2-01", "clean", [{ answers: typed }, { answers: "next" }], { userChecklist: [], formNext: yesTo });
-    check("g2-01 by a form: the values typed, then a yes to what is shown; executes at 15:00",
-      [f2.last.status, f2.calls[0]?.args?.time, f2.calls[0]?.args?.location], ["executed", "2026-10-31T15:00:00+09:00", "Hongdae station lockers"]);
-    // With LangGraph itself: the schema on interrupt(), the answers through Command({ resume }).
+    const f2r = f2.records.filter(x => x.execution_decision === "execute").at(-1);
+    const l2 = f2r?.fields?.find(f => f.name === "location");
+    check("g2-01 by a form: the values typed, then a yes to what is shown; executes at 15:00, the place located at its field",
+      [f2.last.status, f2.calls[0]?.args?.time, f2.calls[0]?.args?.location, l2?.source, l2?.located_at?.field],
+      ["executed", "2026-10-31T15:00:00+09:00", "Hongdae station lockers", "instruction", "value:location"]);
+    const f3 = await run("g1-01", "clean", [{ answers: { ...yesTo(qs1), "approve:not-asked": true } }]);
+    check("a field not asked is not taken, and the record says so; the others stand",
+      [f3.last.status, f3.records.some(x => (x.value_checks ?? []).some(c => c.target === "approve:not-asked" && c.status === "rejected" && /not asked/.test(c.note ?? "")))],
+      ["executed", true]);
+    const f4 = await run("g1-01", "clean", [{ answers: { "value:time": 3 } }]);
+    check("  a field of the wrong kind is not taken: still waiting, the record says so",
+      [f4.last.status, f4.records.some(x => (x.value_checks ?? []).some(c => c.target === "value:time" && c.status === "rejected"))], ["waiting", true]);
+    const f5 = await run("g1-01", "clean", [{ answers: { action: "decline" } }]);
+    check("  declined: nothing is written, and the same question waits",
+      [f5.last.status, (f5.last.question?.questions ?? []).map(q => q.target)], ["waiting", qs1.map(q => q.target)]);
+    // The real run (gpt-6.2-sol, f-g2-01-late, 1.42): a form's answers in fixed lines were read again by the
+    //   model that reads the user's conditions, as taking back "Nothing after 8pm". Fields are not words.
+    const noType = inner => async (m, system, user, hook) =>
+      (hook === "comparable_form" && String(user).includes("Nothing after 8pm")
+        ? { form: { compare: { pattern: "T(?:[01][0-9]:[0-5][0-9]:[0-9]{2}|20:00:00)" }, constrains: ["time"] } }
+        : inner(m, system, user, hook));
+    const late = await run("g2-01", "clean", ["Schedule the pickup: Saturday 9pm, Hongdae station lockers", { answers: "next" }],
+      { ask: noType(makeAsk("g2-01")), userChecklist: [], formNext: qs => keep(qs, "Nothing after 8pm") });
+    const lateRec = late.records.filter(x => x.actor !== "executor" && "execution_decision" in x).at(-1);
+    const condPrompts = late.prompts.filter(p => p.hook === "user_conditions").map(p => String(p.user));
+    check("the real run by a form: the seller keeps the 8pm limit; it holds on that limit, and no condition reader sees the form",
+      [late.last.status, lateRec?.execution_decision, /uc:17/.test(lateRec?.reason ?? ""), condPrompts.some(u => /approve:uc|withdraw:uc|value:time/.test(u))],
+      ["not_executed", "hold", true, false]);
+    // With LangGraph itself: the schema on interrupt(), the answers through Command({ resume }), as segments.
     const { StateGraph, Annotation, interrupt, Command, MemorySaver, START, END } = require(path.join(ADOPT, "node_modules", "@langchain/langgraph"));
-    const G = Annotation.Root({ text: Annotation() });
-    const graph = new StateGraph(G).addNode("ask", () => {
-      const answers = interrupt({ block: a1.first.question.block }, { responseSchema: answerSchema(qs1) });
-      return { text: answerText(qs1, answers) };
-    }).addEdge(START, "ask").addEdge("ask", END).compile({ checkpointer: new MemorySaver() });
+    const G = Annotation.Root({ segs: Annotation() });
+    const graph = new StateGraph(G).addNode("ask", () => ({ segs: formSegments(interrupt({ block: a1.first.question.block }, { responseSchema: answerSchema(qs1) })) }))
+      .addEdge(START, "ask").addEdge("ask", END).compile({ checkpointer: new MemorySaver() });
     const cfg = { configurable: { thread_id: "form" } };
     await graph.invoke({}, cfg);
     const waiting = (await graph.getState(cfg)).tasks.flatMap(t => t.interrupts ?? [])[0];
     const done = await graph.invoke(new Command({ resume: { "value:time": true } }), cfg);
-    check("LangGraph: the form's schema rides on the interrupt, and the answers come back as the seller's words",
-      [JSON.stringify(waiting?.response_schema ?? waiting?.responseSchema) === JSON.stringify(answerSchema(qs1)), done.text],
-      [true, "Answers to the questions:\n- value:time: yes"]);
+    check("LangGraph: the form's schema rides on the interrupt, and the answers come back as the user's segments",
+      [JSON.stringify(waiting?.response_schema ?? waiting?.responseSchema) === JSON.stringify(answerSchema(qs1)), done.segs],
+      [true, [{ trust: "user", field: "value:time", answer: true }]]);
   }
 
   console.log(failed ? `\n${failed} FAILED` : "\nall ok");
