@@ -18,7 +18,9 @@
  *     the model, instead of handed in with the forms the test data already wrote
  *   add --form to answer the gate's questions through the form (answerSchema/answerText), not in words.
  *     A --reply is then "yes" or "no" (every yes-or-no field), or JSON: a slot's name with the value
- *     typed for it ("time": "Saturday 3pm"), a target with its answer, and "*" for every yes-or-no field.
+ *     typed for it ("time": "Saturday 3pm"), a target with its answer, a condition's words for whether it
+ *     holds for the values shown and whether it goes ("Nothing after 8pm": false: it does not hold, and it
+ *     stays), and "*" for every other yes-or-no field, a form to confirm included.
  *     A choice is the value of its slot, matched to a choice shown. When the gate asked nothing (the
  *     assistant asked or answered itself), the reply goes in as words.
  *   add --show-lines, --no-label-note and --principles spec to change what the agent's model is shown
@@ -59,6 +61,8 @@ function formAnswers(questions, reply) {
   const out = {};
   for (const q of questions) {
     if (q.target in o) { out[q.target] = o[q.target]; continue; }
+    const about = [q.description, q.stated_as, q.wording].find(w => typeof w === "string" && typeof o[w] === "boolean");
+    if (about !== undefined && (q.kind === "approve" || q.kind === "withdraw")) { out[q.target] = o[about]; continue; }
     const typed = q.kind === "value" ? o[q.slot] : undefined;
     if (q.kind === "value" && Array.isArray(q.choices)) {
       const want = typeof typed === "string" ? typed : o.__text;
