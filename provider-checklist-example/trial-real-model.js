@@ -16,6 +16,11 @@
  *     each --reply is what the seller says next, whether the gate asked or the assistant did
  *   add --no-checklist to have the seller's conditions taken from their words and put into a form by
  *     the model, instead of handed in with the forms the test data already wrote
+ *   add --form to answer the gate's questions through the form (answerSchema/answerText), not in words.
+ *     A --reply is then "yes" or "no" (every yes-or-no field), or JSON: a slot's name with the value
+ *     typed for it ("time": "Saturday 3pm"), a target with its answer, and "*" for every yes-or-no field.
+ *     A choice is the value of its slot, matched to a choice shown. When the gate asked nothing (the
+ *     assistant asked or answered itself), the reply goes in as words.
  *   add --show-lines, --no-label-note and --principles spec to change what the agent's model is shown
  *     (see below), and compare how it calls
  *   node trial-real-model.js --stub          # the stand-in model, to check this script itself
@@ -45,6 +50,25 @@ const replies = all("reply").length ? all("reply") : ["yes"];
 //   them with their comparison forms already written). The gate then takes them from the seller's words,
 //   and the model puts each into a form for the seller to confirm: the path a real conversation takes.
 const NO_CHECKLIST = argv.includes("--no-checklist");
+const FORM = argv.includes("--form");
+// A scripted reply as the form's answers, for the questions the gate is waiting on.
+function formAnswers(questions, reply) {
+  let o;
+  try { o = reply.trim().startsWith("{") ? JSON.parse(reply) : null; } catch { o = null; }
+  if (!o) o = /^yes\b/i.test(reply.trim()) ? { "*": true, __text: reply } : /^no\b/i.test(reply.trim()) ? { "*": false, __text: reply } : { __text: reply };
+  const out = {};
+  for (const q of questions) {
+    if (q.target in o) { out[q.target] = o[q.target]; continue; }
+    const typed = q.kind === "value" ? o[q.slot] : undefined;
+    if (q.kind === "value" && Array.isArray(q.choices)) {
+      const want = typeof typed === "string" ? typed : o.__text;
+      const i = typeof want === "string" ? q.choices.findIndex(c => [c.value, c.shown_text].some(v => typeof v === "string" && want.includes(v))) : -1;
+      if (i >= 0) out[q.target] = i;
+    } else if (typeof typed === "string") out[q.target] = typed;
+    else if (typeof o["*"] === "boolean" && !(q.kind === "value" && !q.candidate)) out[q.target] = o["*"];
+  }
+  return out;
+}
 const EXPECT_TIME = "2026-10-31T14:00:00+09:00";
 // What the agent's model is shown, to compare how it calls:
 //   --show-lines         the tool's whole description, labelled lines included, as a host that lists a
@@ -70,7 +94,7 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
   const stub = STUB ? require("./stub") : null;
   const askInner = STUB ? stub.makeAsk(id) : real.ask;
   const chatInner = STUB ? stub.makeChat() : real.chat;
-  const log = { model: STUB ? "stub" : process.env.MODEL, id, condition, date: dateMode,
+  const log = { model: STUB ? "stub" : process.env.MODEL, id, condition, date: dateMode, form: FORM,
     shown: { lines: SHOW_LINES, label_note: LABEL_NOTE, principles: PRINCIPLES }, started: new Date().toISOString(), calls: [], turns: [] };
 
   async function timed(hook, prompt, fn) {
@@ -144,9 +168,16 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
   let n = 0;
   show(r);
   while (["waiting", "replied", "not_executed"].includes(r.status) && n < replies.length) {
-    console.log(`\nThe seller: ${replies[n]}\n`);
-    r = await main.turn({ threadId, message: { typed: replies[n] }, userChecklist: NO_CHECKLIST ? [] : (instruction.user_checklist ?? []) });
-    log.turns.push({ said: replies[n], result: r });
+    const qs = r.status === "waiting" ? (r.question?.questions ?? []) : [];
+    // Nothing in the reply fits a field (the seller restates the act), or a field wants a value typed and
+    //   the reply is words, not JSON (its value is in the words, not in a field): words.
+    const wantsTyped = qs.some(q => q.kind === "value" && !q.candidate && !Array.isArray(q.choices));
+    const fa = FORM && qs.length && !(wantsTyped && !replies[n].trim().startsWith("{")) ? formAnswers(qs, replies[n]) : null;
+    const answers = fa && Object.keys(fa).length ? fa : undefined;
+    console.log(`\nThe seller${answers ? " (form)" : ""}: ${answers ? JSON.stringify(answers) : replies[n]}\n`);
+    r = await main.turn({ threadId, ...(answers ? { answers } : { message: { typed: replies[n] } }), userChecklist: NO_CHECKLIST ? [] : (instruction.user_checklist ?? []) });
+    log.turns.push({ said: replies[n], ...(answers ? { answers } : {}), result: r });
+    if (r.status === "answers_not_taken") console.log(`\n→ the form's answers were not taken: ${r.why}`);
     n++;
     show(r);
   }

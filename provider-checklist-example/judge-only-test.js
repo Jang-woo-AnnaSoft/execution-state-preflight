@@ -82,7 +82,11 @@ async function run(id, condition, replies = [], over = {}) {
   const userChecklist = over.userChecklist ?? S.instructions.find(i => i.id === id).user_checklist ?? [];
   const first = await main.turn({ threadId, message: { typed: "(stand-in)" }, userChecklist });
   let last = first;
-  for (const r of replies) last = await main.turn({ threadId, message: { typed: r }, userChecklist });
+  // A reply is what the seller typed, or { answers } from a form ([FORM ANSWERS]).
+  for (const r of replies) {
+    const answers = r?.answers === "next" ? over.formNext(last.question?.questions ?? []) : r?.answers;
+    last = await main.turn({ threadId, ...(typeof r === "string" ? { message: { typed: r } } : { answers }), userChecklist });
+  }
   const records = await s.store.list(`user:${TOOL.name}:${threadId}`);
   return { first, last, calls: s.calls, events: s.events, shown: s.shown, heard: s.heard, prompts: s.prompts, store: s.store, key: `user:${TOOL.name}:${threadId}`, records };
 }
@@ -880,6 +884,53 @@ function askAllGiven(id) {
   check("35 runs: the first verdict is the arm's", firstMismatch, []);
   check("every decision record: ready exactly when the gate decided execute", disagree, []);
   check("  and some of them were ready (the check is not empty)", [verdicts > 35, ready > 0], [true, true]);
+
+  console.log("\n--- 6. answers from a form, as LangGraph's interrupt takes them (responseSchema) ---");
+  {
+    // [FORM ANSWERS] The questions as a form: one field per question. The answers are checked by the same
+    //   validator, written as the seller's words in fixed lines, and read by code, not by a model.
+    const { answerSchema, answerText, checkAgainst: ca } = require(path.join(ADOPT, "judge-only"));
+    const yesTo = qs => Object.fromEntries(qs.filter(q => q.kind !== "value" || q.candidate).map(q => [q.target, true]));
+    const a1 = await run("g1-01", "clean", []);
+    const qs1 = a1.first.question?.questions ?? [];
+    const sc = answerSchema(qs1);
+    check("one field per question, each named by its target; the schema compiles in the strict validator",
+      [Object.keys(sc.properties ?? {}), sc.additionalProperties, ca(sc, {}).error ?? null], [qs1.map(q => q.target), false, null]);
+    check("  a yes, another value typed, a number, a field not asked: what the form takes",
+      [ca(sc, { "value:time": true }).ok, ca(sc, { "value:time": "Saturday 3pm" }).ok, ca(sc, { "value:time": 3 }).ok, ca(sc, { "value:item": true }).ok],
+      [true, true, false, false]);
+    const thrown = f => { try { f(); return null; } catch (e) { return e.message; } };
+    check("  answers that do not fit are not taken: no words are written for them",
+      [/do not fit the form/.test(thrown(() => answerText(qs1, { "value:time": 3 })) ?? ""), /no answer/.test(thrown(() => answerText(qs1, {})) ?? "")], [true, true]);
+    check("  the words written, one line per answer", answerText(qs1, { "value:time": true }), "Answers to the questions:\n- value:time: yes");
+    const f1 = await run("g1-01", "clean", [{ answers: yesTo(qs1) }]);
+    const readsAfterAsk = f1.prompts.filter(p => p.hook === "replies").length;
+    check("g1-01 answered by a form: executes, and no model reads the reply", [f1.last.status, readsAfterAsk], ["executed", 0]);
+    const f1r = f1.records.filter(x => x.execution_decision === "execute").at(-1);
+    check("  the time is the seller's, bound to what was shown, located in the form's words",
+      [f1r?.fields?.find(f => f.name === "time")?.source, f1r?.fields?.find(f => f.name === "time")?.approval?.shown?.time], ["user_answer", SAT_2PM]);
+    // Values the seller types into the form: read from the seller's words as any value is, then shown.
+    const g2 = await run("g2-01", "clean", [], { userChecklist: [] });
+    const qs2 = g2.first.question?.questions ?? [];
+    const typed = { "value:time": "Saturday 3pm", "value:location": "Hongdae station lockers", ...yesTo(qs2) };
+    const f2 = await run("g2-01", "clean", [{ answers: typed }, { answers: "next" }], { userChecklist: [], formNext: yesTo });
+    check("g2-01 by a form: the values typed, then a yes to what is shown; executes at 15:00",
+      [f2.last.status, f2.calls[0]?.args?.time, f2.calls[0]?.args?.location], ["executed", "2026-10-31T15:00:00+09:00", "Hongdae station lockers"]);
+    // With LangGraph itself: the schema on interrupt(), the answers through Command({ resume }).
+    const { StateGraph, Annotation, interrupt, Command, MemorySaver, START, END } = require(path.join(ADOPT, "node_modules", "@langchain/langgraph"));
+    const G = Annotation.Root({ text: Annotation() });
+    const graph = new StateGraph(G).addNode("ask", () => {
+      const answers = interrupt({ block: a1.first.question.block }, { responseSchema: answerSchema(qs1) });
+      return { text: answerText(qs1, answers) };
+    }).addEdge(START, "ask").addEdge("ask", END).compile({ checkpointer: new MemorySaver() });
+    const cfg = { configurable: { thread_id: "form" } };
+    await graph.invoke({}, cfg);
+    const waiting = (await graph.getState(cfg)).tasks.flatMap(t => t.interrupts ?? [])[0];
+    const done = await graph.invoke(new Command({ resume: { "value:time": true } }), cfg);
+    check("LangGraph: the form's schema rides on the interrupt, and the answers come back as the seller's words",
+      [JSON.stringify(waiting?.response_schema ?? waiting?.responseSchema) === JSON.stringify(answerSchema(qs1)), done.text],
+      [true, "Answers to the questions:\n- value:time: yes"]);
+  }
 
   console.log(failed ? `\n${failed} FAILED` : "\nall ok");
   process.exit(failed ? 1 : 0);
