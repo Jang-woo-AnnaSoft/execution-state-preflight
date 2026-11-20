@@ -266,7 +266,10 @@ async function measure(name, settled = {}) {
 // Set on arrival, by your input path, never by the model (spec 5.2). Only what the user typed is
 //   "user". A pasted, forwarded or quoted message, an attachment, another person's message or a
 //   tool's output is "untrusted": the gate never settles a value or an act from it.
-function labelInput({ typed, context = [] }) {
+//   form: the answers from a form made from the gate's questions (answerSchema), as the user's segments,
+//     one per field (5.2). Only what the user entered: never a field a model or the system filled in.
+function labelInput({ typed, context = [], form }) {
+  if (form !== undefined) return require("./judge-only").formSegments(form);
   return [
     ...context.map(c => ({ text: c.text, trust: "untrusted" })),
     { text: typed, trust: "user" },

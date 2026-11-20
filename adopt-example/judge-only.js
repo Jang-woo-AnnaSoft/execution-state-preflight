@@ -39,7 +39,8 @@
  */
 
 // The library: one file, copied beside this folder (the repository layout) or into it.
-const { createPreflight, labelledLines, toolsForModel, stopFacts, keepForPrior, loadPrior, readTranslatedForms, renderValue } = (() => {
+const { createPreflight, labelledLines, toolsForModel, stopFacts, keepForPrior, loadPrior, readTranslatedForms, renderValue,
+        formSchema, formSegments } = (() => {
   try { return require("./execution-state-preflight"); }
   catch (e) { if (e.code !== "MODULE_NOT_FOUND") throw e; return require("../execution-state-preflight"); }
 })();
@@ -132,9 +133,12 @@ function locateQuote(text, quote) {
 }
 
 function trustedText(instruction) {
-  return (instruction ?? []).filter(s => s?.trust === "user").map(s => s.text).join("\n");
+  return (instruction ?? []).filter(s => s?.trust === "user" && typeof s.text === "string").map(s => s.text).join("\n");
 }
-const segmentsOf = instruction => (instruction ?? []).map((s, i) => ({ index: i, trust: s?.trust, text: s?.text }));
+// A field's yes or no is not words: shown to no model as the user's (the gate reads it). A value typed
+//   into a field is the user's words, shown as they are ([FORM FIELDS]).
+const segmentsOf = instruction => (instruction ?? []).map((s, i) => (typeof s?.field === "string" && typeof s?.text !== "string"
+  ? { index: i, trust: "untrusted", text: "" } : { index: i, trust: s?.trust, text: s?.text }));
 const fieldsOf = tool => Object.entries(tool?.inputSchema?.properties ?? {}).map(([n, p]) =>
   `  ${n}: ${[p?.type, p?.format && `format ${p.format}`, p?.pattern && `pattern ${p.pattern}`].filter(Boolean).join(", ")}`).join("\n");
 
@@ -402,8 +406,6 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
     // Where the user's reply answers each question the gate asked. Quotes, located here; the library
     //   keeps a claim only for a question it asked, in the user's words after it ([REPLIES]).
     async readReplies(instruction, questions) {
-      const formed = repliesFromForm(instruction, questions);   // [FORM ANSWERS]: read by code
-      if (formed) return formed;
       const shown = questions.map(q => ({ target: q.target, asked_after_segment: q.asked_through - 1, ...aboutQuestion(q) }));
       const out = await call(
         "The assistant asked the user the questions below. Report where the user's words answer each one. " +
@@ -512,84 +514,12 @@ const QUESTION_SYSTEM =
   "exactly as they will be used.";
 // What a question is about, as the model writing it and the model reading the reply are told: the same
 //   words for both. A model told only a question's kind guessed: "withdraw" became "Cancel the pickup".
-// [FORM ANSWERS] The questions as a form, for an app that asks in fields rather than in conversation:
-//   LangGraph's interrupt(payload, { responseSchema }) renders one (Studio, useStream), and so can any UI.
-//   One field per question, named by its target; none is required, a question left blank stays open.
-//     value with a value shown   yes or no to that value, or the value meant, typed
-//     value with choices          the number of the one chosen
-//     value with nothing shown    the value, typed
-//     approve, confirm_form, withdraw   yes or no to the line as the block shows it
-//   The titles are the block's lines, written by code: a yes approves exactly what they show.
-//   NOTE: LangGraph does not check a JSON Schema resume value against the schema (it does a Zod one), so
-//     answerText checks it, with the same validator, before anything is written.
-const FORM_HEADER = "Answers to the questions:";
-const ONE_LINE = { type: "string", minLength: 1, pattern: "^[^\\r\\n]+$" };
-function answerSchema(questions) {
-  const properties = {};
-  for (const q of questions ?? []) {
-    if (!q || typeof q.target !== "string") continue;
-    if (q.kind === "value" && Array.isArray(q.choices)) {
-      properties[q.target] = { type: "integer", enum: q.choices.map((_, i) => i), title: `${q.slot}: which one?`,
-        description: q.choices.map((c, i) => `${i}: ${c.shown_text}${c.from_text ? ` (${c.from_text})` : ""}`).join("; ") };
-    } else if (q.kind === "value" && q.candidate) {
-      properties[q.target] = { oneOf: [{ type: "boolean" }, ONE_LINE],
-        title: `${q.slot} = ${q.candidate.shown_text}${q.candidate.from_text ? ` (${q.candidate.from_text})` : ""}`,
-        description: "yes to use this value, no if it is not right, or type the value you mean" };
-    } else if (q.kind === "value") {
-      properties[q.target] = { ...ONE_LINE, title: `${q.slot}: not given yet`, description: "type the value" };
-    } else if (q.kind === "approve") {
-      const vals = Object.entries(q.shown_text ?? {}).map(([k, v]) => `${k} = ${v}`).join(", ");
-      properties[q.target] = { type: "boolean", title: `${q.description ?? q.id}${vals ? ` — for ${vals}` : ""}` };
-    } else if (q.kind === "confirm_form") {
-      properties[q.target] = { type: "boolean", title: `"${q.wording}" — will be checked like this: ${q.text}` };
-    } else if (q.kind === "withdraw") {
-      properties[q.target] = { type: "boolean", title: `"${q.stated_as}" — remove this condition? (you said: "${q.withdrawn_by}")` };
-    }
-  }
-  return { type: "object", additionalProperties: false, properties };
-}
-// The answers as the user's words: fixed lines, one per answer, for the input path to label as the
-//   user's (labelInput) and add to the conversation. Answers that do not fit the form are not taken.
-function answerText(questions, answers) {
-  if (!answers || typeof answers !== "object" || Array.isArray(answers)) throw new Error("no answer: the answers are not an object");
-  const out = checkAgainst(answerSchema(questions), answers);
-  if (out.error) throw new Error(`the form's schema cannot be run: ${out.error}`);
-  if (!out.ok) throw new Error(`the answers do not fit the form: ${out.errors}`);
-  const lines = (questions ?? []).filter(q => q && Object.prototype.hasOwnProperty.call(answers, q.target)).map(q => {
-    const a = answers[q.target];
-    const text = a === true ? "yes" : a === false ? "no"
-      : Number.isInteger(a) && Array.isArray(q.choices) ? q.choices[a].shown_text : String(a);
-    return `- ${q.target}: ${text}`;
-  });
-  if (lines.length === 0) throw new Error("no answer to any question asked");
-  return [FORM_HEADER, ...lines].join("\n");
-}
-// The replies in such words, read by code: the latest thing the user typed, when it is those lines.
-//   A typed value is not a reply: it is read from the user's words as any value is (extraction), and
-//   shown for approval. null when the latest is not a form's answers: a model reads it, as before.
-function repliesFromForm(instruction, questions) {
-  const segs = instruction ?? [];
-  let i = segs.length - 1;
-  while (i >= 0 && segs[i]?.trust !== "user") i--;
-  const text = i >= 0 ? String(segs[i].text ?? "") : "";
-  if (!text.startsWith(`${FORM_HEADER}\n`)) return null;
-  const replies = [];
-  let at = FORM_HEADER.length + 1;
-  for (const line of text.slice(at).split("\n")) {
-    const q = (questions ?? []).find(x => typeof x?.target === "string" && line.startsWith(`- ${x.target}: `));
-    if (q) {
-      const from = at + `- ${q.target}: `.length, val = line.slice(`- ${q.target}: `.length);
-      const span = [from, from + val.length];
-      const choice = Array.isArray(q.choices) ? q.choices.findIndex(c => c.shown_text === val) : -1;
-      if (choice >= 0) replies.push({ target: q.target, choice, quote: val, segment_index: i, span });
-      else if ((val === "yes" || val === "no") && !(q.kind === "value" && !q.candidate)) {
-        replies.push({ target: q.target, answer: val === "yes", quote: val, segment_index: i, span });
-      }
-    }
-    at += line.length + 1;
-  }
-  return replies.length ? replies : { none: "absent" };
-}
+// [FORM FIELDS] The questions as a form: the library's formSchema (5.2). An app that asks in fields
+//   rather than in conversation renders it (LangGraph: interrupt(payload, { responseSchema })), and the
+//   answers come back as the user's segments through labelInput({ form }) (formSegments). The gate reads
+//   them itself. NOTE: LangGraph does not check a JSON Schema resume value against it; the gate checks
+//   each field when it reads it, and one not asked, or of the wrong kind, is not taken.
+const answerSchema = questions => formSchema(questions);
 
 function aboutQuestion(q) {
   return {
@@ -645,6 +575,12 @@ function messagesFor(conversation) {
       const result = [CALL_RESULT[c.status] ?? c.status, s.text, settled].filter(Boolean).join("\n");
       return [{ role: "assistant", content: "", tool_calls: [{ id: c.id, name: c.name, args: c.arguments ?? {} }] },
               { role: "tool", tool_call_id: c.id, name: c.name, content: result }];
+    }
+    // A field of the form: shown to the agent's model for the conversation, as what it is ([FORM FIELDS]).
+    //   The gate has read it already; the model's reading of it settles nothing (4.6).
+    if (typeof s.field === "string") {
+      const said = typeof s.text === "string" ? s.text : s.answer === true ? "yes" : s.answer === false ? "no" : JSON.stringify(s.answer);
+      return [{ role: "user", content: `[answered in the form] ${s.field}: ${said}` }];
     }
     return [s.trust === "assistant"
       ? { role: "assistant", content: s.text }
@@ -818,5 +754,5 @@ function createJudge({ ask, measure, readToolDefinition, measurements = [], stor
 
 module.exports = {
   createJudge, judgeRound, writeResult, noticesFor, writeQuestion, writeStop, stopFacts, toolsForModel, messagesFor, afterCall, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
-  createPreflight, labelledLines, readTranslatedForms, renderValue, answerSchema, answerText,
+  createPreflight, labelledLines, readTranslatedForms, renderValue, answerSchema, formSegments,
 };

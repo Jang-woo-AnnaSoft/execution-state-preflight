@@ -31,7 +31,7 @@
  *   // r.status "waiting": show r.question.message, then pass the user's answer as the next turn
  *   r = await main.turn({ threadId, message: { typed: "yes" } });
  *   // or, from a form: answerSchema(r.question.questions) is the form (LangGraph: interrupt(payload,
- *   //   { responseSchema })), and its answers come back as the user's words (answerText, read by code)
+ *   //   { responseSchema })); its answers come back as the user's segments, one per field, read by the gate
  *   r = await main.turn({ threadId, answers: { "value:time": true } });
  *   // r.status "executed", or "replied", "not_executed" (r.message tells the user why), "call_failed", "tool_error"
  *   // r.resubmitted: the model did not call again after the answer, and the waiting call was judged again
@@ -42,7 +42,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { createJudge, writeQuestion, writeStop, messagesFor, afterCall, answerText } = require("./judge-only");
+const { createJudge, writeQuestion, writeStop, messagesFor, afterCall } = require("./judge-only");
 const defaultConnect = require("./connect");
 
 function systemPrompt(file = "principles-gated.md") {
@@ -95,8 +95,8 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
   });
   // Your agent's own state: each conversation, in order, with who wrote each part.
   const conversations = new Map();
-  // The questions each conversation waits on, for answers that come from a form (answerSchema).
-  const waitingQuestions = new Map();
+  // The question each conversation waits on, for answers that come from a form (answerSchema).
+  const waitingQuestion = new Map();
 
   // Your model writes the words of the question (writeQuestion). The values are not its to write: they
   //   go under its words as code wrote them.
@@ -109,16 +109,17 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
   // One message from the user: the first of a conversation, or the answer to a question. The same
   //   threadId for every turn of one conversation.
   //   answers: instead of a message, the answers to the questions asked, from a form built with
-  //   answerSchema (LangGraph: interrupt(payload, { responseSchema }), then Command({ resume })). They are
-  //   checked against the form and written as the user's words; ones that do not fit are not taken.
+  //   answerSchema (LangGraph: interrupt(payload, { responseSchema }), then Command({ resume }); MCP
+  //   elicitation's { action, content }). Each field becomes the user's segment (labelInput({ form })),
+  //   read by the gate itself. Declined or cancelled: nothing is written, and the same question waits.
   async function turn({ threadId, message, answers, userChecklist = [] }) {
     const conversation = conversations.get(threadId) ?? [];
     conversations.set(threadId, conversation);
-    if (answers !== undefined) {
-      try { message = { typed: answerText(waitingQuestions.get(threadId) ?? [], answers) }; }
-      catch (e) { return { status: "answers_not_taken", why: String(e?.message ?? e) }; }
+    const incoming = answers !== undefined ? connect.labelInput({ form: answers }) : connect.labelInput(message);
+    if (answers !== undefined && incoming.length === 0 && waitingQuestion.has(threadId)) {
+      return { status: "waiting", question: waitingQuestion.get(threadId), answered: "nothing (declined or cancelled)" };
     }
-    conversation.push(...connect.labelInput(message));                                      // 1
+    conversation.push(...incoming);                                                            // 1
 
     const listed = await connect.listTools();
     const tools = hideLines ? judge.toolsForModel(listed) : listed;                           // 6
@@ -145,10 +146,10 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
     }
 
     const r = await judge.run({ unitKey: threadId, conversation, toolCall, userChecklist });   // 3
-    waitingQuestions.delete(threadId);
+    waitingQuestion.delete(threadId);
     if (r.questions.length > 0) {
       const question = await askUser(conversation, r);                                         // 2
-      waitingQuestions.set(threadId, r.questions);
+      waitingQuestion.set(threadId, question);
       conversation.push(afterCall(toolCall, "waiting", question.message, r.settled));
       return { status: "waiting", question, notices: r.notices, ...(resubmitted ? { resubmitted } : {}) };
     }
