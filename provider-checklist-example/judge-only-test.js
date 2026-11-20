@@ -603,6 +603,27 @@ function askAllGiven(id) {
       [checkAgainst({ $schema: "http://json-schema.org/draft-07/schema#", type: "array", items: { type: "string" } }, ["a"]).ok,
        /dialect this validator does not run/.test(checkAgainst({ $schema: "https://json-schema.org/draft/2019-09/schema", type: "string" }, "a").error ?? "")],
       [true, true]);
+    // [FORM RUNS] A form proposed for a user's condition, compiled by the same validator before it is shown.
+    //   A real model's {"pattern": …} with no "type" was confirmed by the seller and then refused.
+    const formRuns = require(path.join(ADOPT, "judge-only")).createHooks({ ask: async () => ({}) }).checkFormRuns;
+    check("checkFormRuns: a pattern with no type cannot be run (strict); with a type it runs; the adopter's own kind is not its to judge",
+      [/strict mode: missing type/.test(formRuns({ compare: { pattern: "T20" } }) ?? ""), formRuns({ compare: { type: "string", pattern: "T20" } }),
+       formRuns({ compare: { kind: "user_approval" } }), /strict mode/.test(formRuns({ compare: { source: "measured_data", measure: "m", schema: { pattern: "x" } } }) ?? "")],
+      [true, null, null, true]);
+    // The real run end to end (gpt-6.2-sol, g2-01, 1.40): the seller's "Nothing after 8pm" proposed as a
+    //   pattern with no type. Now it is not put to the seller as a form ([FORM RUNS]); it is approved for
+    //   the time shown, in the question that shows the time ([SHOWN TOGETHER]), and one yes executes.
+    const noType = inner => async (m, system, user, hook) =>
+      (hook === "comparable_form" && String(user).includes("Nothing after 8pm")
+        ? { form: { compare: { pattern: "T(?:[01][0-9]:[0-5][0-9]:[0-9]{2}|20:00:00)" }, constrains: ["time"] } }
+        : inner(m, system, user, hook));
+    const sol = await run("g2-01", "clean", ["Saturday 3pm, Hongdae station lockers", "yes"], { ask: noType(makeAsk("g2-01")), userChecklist: [] });
+    const solAsks = sol.records.filter(x => x.actor !== "executor" && x.execution_decision === "ask_user");
+    const solLast = solAsks.at(-1)?.gate?.question_block ?? [];
+    check("the real run: no JSON Schema shown to the seller, the 8pm limit asked with the time, executed on the second question",
+      [solAsks.length, solAsks.some(r => (r.gate?.question_block ?? []).some(l => /JSON Schema/.test(l))),
+       solLast.includes("Nothing after 8pm — for time = 2026-10-31 (Sat) 15:00 +09:00"), sol.last.status],
+      [2, false, true, "executed"]);
     // A proposal outside the form is not shown: the seller is asked for the time with nothing to approve.
     const loose = inner => async (m, system, user, hook) => (hook === "propose_value" ? { value: "2026-10-31 14:00:00+09:00" } : inner(m, system, user, hook));
     const lp = await run("g1-01", "clean", [], { ask: loose(makeAsk("g1-01")) });
