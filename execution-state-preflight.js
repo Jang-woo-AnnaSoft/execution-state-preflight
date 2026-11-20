@@ -2221,6 +2221,24 @@ async function withConfirmedForm(h, item, { declared_by, tool, userId, mcpTool }
                    proposed: { compare: proposal.compare ?? null, constrains: proposal.constrains ?? null } },
     };
   }
+  // [FORM RUNS] A proposal the adopter's validator cannot run is not put to the user to confirm either: a
+  //   yes to it confirms nothing that can be compared. A real model proposed {"pattern": …} with no
+  //   "type", the seller confirmed it, the strict validator refused it, and the condition stayed
+  //   unverified until the run ran out of asks. Taken as no form ([NO FORM]), the proposal and why kept.
+  //   The form is not mended: a "type" added by code would be a form nobody proposed. A check that
+  //   fails is not a pass. Format checking is code's, against the declared dialect (3.3, 6.3).
+  const cannotRun = declared_by === "user" && proposal
+    ? await safeHook(h.checkFormRuns, [{ compare: proposal.compare ?? null, constrains: proposal.constrains ?? [] }],
+        e => `the check failed: ${e?.message ?? String(e)}`)
+    : null;
+  if (typeof cannotRun === "string" && cannotRun !== "") {
+    return {
+      ...item,
+      compare: null,
+      form_none: { why: `the form proposed cannot be run by the validator (${cannotRun}), so the user approves it for the values shown`,
+                   proposed: { compare: proposal.compare ?? null, constrains: proposal.constrains ?? null } },
+    };
+  }
   formRequests.push({
     item_id: item.id ?? null, declared_by, tool, user_id: declared_by === "user" ? (userId ?? null) : null,
     label: keyLabel, wording, key, proposal,
@@ -2622,6 +2640,14 @@ function approvalPrompt(item, fieldsByName) {
 //   Called with ({ declared_by, label, wording, mcpTool, constrains }).
 function proposeComparableForm() {
   return undefined;
+}
+
+// [OPTIONAL] [FORM RUNS] Whether the adopter's validator can run a form proposed for a user's condition,
+//   before the user is asked to confirm it. CONTRACT: null when it runs (or the adopter has no view), a
+//   reason string when it cannot. Called with ({ compare, constrains }). A throw is read as cannot.
+//   Unwired: no view, and the proposal is put to the user as before.
+function checkFormRuns() {
+  return null;
 }
 
 // [OPTIONAL — on UNSAFE_DEFAULT_HOOKS] The conditions the user stated in the instruction (4.4), as
@@ -4200,7 +4226,9 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.41",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.42",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.42: [FORM RUNS] a form proposed for a user's condition that the adopter's validator cannot run
+    //        (checkFormRuns) is taken as no form: form_none.why says so, form_none.proposed keeps it.
     //   1.41: [SHOWN TOGETHER] an item the user approves (no form fits, or kind user_approval) that waits on a
     //        blank is asked in the same question when the question shows a value for that blank, for that
     //        value. gate.questions may carry approve questions for items that are pending_on_slot.
@@ -4509,7 +4537,7 @@ const defaultHooks = {
   classifyWhenCase, extractUserActionName, confirmToolNameMatchesIntent,
   getRequiredFields, getCandidateSlots, materializeSlots, getAdvisoryNotes,
   getProviderConditions, verifyProviderCondition, getAllowedSources, getMeasurableNames, isSettledAtExecution,
-  proposeComparableForm, extractUserConditions, readReplies, proposeValue,
+  proposeComparableForm, checkFormRuns, extractUserConditions, readReplies, proposeValue,
   extractFromInstruction, spanSupportsValue, measure, readToolDefinition,
   applyFieldPolicy, validateFieldSchema, validatePayload, verifyUserChecklistItem,
   formatReason, buildDeferredInput, buildActionKey,
