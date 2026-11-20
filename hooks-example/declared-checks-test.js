@@ -441,7 +441,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.40");
+    check("schema_version", persisted?.schema_version, "1.41");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -674,6 +674,43 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
       [verifyCalls, ((sp.r.user_checklist ?? []).find(i => i.id === "pref_pub") ?? {}).note], [0, "the user approves it for the values shown"]);
     check("  no proposal at all (undefined) is not 'no form fits': still pending, for a form to be confirmed",
       [Boolean(pi3.form_pending), pi3.form_none ?? null], [true, null]);
+
+    // [SHOWN TOGETHER] An item with no form, on a value the gate shows for approval in this question (a
+    //   model's reading of the user's words): asked in the same question, for that value (4.6: several
+    //   items at once). A real model's run: the seller said "Saturday 3pm", and "between 1pm and 6pm",
+    //   with no form, waited for a third question and ran out of asks.
+    {
+      const saidW = "Pick up LST-2291, 2pm this Saturday, Hongdae station lockers. Nothing after 8pm.";
+      const exW = { item_id: at(saidW, "LST-2291"), time: at(saidW, "2pm this Saturday"), location: at(saidW, "Hongdae station lockers") };
+      const claimW = { quote: "Nothing after 8pm.", segment_index: 0, span: [saidW.indexOf("Nothing"), saidW.length], constrains: ["time"] };
+      const overW = { extractUserConditions: extract([claimW]), proposeComparableForm: noForm,
+                      proposeValue: f => (f === "time" ? { value: SAT_2PM } : undefined) };
+      const sW = memStorage();
+      const w1 = await run({ storage: sW, text: saidW, extract: exW, measured: ALL_MEASURED, over: overW });
+      const wi = (w1.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+      const wqs = w1.r.gate?.questions ?? [];
+      const wq = wqs.find(x => x.kind === "approve" && x.id === wi.id) ?? {};
+      check("no form, on a value shown for approval: asked in the same question, for that value",
+        [wqs.find(x => x.target === "value:time")?.candidate?.value, wq.shown?.time, w1.r.execution_decision],
+        [SAT_2PM, SAT_2PM, "ask_user"]);
+      check("  the line shows the value as it will be used",
+        (w1.r.gate?.question_block ?? []).includes("Nothing after 8pm. — for time = 2026-10-31 (Sat) 14:00 +09:00"), true);
+      const w2 = await run({ storage: sW, instruction: [{ trust: "user", text: saidW }, { trust: "user", text: "yes" }],
+        extract: exW, measured: ALL_MEASURED, over: overW });
+      const wi2 = (w2.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+      check("  one yes: the value and the item, and it executes",
+        [field(w2.r, "time").source, wi2.status, wi2.approval?.shown?.time, w2.r.execution_decision],
+        ["user_answer", "verified", SAT_2PM, "execute"]);
+      const wf = await run({ storage: memStorage(), text: saidW, extract: exW, measured: ALL_MEASURED,
+        over: { ...overW, proposeComparableForm: req => (req.declared_by === "user" ? NOT_AFTER : undefined) } });
+      check("  an item with a form to confirm is not asked for approval: the form is asked, and it is compared later",
+        (wf.r.gate?.questions ?? []).map(q => q.kind).sort(), ["confirm_form", "value"]);
+      const wn = await run({ storage: memStorage(), text: saidW, extract: exW, measured: ALL_MEASURED,
+        over: { ...overW, proposeValue: () => undefined } });
+      const wni = (wn.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+      check("  no value shown for the slot: the item waits on it, as before",
+        [wni.status, (wn.r.gate?.questions ?? []).map(q => q.kind)], ["pending_on_slot", ["value"]]);
+    }
 
     // [READ ONCE] Within a unit, the words already read are not read again: the conditions are carried,
     //   and a different split of the same words in a later round is set aside.
