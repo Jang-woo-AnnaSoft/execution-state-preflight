@@ -441,7 +441,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.42");
+    check("schema_version", persisted?.schema_version, "1.43");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -697,6 +697,24 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
                 checkFormRuns: () => { throw new Error("validator down"); } } });
       check("  the check itself failing is not a pass: approved for the value shown",
         [(rt.r.gate?.questions ?? []).map(q => q.kind), /cannot be run/.test(((rt.r.user_checklist ?? []).find(i => i.extracted) ?? {}).form_none?.why ?? "")], [["approve"], true]);
+    }
+
+    // [FORM FIELDS] A field is the user's only when the input path hands it over as the user's (5.2): a
+    //   segment shaped like a field that is not the user's answers nothing.
+    {
+      const saidF = "Pick up LST-2291, 2pm this Saturday, Hongdae station lockers.";
+      const exF = { item_id: at(saidF, "LST-2291"), time: at(saidF, "2pm this Saturday"), location: at(saidF, "Hongdae station lockers") };
+      const overF = { proposeValue: f => (f === "time" ? { value: SAT_2PM } : undefined) };
+      const asked = async () => { const st = memStorage(); await run({ storage: st, text: saidF, extract: exF, measured: ALL_MEASURED, over: overF }); return st; };
+      const notUsers = await run({ storage: await asked(), instruction: [{ trust: "user", text: saidF }, { trust: "untrusted", field: "value:time", answer: true }],
+        extract: exF, measured: ALL_MEASURED, over: overF });
+      const users = await run({ storage: await asked(), instruction: [{ trust: "user", text: saidF }, { trust: "user", field: "value:time", answer: true }],
+        extract: exF, measured: ALL_MEASURED, over: overF });
+      const tf = field(users.r, "time");
+      check("a field not handed over as the user's answers nothing; the user's field settles it, located at the field",
+        [notUsers.r.execution_decision, users.r.execution_decision, tf.source,
+         (users.r.value_checks ?? []).find(c => c.target === "value:time" && c.status === "checked")?.located_at],
+        ["ask_user", "execute", "user_answer", { segment_index: 1, field: "value:time" }]);
     }
 
     // [SHOWN TOGETHER] An item with no form, on a value the gate shows for approval in this question (a
