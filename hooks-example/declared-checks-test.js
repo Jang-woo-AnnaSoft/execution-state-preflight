@@ -441,7 +441,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.41");
+    check("schema_version", persisted?.schema_version, "1.42");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -674,6 +674,30 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
       [verifyCalls, ((sp.r.user_checklist ?? []).find(i => i.id === "pref_pub") ?? {}).note], [0, "the user approves it for the values shown"]);
     check("  no proposal at all (undefined) is not 'no form fits': still pending, for a form to be confirmed",
       [Boolean(pi3.form_pending), pi3.form_none ?? null], [true, null]);
+
+    // [FORM RUNS] A proposed form the adopter's validator cannot run is not put to the user to confirm:
+    //   taken as no form, the proposal and why kept beside it. A real model proposed {"pattern": …} with
+    //   no "type", the seller confirmed it, and the strict validator then refused it: the condition stayed
+    //   unverified and the run ran out of asks.
+    {
+      const RUNLESS = { compare: { pattern: "T(?:[01][0-9]|20:00)" }, constrains: ["time"] };
+      const runs = form => (form.compare && !("type" in form.compare) && "pattern" in form.compare ? "strict mode: missing type \"string\" for keyword \"pattern\"" : null);
+      const rl = await run({ storage: memStorage(), text: said, extract: ex, measured: ALL_MEASURED,
+        over: { extractUserConditions: extract([claim]), proposeComparableForm: req => (req.declared_by === "user" ? RUNLESS : undefined), checkFormRuns: runs } });
+      const ri = (rl.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+      check("a form the validator cannot run: not asked to confirm, approved for the value shown, the proposal and why kept",
+        [Boolean(ri.form_pending), (rl.r.gate?.questions ?? []).map(q => q.kind), /cannot be run.*strict mode/.test(ri.form_none?.why ?? ""),
+         JSON.stringify(ri.form_none?.proposed?.compare), (rl.r.gate?.question_block ?? []).some(l => /JSON Schema/.test(l))],
+        [false, ["approve"], true, JSON.stringify(RUNLESS.compare), false]);
+      const rr = await run({ storage: memStorage(), text: said, extract: ex, measured: ALL_MEASURED,
+        over: { extractUserConditions: extract([claim]), proposeComparableForm: req => (req.declared_by === "user" ? NOT_AFTER : undefined), checkFormRuns: runs } });
+      check("  a form it can run: asked to confirm, as before", (rr.r.gate?.questions ?? []).map(q => q.kind), ["confirm_form"]);
+      const rt = await run({ storage: memStorage(), text: said, extract: ex, measured: ALL_MEASURED,
+        over: { extractUserConditions: extract([claim]), proposeComparableForm: req => (req.declared_by === "user" ? NOT_AFTER : undefined),
+                checkFormRuns: () => { throw new Error("validator down"); } } });
+      check("  the check itself failing is not a pass: approved for the value shown",
+        [(rt.r.gate?.questions ?? []).map(q => q.kind), /cannot be run/.test(((rt.r.user_checklist ?? []).find(i => i.extracted) ?? {}).form_none?.why ?? "")], [["approve"], true]);
+    }
 
     // [SHOWN TOGETHER] An item with no form, on a value the gate shows for approval in this question (a
     //   model's reading of the user's words): asked in the same question, for that value (4.6: several
