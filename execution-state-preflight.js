@@ -1300,6 +1300,12 @@ async function verifyDerivedFrom(h, declared, instruction, ctx) {
 
 async function lookupField(h, fieldName, ctx) {
   const { userAnswers, instruction, preSetData, priorExecutionState } = ctx;
+  // [FORM FIELDS] A value the user typed into this slot's field is the user's words for it (instruction,
+  //   5.3), located at the field: read by the gate, not by the extractor. The extractor reads words only.
+  const typed = ctx.formValues?.[fieldName];
+  const readInstruction = () => (typed
+    ? { value: typed.value, segment_index: typed.segment_index, span: [0, typed.value.length], field: typed.field }
+    : safeHook(h.extractFromInstruction, [fieldName, ctx.wordsOnly ?? instruction], lookupFailed("instruction")));
   // What each consulted source returned, in order. Attached to every record this function returns.
   const trace = [];
   const saw = (source, result) => trace.push({ source, result });
@@ -1363,7 +1369,7 @@ async function lookupField(h, fieldName, ctx) {
         const approval = ctx.valueApprovals?.[fieldName];
         const approvedAt = approval?.located_at?.segment_index;
         if (Number.isInteger(approvedAt) && allowed.has("instruction")) {
-          earlyInstruction = await safeHook(h.extractFromInstruction, [fieldName, instruction], lookupFailed("instruction"));
+          earlyInstruction = await readInstruction();
           // A reader that threw cannot say whether the user changed the value: the approval is not taken
           //   on its silence ([LOOKUP HOOK FAILURE]).
           if (earlyInstruction?.[LOOKUP_HOOK_FAILED]) return failedAt(earlyInstruction);
@@ -1397,7 +1403,7 @@ async function lookupField(h, fieldName, ctx) {
   //   Read once per lookup: [SAID AFTER] may have read it already.
   let fromInstruction = !allowed.has("instruction") ? undefined
     : earlyInstruction !== NOT_READ ? earlyInstruction
-    : await safeHook(h.extractFromInstruction, [fieldName, instruction], lookupFailed("instruction"));
+    : await readInstruction();
   if (fromInstruction?.[LOOKUP_HOOK_FAILED]) return failedAt(fromInstruction);
   // [VALUE READ ONCE] Within a unit, a value read from the user's words is not read again from the same
   //   words. When the extractor points again into a segment an earlier round already read, the value
@@ -1506,7 +1512,8 @@ async function lookupField(h, fieldName, ctx) {
           // saying where in it cannot be re-checked by anyone but this gate, so
           // the auditor would have to take the gate's word — which is the thing
           // this specification refuses to do for the model.
-          located_at: { segment_index: fromInstruction.segment_index, span: [sp[0], sp[1]] },
+          located_at: { segment_index: fromInstruction.segment_index, span: [sp[0], sp[1]],
+                        ...(typeof fromInstruction.field === "string" ? { field: fromInstruction.field } : {}) },
           // How many segments of the instruction this round read: the next round in the unit does not
           //   read these words again for this value ([VALUE READ ONCE]).
           read_through: Array.isArray(instruction) ? instruction.length : null,
@@ -1925,9 +1932,11 @@ async function unitHistory(h, actionKey, phase) {
     //   one for a target is the one carried.
     for (const c of Array.isArray(r.value_checks) ? r.value_checks : []) {
       if (c?.kind === "answer" && c.status === "checked" && c.source === "user_answer" && typeof c.target === "string" &&
-          Number.isInteger(c.located_at?.segment_index) && Array.isArray(c.located_at?.span) &&
+          Number.isInteger(c.located_at?.segment_index) && (Array.isArray(c.located_at?.span) || typeof c.located_at?.field === "string") &&
           (typeof c.answer === "boolean" || c.answer === "none")) {
-        out.answers.set(c.target, { answer: c.answer, located_at: { segment_index: c.located_at.segment_index, span: c.located_at.span.slice(0, 2) } });
+        out.answers.set(c.target, { answer: c.answer, located_at: typeof c.located_at.field === "string"
+          ? { segment_index: c.located_at.segment_index, field: c.located_at.field }
+          : { segment_index: c.located_at.segment_index, span: c.located_at.span.slice(0, 2) } });
       }
     }
     const took = (Array.isArray(r.value_checks) ? r.value_checks : []).find(c => c?.id === "user_conditions" && Number.isInteger(c?.read_through));
@@ -1986,7 +1995,80 @@ function sameCallValue(a, b, schema) {
 //   reader that throws is unverified, and the run goes to definition repair.
 //   A value the user typed in a reply is not an answer here: it is the user's words, read from the
 //   instruction like any other (the instruction covers the whole conversation about this unit).
+// ── [FORM FIELDS] A form made from the gate's questions (5.2) ──────────────────────────────────────
+// A field of such a form is a segment the user entered directly, and the field is the location. One
+//   field per question, named by its target; none filled in beforehand; a field is the user's only when
+//   the input path hands it over as the user's (labelInput), never a model.
+//   formSchema(questions): the form, as a JSON Schema (LangGraph interrupt(payload, { responseSchema }),
+//     MCP elicitation's requestedSchema). The titles are the question block's lines: a yes approves
+//     exactly what they show. None is required: a question left blank stays open.
+//   formSegments(answers): the answers as the user's segments, one per field. A yes or no, or a choice's
+//     number, is a segment with no words ({ field, answer }), read by code. A value typed into a field is
+//     the user's words for that slot ({ field, text }, instruction, 5.3). MCP's { action: "accept",
+//     content } gives its content; "decline" and "cancel" are no answer: nothing is written, and the
+//     questions stay open (5.2: no report is not a report of none).
+//   The kinds are checked when the gate reads them, not here: a field not asked, or of the wrong kind,
+//     is not taken, and the record says so.
+const FORM_ONE_LINE = { type: "string", minLength: 1, pattern: "^[^\\r\\n]+$" };
+function formSchema(questions) {
+  const properties = {};
+  for (const q of Array.isArray(questions) ? questions : []) {
+    if (!q || typeof q.target !== "string") continue;
+    if (q.kind === "value" && Array.isArray(q.choices)) {
+      properties[q.target] = { type: "integer", enum: q.choices.map((_, i) => i), title: `${q.slot}: which one?`,
+        description: q.choices.map((c, i) => `${i}: ${c.shown_text}${c.from_text ? ` (${c.from_text})` : ""}`).join("; ") };
+    } else if (q.kind === "value" && q.candidate) {
+      properties[q.target] = { oneOf: [{ type: "boolean" }, FORM_ONE_LINE],
+        title: `${q.slot} = ${q.candidate.shown_text}${q.candidate.from_text ? ` (${q.candidate.from_text})` : ""}`,
+        description: "yes to use this value, no if it is not right, or type the value you mean" };
+    } else if (q.kind === "value") {
+      properties[q.target] = { ...FORM_ONE_LINE, title: `${q.slot}: not given yet`, description: "type the value" };
+    } else if (q.kind === "approve") {
+      const vals = Object.entries(q.shown_text ?? {}).map(([k, v]) => `${k} = ${v}`).join(", ");
+      properties[q.target] = { type: "boolean", title: `${q.description ?? q.id}${vals ? ` — for ${vals}` : ""}` };
+    } else if (q.kind === "confirm_form") {
+      properties[q.target] = { type: "boolean", title: `"${q.wording}" — will be checked like this: ${q.text}` };
+    } else if (q.kind === "withdraw") {
+      properties[q.target] = { type: "boolean", title: `"${q.stated_as}" — remove this condition? (you said: "${q.withdrawn_by}")` };
+    }
+  }
+  return { type: "object", additionalProperties: false, properties };
+}
+function formSegments(answers) {
+  let a = answers;
+  if (a && typeof a === "object" && !Array.isArray(a) && typeof a.action === "string") {
+    if (a.action !== "accept") return [];
+    a = a.content;
+  }
+  if (!a || typeof a !== "object" || Array.isArray(a)) return [];
+  return Object.entries(a).map(([field, v]) => (typeof v === "string"
+    ? { trust: "user", field, text: v }
+    : { trust: "user", field, answer: v }));
+}
+// What the hooks that read the user's words see: a field is not words (5.2). Its segment stays, at its
+//   index, as not the user's: a model cannot place a value, a reply or a condition in it. The gate reads
+//   the fields itself. A real model read a form's answers, put as lines of text, as taking back the
+//   seller's "Nothing after 8pm".
+function wordsOnly(instruction) {
+  return Array.isArray(instruction)
+    ? instruction.map(seg => (seg && typeof seg.field === "string"
+        ? { ...seg, trust: "untrusted", text: typeof seg.text === "string" ? seg.text : "" } : seg))
+    : instruction;
+}
+
 function checkLocatedQuote(claim, instruction, from) {
+  // [FORM FIELDS] A claim located at a field: that field's segment, the user's, after the question, with
+  //   the answer the claim gives.
+  if (typeof claim?.field === "string") {
+    const seg = Array.isArray(instruction) && Number.isInteger(claim.segment_index) ? instruction[claim.segment_index] : undefined;
+    if (!seg) return { ok: false, why: `no segment ${JSON.stringify(claim.segment_index ?? null)}` };
+    if (seg.trust !== "user") return { ok: false, why: `segment ${claim.segment_index} is not the user's` };
+    if (Number.isInteger(from) && claim.segment_index < from) return { ok: false, why: `segment ${claim.segment_index} comes before the question was asked` };
+    if (seg.field !== claim.field || typeof seg.text === "string") return { ok: false, why: `segment ${claim.segment_index} is not the field ${JSON.stringify(claim.field)}` };
+    const given = "choice" in claim ? claim.choice : claim.answer;
+    if (seg.answer !== given) return { ok: false, why: "the field's answer is not the claim's" };
+    return { ok: true, located_at: { segment_index: claim.segment_index, field: claim.field } };
+  }
   const { quote, segment_index, span } = claim ?? {};
   if (typeof quote !== "string" || quote.trim() === "") return { ok: false, why: "no quote" };
   const seg = Array.isArray(instruction) && Number.isInteger(segment_index) ? instruction[segment_index] : undefined;
@@ -2013,9 +2095,25 @@ async function readUserReplies(h, instruction, history) {
   }
   if (history.asked.size === 0) return out;
   const asked = [...history.asked.values()];
+  // [FORM FIELDS] The answers given in fields: read by code, each located at its field. The reply reader
+  //   (a model) is asked only about words the user typed after a question, and sees no field.
+  const formClaims = [];
+  const askedFrom = Math.min(...asked.map(a => a.asked_through));
+  let wordsAfter = false;
+  for (const [i, seg] of (Array.isArray(instruction) ? instruction : []).entries()) {
+    if (seg?.trust !== "user") continue;
+    if (typeof seg.field === "string" && typeof seg.text !== "string") {
+      const q = history.asked.get(seg.field)?.question;
+      const isChoice = q?.kind === "value" && Array.isArray(q.choices);
+      formClaims.push({ target: seg.field, field: seg.field, segment_index: i,
+        ...(isChoice && Number.isInteger(seg.answer) ? { choice: seg.answer } : { answer: seg.answer }) });
+    } else if (typeof seg.field !== "string" && typeof seg.text === "string" && i >= askedFrom) wordsAfter = true;
+  }
   let failure = null;
-  const raw = await safeHook(h.readReplies, [instruction, asked.map(a => ({ ...a.question, asked_through: a.asked_through }))],
-    e => { failure = e?.message ?? String(e); return undefined; });
+  // The reader is not asked only when the user answered in fields and typed no words after the question.
+  const raw = formClaims.length > 0 && !wordsAfter ? undefined
+    : await safeHook(h.readReplies, [wordsOnly(instruction), asked.map(a => ({ ...a.question, asked_through: a.asked_through }))],
+      e => { failure = e?.message ?? String(e); return undefined; });
   const entry = (target, extra) => ({ id: `${target}:answer`, kind: "answer", target,
     slot: history.asked.get(target)?.question?.slot ?? null, item: history.asked.get(target)?.question?.id ?? null, ...extra });
   if (failure !== null) {
@@ -2023,13 +2121,13 @@ async function readUserReplies(h, instruction, history) {
                       note: `readReplies failed: ${failure}` });
     return out;
   }
-  if (raw === undefined) return out;
+  if (raw === undefined && formClaims.length === 0) return out;
   if (raw?.none === "absent") {
     out.checks.push({ id: "replies", kind: "answer", target: null, slot: null, status: "checked", source: "instruction",
                       note: "no reply to the questions asked" });
   }
-  const claims = raw?.none === "absent" ? [] : raw;
-  if (!Array.isArray(claims)) {
+  const claims = [...formClaims, ...(raw === undefined || raw?.none === "absent" ? [] : (Array.isArray(raw) ? raw : [null]))];
+  if (raw !== undefined && raw?.none !== "absent" && !Array.isArray(raw)) {
     out.checks.push({ id: "replies", kind: "answer", target: null, slot: null, status: "unverified", source: null,
                       note: "readReplies returned neither a list nor { none: \"absent\" }" });
     return out;
@@ -2090,8 +2188,10 @@ async function readUserReplies(h, instruction, history) {
       continue;
     }
     const seg = instruction?.[prev.located_at.segment_index];
-    const quote = typeof seg?.text === "string" ? seg.text.slice(prev.located_at.span[0], prev.located_at.span[1]) : "";
-    const loc = checkLocatedQuote({ quote, segment_index: prev.located_at.segment_index, span: prev.located_at.span }, instruction, a.asked_through);
+    const loc = typeof prev.located_at.field === "string"
+      ? checkLocatedQuote({ field: prev.located_at.field, segment_index: prev.located_at.segment_index, answer: prev.answer }, instruction, a.asked_through)
+      : checkLocatedQuote({ quote: typeof seg?.text === "string" ? seg.text.slice(prev.located_at.span[0], prev.located_at.span[1]) : "",
+          segment_index: prev.located_at.segment_index, span: prev.located_at.span }, instruction, a.asked_through);
     const next = history.askings.filter(t => t > a.asked_through).sort((x, y) => x - y)[0];
     if (!loc.ok || (next !== undefined && loc.located_at.segment_index >= next)) continue;
     const isNone = prev.answer === "none";
@@ -2916,6 +3016,25 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
   userAnswers = replies.userAnswers;
   checklistAnswers = replies.checklistAnswers;
   const answerChecks = [...replies.checks];
+  // [FORM FIELDS] Values typed into fields: taken only for a value question asked before them, one line,
+  //   not empty. Any other is not taken, and the record says so. The latest field for a slot is the one.
+  const formValues = {};
+  for (const [i, seg] of (Array.isArray(instruction) ? instruction : []).entries()) {
+    if (seg?.trust !== "user" || typeof seg.field !== "string" || typeof seg.text !== "string") continue;
+    const a = history.available ? history.asked.get(seg.field) : null;
+    const isValue = a?.question?.kind === "value" && !Array.isArray(a.question.choices) && seg.field === `value:${a.question.slot}`;
+    const ok = isValue && i >= a.asked_through && seg.text.trim() !== "" && !/[\r\n]/.test(seg.text);
+    if (!ok) {
+      answerChecks.push({ id: `${seg.field}:answer`, kind: "answer", target: seg.field, slot: a?.question?.slot ?? null,
+        item: a?.question?.id ?? null, status: "rejected", source: "instruction", located_at: { segment_index: i, field: seg.field },
+        note: !a ? `${JSON.stringify(seg.field)} was not asked in this unit`
+          : !isValue ? "a value typed into this field is not taken: the question asks for a yes or no, or a choice"
+          : i < a.asked_through ? `segment ${i} comes before the question was asked`
+          : "a value typed into a field is one line, not empty" });
+      continue;
+    }
+    formValues[a.question.slot] = { value: seg.text, segment_index: i, field: seg.field };
+  }
   // [FORM DECLINED] The user's no to a proposed form, by item: that condition is approved by the user for
   //   the values shown from now on in this unit, and no form is proposed for it again (see
   //   userConditionsFromInstruction). Kept with the item, not under the form's key: it holds for this
@@ -3034,7 +3153,7 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
 
   // [USER CONDITIONS] The conditions the user stated in this instruction join the user checklist
   //   (4.4: made at instruction time, from the trusted part of the instruction). See extractUserConditions.
-  const extraction = await userConditionsFromInstruction(h, instruction, mcpTool, checklist, history.conditions,
+  const extraction = await userConditionsFromInstruction(h, wordsOnly(instruction), mcpTool, checklist, history.conditions,
     { withdrawals: replies.withdrawals, declinedForms });
   const extractionChecks = extraction.checks;
   const extractedItems = [];
@@ -3104,6 +3223,8 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
                 sourceRules,
                 valueApprovals: replies.valueApprovals,   // the user's yes to a value shown, bound to it
                 readValues: history.values,               // values read in earlier rounds of the unit ([VALUE READ ONCE])
+                formValues,                               // values typed into the form's fields ([FORM FIELDS])
+                wordsOnly: wordsOnly(instruction),        // what the hooks that read words see ([FORM FIELDS])
                 choicesAsked: Object.fromEntries([...history.asked.values()]
                   .filter(a => a.question?.kind === "value" && Array.isArray(a.question.choices))
                   .map(a => [a.question.slot, { asked_through: a.asked_through }])),   // [LOWER DIFFERS]
@@ -4226,7 +4347,9 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.42",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.43",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.43: [FORM FIELDS] a user's segment may be a field of a form made from the gate's questions:
+    //        { field, answer } or { field, text }. located_at may carry field (and no span for an answer).
     //   1.42: [FORM RUNS] a form proposed for a user's condition that the adopter's validator cannot run
     //        (checkFormRuns) is taken as no form: form_none.why says so, form_none.proposed keeps it.
     //   1.41: [SHOWN TOGETHER] an item the user approves (no form fits, or kind user_approval) that waits on a
@@ -4611,7 +4734,7 @@ function createPreflight({ hooks = {}, storage, clock, strict = false, limits = 
 }
 
 module.exports = { createPreflight, defaultHooks, intentFingerprint, ruleHash, labelledLines, toolsForModel, stopFacts, keepForPrior, loadPrior, describeForm,
-                   readTranslatedForms, renderValue };
+                   readTranslatedForms, renderValue, formSchema, formSegments };
 
 
 /* ============================================================================
