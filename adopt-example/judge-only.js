@@ -290,6 +290,18 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
       return squash(value) === squash(textAtSpan);
     },
 
+    // A form proposed for a user's condition, compiled by the same validator before the user is asked to
+    //   confirm it ([FORM RUNS]). A JSON Schema on the value, or a measurement's schema; the adopter's own
+    //   kinds are not this validator's. A form it cannot compile is taken as no form by the library.
+    checkFormRuns(form) {
+      const c = form?.compare;
+      if (!c || typeof c !== "object" || Array.isArray(c) || typeof c.kind === "string") return null;
+      const schema = c.source === "measured_data" ? c.schema : c;
+      if (!schema || typeof schema !== "object") return null;
+      const out = checkAgainst(schema, null);
+      return out.error ? String(out.error) : null;
+    },
+
     // The field's own schema, as the provider declared it, checked by the validator. A schema it
     //   cannot compile is a check not made: unverified, which the library sends to definition repair.
     validateFieldSchema(value, schema, ctx, fieldName) {
