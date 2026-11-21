@@ -41,6 +41,7 @@ The gate asks about the time, the stand-in user answers yes, and the tool runs.
 | [`principles.md`](./principles.md) | The specification's 6.2 as prompt sentences, for a model with no gate (`systemPrompt("principles.md")`) |
 | [`judge-only.js`](./judge-only.js) | Do not edit. Gives the library its model calls and a validator; judges one tool call and writes the record |
 | [`judge-only-example.js`](./judge-only-example.js) | Read and adapt. Your agent's side: ask, judge again, read the record, execute, write the result |
+| [`middleware.js`](./middleware.js) | Do not edit. The same agent's side, as LangChain middleware for `createAgent` |
 | [`agent.js`](./agent.js) | Demonstration. Run it, or call it from your app. No edits needed |
 | [`gate.js`](./gate.js) | Demonstration. Do not edit. The flow around `judge-only.js`, as a LangGraph graph |
 
@@ -247,6 +248,23 @@ when nothing else gives them ("same place as last time"), again only once approv
 words give a field one value and a stored setting holds another, both are shown and the user chooses.
 How settings come to be stored is yours.
 
+**With LangChain's `createAgent`.** [`middleware.js`](./middleware.js) does the agent's side for you,
+in the shape of LangChain's own human-in-the-loop middleware (`per_call`):
+
+```js
+const { preflightMiddleware } = require("./middleware");
+const agent = createAgent({ model, tools, checkpointer: new MemorySaver(), middleware: [preflightMiddleware()] });
+// the call waits: interrupt value { type: "preflight_question", message, block, questions, notices },
+//   with responseSchema = answerSchema(questions)
+await agent.invoke(new Command({ resume: { "value:time": true } }), config);   // or { typed: "yes" }
+```
+
+Each tool call is judged where it is made. When the user has to answer, the call waits on
+`interrupt()` and is judged again with the answer, so the model does not have to call again. The tool
+runs with the record's arguments. A declined or cancelled answer runs nothing and leaves the question
+open. A `HumanMessage` is the user's, another tool's result is not; label someone else's words inside a
+`HumanMessage` yourself (`labelMessage`).
+
 **Try it without blocking.** Because judging only records, you can call `judge.run` beside your
 agent as it is and read the records, before anything depends on them. Most first records will ask:
 whether a run reaches execution shows only once the asking is wired in. Each round calls the model.
@@ -343,4 +361,6 @@ only what you keep. They check:
 - judging returns no arguments and no decision, and executes nothing; the agent's side executes from
   the record, and reads every decision record the same way the gate decided;
 - in the demonstration too, the executing step starts from the record and writes the result back;
+- as middleware in `createAgent`, the call waits on `interrupt()`, is not judged twice on resume, runs
+  with the record's arguments, and runs nothing when the answer is declined;
 - on the same 35 inputs, the first decision here equals the reference run.
