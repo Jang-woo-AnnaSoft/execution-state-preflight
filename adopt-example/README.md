@@ -393,3 +393,24 @@ only what you keep. They check:
 - as middleware in `createAgent`, the call waits on `interrupt()`, is not judged twice on resume, runs
   with the record's arguments, and runs nothing when the answer is declined;
 - on the same 35 inputs, the first decision here equals the reference run.
+
+## For safety, consider these
+
+The library judges and records. What surrounds it is your system's, and some of it decides whether
+the gate can be relied on. Besides what is above (the boundary between the gate and the executing
+party, records the agent cannot rewrite, trust labels set on arrival), decide these:
+
+- **Which tools go through the gate.** It weighs no tool's risk. Put every call that is hard to undo
+  through it (spec 1.1); a call left out runs unchecked.
+- **Two runs of one request at the same time.** They are not kept apart. Lock per conversation and
+  tool, or both can run.
+- **Retrying a failed call.** The gate records the failure and does not retry. A retry is a new call:
+  send it through the gate again.
+- **A call deferred for later.** It is recorded with what to run it on (`deferred_input`). When it is
+  due, call the gate again with that input; do not execute from the earlier record.
+- **What is stored.** Values are recorded as given. Mask what must not be kept or shown, in the store.
+- **Saved settings.** How a value is kept for next time, and how the user agrees to it, is yours. A
+  value counts as a setting only when the store says the user approved it, and who, when and where.
+  Take a one-use setting out of the store once a record shows it was used (spec 3.5, 5.2).
+- **Nested arguments.** A value nested inside an argument is not a slot of its own: its source is
+  checked only with the argument it sits in. Keep what must be checked at the top of the input schema.
