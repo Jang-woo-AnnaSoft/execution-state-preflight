@@ -1,7 +1,6 @@
 node_modules/
 
 # written by running the examples
-records.jsonl
 trial-log.json
 hooks-example/package-lock.json
 provider-checklist-example/package-lock.json
