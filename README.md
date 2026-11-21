@@ -246,53 +246,7 @@ nothing and ends by saying it did not run and which lines could not be checked. 
 failing closed, not a fault: fill in `MEASUREMENTS` and `TOOLS` in `connect.js` and it asks and executes.
 What stays yours, and the whole flow, are in the [adopt example](./adopt-example/).
 
-<details>
-<summary>Calling the library directly</summary>
-
-```js
-const { createPreflight } = require("./execution-state-preflight");
-
-const preflight = createPreflight({
-  hooks: {
-    classifyWhenCase,             // → "immediate" | "scheduled" | "conditional" | "recurring" | null (undecidable)
-    extractUserActionName,        // → { value, segment_index, span } in a user segment | { none: "absent" } | undefined
-    confirmToolNameMatchesIntent, // → { approved, reason } — called only when user_action_name says nothing
-    extractFromInstruction,       // → { value, segment_index, span } | { none: "absent" | "no_place" } | undefined
-    readToolDefinition,           // (name) → { name, description, inputSchema }, from the provider (MCP: tools/list)
-    measure,                      // (name, { values, userId, tool }) → { valid, value } | { valid: false } | { none } | undefined
-    buildActionKey,               // → opaque string; one per unit, the same in every round of it
-    readReplies,                  // → where the user's words answer each question the gate asked
-  },
-  storage,        // { persist, load, list } — append-only; list(key) returns every record under a key
-  strict: true,   // also reject the defaults that verify nothing
-});
-
-const state = await preflight.runPreflightAndRecord({
-  userId: "u_01",
-  instruction: [
-    { text: "send 500,000 won to my landlord", trust: "user" },
-    { text: "<forwarded email body>", trust: "untrusted", origin: "gmail:msg_881" },
-    // …and every later turn of this conversation, the user's replies included
-  ],
-  toolCall: { name: "transfer_funds", arguments },   // the call the model made; its arguments are recorded, never used as values
-  preSetData, priorExecutionState, userChecklist,
-  // Optional. What this user calls a tool, settled earlier in conversation with consent (spec 4.1.1).
-  //   Read only by the tool gate, as reference; it never stands in for what the user said now.
-  user_action_name: { "send": { tool: "transfer_funds", trust: "user" } },
-});
-
-// NOTE: this branch is NOT the separation the specification asks for (3.5). A conforming
-// executor loads the record by action_key + phase and decides for itself. It is wired this
-// way only so the example runs end to end. Do not carry this line into a real system.
-if (state.execution_decision === "execute") {
-  await preflight.executeIfReady(state, mcpTool, callMcpTool);
-} else {
-  // state.gate says exactly what is missing. On ask_user, state.gate.questions is what the model asks
-  //   the user, and state.gate.question_block the values as code wrote them, to show with the question.
-}
-```
-
-</details>
+To call the library without `judge-only.js`, see [the adopt example](./adopt-example/README.md#calling-the-library-directly).
 
 ---
 
