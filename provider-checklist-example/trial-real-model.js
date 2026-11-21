@@ -1,7 +1,9 @@
 "use strict";
 
 /**
- * One run with a real model, through adopt-example/judge-only-example.js.
+ * One run with a real model, through adopt-example/agent.js: LangChain's createAgent with the gate as its
+ * middleware (middleware.js). --loop runs it through judge-only-example.js instead, the path the runs
+ * before E2 took, to compare with them.
  *
  * The model is real (adopt-example/connect.js: MODEL, and that provider's API key in the environment).
  * The tool is read from adopt-example/tool.md, as in use. The system's data and the tool call are
@@ -36,6 +38,9 @@ const fs = require("fs");
 const path = require("path");
 const ADOPT = path.join(__dirname, "..", "adopt-example");
 const { createMain, systemPrompt } = require(path.join(ADOPT, "judge-only-example"));
+const { createAgent } = require(path.join(ADOPT, "agent"));
+const { StubChatModel } = require("./stub-chat-model");
+const { BaseCallbackHandler } = require(path.join(ADOPT, "node_modules", "@langchain/core/callbacks/base"));
 const { createStorage } = require(path.join(ADOPT, "judge-only"));
 const { keepForPrior } = require(path.join(__dirname, "..", "execution-state-preflight"));
 const real = require(path.join(ADOPT, "connect"));
@@ -54,6 +59,7 @@ const replies = all("reply").length ? all("reply") : ["yes"];
 //   and the model puts each into a form for the seller to confirm: the path a real conversation takes.
 const NO_CHECKLIST = argv.includes("--no-checklist");
 const FORM = argv.includes("--form");
+const LOOP = argv.includes("--loop");
 // A scripted reply as the form's answers, for the questions the gate is waiting on.
 function formAnswers(questions, reply) {
   let o;
@@ -121,6 +127,10 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
     ask: (model, system, user, hook) => timed(hook ?? "ask", { system, user }, () => askInner(model, system, user, hook)),
     ...(STUB ? {} : { say: (model, system, user, hook) => timed(hook ?? "say", { system, user }, () => real.say(model, system, user, hook)) }),
     chat: a => timed("agent_chat", { system: a?.system, messages: a?.messages, tools: a?.tools }, () => chatInner(a)),
+    // agent.js: the stand-in as a LangChain chat model (timed through chat), or the real one (timed
+    //   through the agent's callbacks, below).
+    chatModel: async () => (STUB ? new StubChatModel(a => connect.chat(a)) : real.chatModel()),
+    checkpointer: real.checkpointer,
     listTools: async () => (await real.listTools()).map(withNote),
     readToolDefinition: async name => withNote(await real.readToolDefinition(name)),
     measure: measurePort(measuredFor(ctx, date)),
@@ -151,10 +161,41 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
     }, { userId: "user" });
   }
   if (!["spec", "gated"].includes(PRINCIPLES)) throw new Error("--principles is spec or gated");
-  const main = createMain({ connect, hideLines: !SHOW_LINES,
-    system: systemPrompt(PRINCIPLES === "gated" ? "principles-gated.md" : "principles.md") });
+  const system = systemPrompt(PRINCIPLES === "gated" ? "principles-gated.md" : "principles.md");
+  // The real agent model's turns, logged as agent_chat: its own node only, not the gate's calls inside
+  //   the tool node (those are logged through ask and say).
+  const turnsOf = new Map();
+  const callbacks = STUB ? undefined : [BaseCallbackHandler.fromMethods({
+    handleChatModelStart(llm, msgs, runId, parent, extra, tags, metadata) {
+      if (metadata?.langgraph_node !== "model_request") return;
+      const entry = { hook: "agent_chat", messages: (msgs[0] ?? []).map(m => ({ type: m.getType?.(), content: m.content, tool_calls: m.tool_calls })), seconds: null, reply: null, error: null };
+      log.calls.push(entry); turnsOf.set(runId, { entry, t0: Date.now() });
+    },
+    handleLLMEnd(out, runId) {
+      const t = turnsOf.get(runId); if (!t) return;
+      const m = out.generations?.[0]?.[0]?.message;
+      t.entry.seconds = (Date.now() - t.t0) / 1000;
+      t.entry.reply = m?.tool_calls?.length ? { toolCall: { name: m.tool_calls[0].name, arguments: m.tool_calls[0].args, id: m.tool_calls[0].id } } : { text: m?.content };
+      console.log(`  [${String(log.calls.indexOf(t.entry) + 1).padStart(2)}] ${"agent_chat".padEnd(16)} ${t.entry.seconds.toFixed(1).padStart(5)}s  ${short(t.entry.reply)}`);
+    },
+    handleLLMError(e, runId) { const t = turnsOf.get(runId); if (t) { t.entry.error = String(e?.message ?? e); t.entry.seconds = (Date.now() - t.t0) / 1000; } },
+  })];
+  if (!LOOP && SHOW_LINES) throw new Error("--show-lines is for --loop: agent.js always gives the model the tools without the labelled lines");
+  const main = LOOP ? createMain({ connect, hideLines: !SHOW_LINES, system }) : (() => {
+    // agent.js, with what it returns put the way judge-only-example.js puts it: a verdict not to run is
+    //   not_executed, with what the seller is told.
+    const agent = createAgent({ connect, system, callbacks });
+    const norm = res => (["executed", "waiting", "replied", "call_failed", "tool_error"].includes(res.status) ? res
+      : { ...res, status: "not_executed", decision: res.status, message: res.stop?.message ?? "", reason: res.verdict?.reason ?? null });
+    let started = false;
+    return { turn: async ({ threadId, message, answers, userChecklist }) => {
+      if (!started) { started = true; return norm(await agent.start({ threadId, message, userChecklist })); }
+      return norm(await agent.reply({ threadId, message, answers }));
+    } };
+  })();
   const threadId = `trial-${Date.now()}`;
-  console.log(`model: ${log.model}   run: ${id} / ${condition} / date ${dateMode}   ` +
+  log.path = LOOP ? "judge-only-example" : "agent (createAgent + middleware)";
+  console.log(`model: ${log.model}   path: ${log.path}   run: ${id} / ${condition} / date ${dateMode}   ` +
     `shown: ${SHOW_LINES ? "whole description" : "labelled lines taken out"}${LABEL_NOTE ? " + label note" : ""}   principles: ${PRINCIPLES}`);
   console.log(`\nThe seller: ${instruction.text}\n`);
 

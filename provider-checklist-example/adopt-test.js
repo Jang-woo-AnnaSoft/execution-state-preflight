@@ -8,13 +8,19 @@
  * a check is about connect.js itself (labelInput, an unconnected measurement, no server), the real
  * function is used.
  *
+ * Sections 2 to 5 run on graph-agent.js: agent.js as it was before E2, on gate.js, kept to confirm the
+ * earlier tests. Section 6 runs the same scenarios on agent.js as it is now: createAgent with
+ * middleware.js.
+ *
  *   npm run check
  */
 
 const fs = require("fs");
 const path = require("path");
 const ADOPT = path.join(__dirname, "..", "adopt-example");
-const { createAgent, systemPrompt } = require(path.join(ADOPT, "agent"));
+const { createAgent } = require("./graph-agent");                 // kept to confirm the earlier tests
+const { createAgent: createMiddlewareAgent, systemPrompt } = require(path.join(ADOPT, "agent"));
+const { StubChatModel } = require("./stub-chat-model");
 const realConnect = require(path.join(ADOPT, "connect"));
 const gate = require(path.join(ADOPT, "gate"));
 const { runArm, measuredFor, measurePort, MEASUREMENTS } = require("./arm");
@@ -47,6 +53,8 @@ function standIn(id, condition, over = {}) {
       ...(over.readPreSet ? { readPreSet: over.readPreSet } : {}),
       ask: over.ask ?? makeAsk(id),
       chat: async req => { prompts.push(req.system); return makeChat()(req); },
+      // agent.js on createAgent: the same stand-in, as a LangChain chat model.
+      async chatModel() { return new StubChatModel(a => this.chat(a)); },
       listTools: async () => [TOOL],
       readToolDefinition: over.readToolDefinition ?? (async name => [TOOL].find(t => t.name === name)),
       measure: over.measure ?? measurePort(measuredFor(ctx, date)),
@@ -64,9 +72,9 @@ function standIn(id, condition, over = {}) {
     },
   };
 }
-const run = async (id, condition, over = {}, replies = []) => {
+const run = async (id, condition, over = {}, replies = [], make = createAgent) => {
   const s = standIn(id, condition, over);
-  const agent = createAgent({ connect: s.connect });
+  const agent = make({ connect: s.connect });
   const threadId = `t${++thread}`;
   const first = await agent.start({ threadId, message: { typed: "(stand-in)" }, userChecklist: S.instructions.find(i => i.id === id).user_checklist ?? [] });
   let last = first;
@@ -367,6 +375,96 @@ function askAllGiven(id) {
     }
   }
   check("35 runs: the same decision", mismatched, []);
+
+  console.log("\n--- 6. agent.js now: createAgent with middleware.js, on the same scenarios ---");
+  {
+    const runNew = (id, condition, over = {}, replies = []) => run(id, condition, over, replies, createMiddlewareAgent);
+    const n1 = await runNew("g1-01", "clean", {}, ["yes"]);
+    check("g1-01: waits on a question, the time shown by code, the notice with it",
+      [n1.first.status, n1.first.question?.block?.[0], n1.first.question?.block?.some(l => l.startsWith("Note: The buyer sees"))],
+      ["waiting", "time = 2026-10-31 (Sat) 14:00 +09:00", true]);
+    check("  the seller's yes: executed once, with the record's arguments",
+      [n1.last.status, n1.calls.length, n1.calls[0]?.args.time, n1.calls[0]?.args.location], ["executed", 1, SAT_2PM, "Hongdae station lockers"]);
+    const nrec = (await n1.store.list(n1.key)).filter(r => r.execution_decision === "execute").at(-1);
+    check("  the arguments sent are the record's; the principles were in the model's system prompt",
+      [JSON.stringify(n1.calls[0]?.args) === JSON.stringify(nrec?.call_arguments), n1.prompts.length > 0 && n1.prompts.every(p => p.includes("Do not fill in a value the user did not give"))], [true, true]);
+    const nc = await runNew("g1-01", "clean", {}, ["CANCEL"]);
+    check("the seller stops: nothing runs", [nc.last.status, nc.calls.length], ["cancelled", 0]);
+
+    const sm = standIn("g1-01", "clean");
+    const given = [];
+    const inner = sm.connect.chat;
+    sm.connect.chat = async a => { given.push(a?.tools ?? null); return inner(a); };
+    const am = createMiddlewareAgent({ connect: sm.connect });
+    const idM = `nm${++thread}`;
+    await am.start({ threadId: idM, message: { typed: "x" } });
+    const rm = await am.reply({ threadId: idM, message: { typed: "yes" } });
+    check("the model is given no labelled line, and the run still executes",
+      [given.length > 0, given.flat().some(t => /^\[(Required|Verify|Notice)\]/m.test(t?.description ?? "")), rm.status], [true, false, "executed"]);
+
+    const su = standIn("g1-01", "clean");
+    const stubAsk = su.connect.ask;
+    let n = 0;
+    su.connect.ask = (m, x, u, h) => (h === "tool_match" ? { approved: n++ >= 1, reason: "stand-in" } : stubAsk(m, x, u, h));
+    const au = createMiddlewareAgent({ connect: su.connect });
+    const idU = `nu${++thread}`;
+    const u1 = await au.start({ threadId: idU, message: { typed: "x" } });
+    await au.reply({ threadId: idU, message: { typed: "Schedule the pickup, as I said." } });
+    const u3 = await au.reply({ threadId: idU, message: { typed: "yes" } });
+    check("the tool is not matched: the gate's own words; said again, it executes on yes",
+      [u1.status, u1.question?.message, u3.status, su.calls.length],
+      ["waiting", "I could not tell which action this maps to. Please describe what you want done, in your own words.", "executed", 1]);
+
+    const sh = standIn("g1-01", "clean");
+    const base = sh.connect.store;
+    sh.connect.store = { ...base, list: async k => (await base.list(k)).filter(r => r.execution_decision !== "execute") };
+    const ah = createMiddlewareAgent({ connect: sh.connect });
+    const idH = `nh${++thread}`;
+    await ah.start({ threadId: idH, message: { typed: "x" } });
+    const rh = await ah.reply({ threadId: idH, message: { typed: "yes" } });
+    check("the record of the verdict cannot be read back: not executed", [rh.status, sh.calls.length], ["not_executed", 0]);
+
+    const ask = { method: "elicitation/create", params: { mode: "form", message: "Card PIN?", requestedSchema: { type: "object", properties: { pin: { type: "string" } } } } };
+    for (const [label, result, want] of [
+      ["the server asked during the call: stopped, not executed", async () => ({ inputRequired: { pin: ask } }), "input_required"],
+      ["the tool reports an error: not counted as executed", async () => ({ isError: true, content: [{ type: "text", text: "slot taken" }] }), "tool_error"],
+      ["the call throws: reported, not executed", async () => { throw new Error("connection reset"); }, "call_failed"],
+    ]) {
+      const sf = standIn("g1-01", "clean");
+      sf.connect.callTool = async (nm, a) => { sf.calls.push(a); return result(); };
+      const af = createMiddlewareAgent({ connect: sf.connect });
+      const id = `nf${++thread}`;
+      await af.start({ threadId: id, message: { typed: "x" } });
+      const rf = await af.reply({ threadId: id, message: { typed: "yes" } });
+      check(label, [rf.status, rf.executedWith, sf.calls.length, (await sf.connect.store.list(`user:schedule_pickup:${id}`)).at(-1)?.execution_decision],
+        [want, null, 1, "failed"]);
+    }
+
+    const NOTICE = "The buyer sees the time and location immediately. Tell the seller before the pickup is scheduled.";
+    const na = await runNew("g1-01", "clean", { text: ALL_GIVEN, ask: askAllGiven("g1-01") });
+    check("nothing to ask: the notice is shown, then the tool is called", [na.first.status, na.events], ["executed", [["notify", [NOTICE]], "call"]]);
+    const nmute = await runNew("g1-01", "clean", { text: ALL_GIVEN, ask: askAllGiven("g1-01"), notify: null });
+    check("  no way to show it: not executed, and the executing side's record says so",
+      [nmute.first.status, nmute.calls.length, (await nmute.store.list(nmute.key)).map(x => `${x.actor}:${x.execution_decision}`)],
+      ["not_executed", 0, ["gate:execute", "executor:not_executed"]]);
+    const nheld = await runNew("g1-01", "order_cancelled", {}, ["yes"]);
+    check("a hold: not run, and the record follows the verdict",
+      [nheld.last.status, (await nheld.store.list(nheld.key)).slice(-2).map(x => `${x.actor}:${x.execution_decision}`)], ["hold", ["gate:hold", "executor:not_executed"]]);
+    const preSet = S.instructions.find(i => i.id === "g6-01").pre_set;
+    const nsaved = await runNew("g6-01", "clean", { readPreSet: async () => preSet }, ["yes"]);
+    check("readPreSet reaches the gate: the saved place is the one used", [nsaved.last.status, nsaved.calls[0]?.args.location], ["executed", preSet.location.value]);
+
+    const differ = [];
+    for (const ins of S.instructions) {
+      for (const condition of S.instruction_conditions[String(ins.group)] ?? []) {
+        const ctx = S.conditions[condition].context, date = S.date_modes.said;
+        const arm = await runArm({ ctx, instructionText: ins.text, userChecklist: ins.user_checklist ?? [], date, ask: makeAsk(ins.id), runId: `b-${ins.id}` });
+        const agent = await runNew(ins.id, condition);
+        if (arm.decision !== agent.first.verdict?.decision) differ.push(`${ins.id}/${condition}: ${arm.decision} vs ${agent.first.verdict?.decision}`);
+      }
+    }
+    check("35 runs: the same first decision as the arm", differ, []);
+  }
 
   console.log(failed ? `\n${failed} FAILED` : "\nall ok");
   process.exit(failed ? 1 : 0);

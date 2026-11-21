@@ -5,8 +5,9 @@ and into a declaration. This folder shows what changes when the provider declare
 and checks it.
 
 **To use it, see [`adopt-example/`](../adopt-example/).** That folder holds only the files you keep.
-The gate code lives there (`judge-only.js` judges, `gate.js` is the flow around it). This folder holds the comparison with v1 and every test.
-`hooks.js` and `graph.js` here only load `adopt-example/gate.js`. [`tool.json`](./tool.json) stands in
+The gate code lives there (`judge-only.js` judges, `middleware.js` runs it in LangChain's `createAgent`). This folder holds the comparison with v1 and every test.
+`hooks.js` and `graph.js` here only load `adopt-example/gate.js`, the flow before E2, kept to confirm the earlier tests; so does
+[`graph-agent.js`](./graph-agent.js), `agent.js` as it was then. [`tool.json`](./tool.json) stands in
 for the tool's declaration (`adopt-example/tool.md`, which the tests check it matches): the gate reads it through its port.
 
 In `hooks-example/` (v1), the hooks hold the rules. `tool.js` keeps the time format, the allowed
@@ -216,7 +217,7 @@ ajv-formats 3.0.1, @langchain/langgraph 1.5.2, @langchain/core 1.2.20, zod 4.6.7
   and condition, its reading of time words, and where a reply says yes come from the stand-in
   (`stub.js`). What the gate does with them is the real library.
 - **One run at a time with a real model, and no repeated runs.** [`trial-real-model.js`](./trial-real-model.js)
-  runs one instruction through `adopt-example/judge-only-example.js` with your model (`MODEL`, and the
+  runs one instruction through `adopt-example/agent.js` (or `judge-only-example.js`, with `--loop`) with your model (`MODEL`, and the
   key in the environment), or with the stand-in (`--stub`, no key), and prints every model call and the
   last record. Its output is not kept in this folder. The runner, arms A and B and the analyser are
   still only in v1.
