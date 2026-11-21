@@ -107,13 +107,11 @@ function askAllGiven(id) {
   console.log("--- 1. the folder holds only what an adopter keeps ---");
   // records.jsonl is what running the example leaves behind (connect.js RECORD_PATH), not a file to keep.
   const files = fs.readdirSync(ADOPT).filter(f => f !== "node_modules" && f !== "records.jsonl").sort();
-  check("adopt-example files", files, ["README.md", "agent.js", "connect.js", "gate.js", "judge-only-example.js", "judge-only.js", "middleware.js", "package-lock.json", "package.json", "principles-gated.md", "principles.md", "records.js", "tool.md"]);
-  // tool.md is the declaration the agent reads by default: it must be the tool the tests run.
-  const md = fs.readFileSync(path.join(ADOPT, "tool.md"), "utf8");
-  const blocks = [...md.matchAll(/```(\w+)\n([\s\S]*?)\n```/g)].map(m => [m[1], m[2]]);
-  const texts = blocks.filter(([k]) => k === "text").map(([, b]) => b), json = blocks.find(([k]) => k === "json")?.[1];
-  check("  tool.md is the tool the tests run: name, description, input schema",
-    [texts[0], texts[1], JSON.stringify(JSON.parse(json ?? "null"))], [TOOL.name, TOOL.description, JSON.stringify(TOOL.inputSchema)]);
+  check("adopt-example files", files, ["README.md", "agent.js", "connect.js", "gate.js", "judge-only-example.js", "judge-only.js", "middleware.js", "package-lock.json", "package.json", "principles-gated.md", "principles.md", "records.js", "tool.json"]);
+  // tool.json is the declaration the agent reads by default, an MCP tool definition: it must be the tool the tests run.
+  const declared = JSON.parse(fs.readFileSync(path.join(ADOPT, "tool.json"), "utf8"));
+  check("  tool.json is the tool the tests run: an MCP tool definition, the same name, description, input schema",
+    [Object.keys(declared), declared.name, declared.description, JSON.stringify(declared.inputSchema)], [["name", "description", "inputSchema"], TOOL.name, TOOL.description, JSON.stringify(TOOL.inputSchema)]);
   // principles.md is spec 6.2 as prompt sentences: every bullet must be the spec's own sentence.
   const spec = fs.readFileSync(path.join(__dirname, "..", "spec.en.md"), "utf8");
   const bullets = fs.readFileSync(path.join(ADOPT, "principles.md"), "utf8").split("\n").filter(l => l.startsWith("- ")).map(l => l.slice(2));
@@ -133,12 +131,12 @@ function askAllGiven(id) {
   check("  the tool-selection lines are spec 6.2's own sentences",
     gated.filter(b => b.endsWith("(spec 6.2)")).map(b => spec.includes(b.replace(/\s*\(spec [^)]*\)$/, ""))), [true, true]);
 
-  console.log("\n--- 2. connect.js as shipped: the tools from tool.md, and it fails closed ---");
+  console.log("\n--- 2. connect.js as shipped: the tools from tool.json, and it fails closed ---");
   {
     const prior = process.env.TOOLS_FILE;
     delete process.env.TOOLS_FILE;
     const listed = await realConnect.listTools();
-    check("by default the tools are read from tool.md, beside connect.js", [listed.length, JSON.stringify(listed[0]) === JSON.stringify(TOOL)], [1, true]);
+    check("by default the tools are read from tool.json, beside connect.js", [listed.length, JSON.stringify(listed[0]) === JSON.stringify(TOOL)], [1, true]);
     const shipped = await run("g4-01", "clean", { readToolDefinition: realConnect.readToolDefinition, measure: realConnect.measure });
     const measuredLines = shipped.first.verdict.provider_checklist.filter(c => /holds only when the system measurement/.test(c.form ?? ""));
     check("as shipped: the definition is read, no measurement is connected, so nothing runs",
@@ -155,10 +153,10 @@ function askAllGiven(id) {
     console.log("\n--- 2-b. the declaration is the definition, read on every run ---");
     const os = require("os");
     const fromFile = await run("g1-01", "clean", { readToolDefinition: realConnect.readToolDefinition }, ["yes"]);
-    check("the gate reads tool.md: asks, the seller says yes, executes", [fromFile.first.status, fromFile.last.status, fromFile.calls[0]?.args.time],
+    check("the gate reads tool.json: asks, the seller says yes, executes", [fromFile.first.status, fromFile.last.status, fromFile.calls[0]?.args.time],
       ["waiting", "executed", SAT_2PM]);
-    const edited = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tools-")), "tool.md");
-    fs.writeFileSync(edited, fs.readFileSync(path.join(ADOPT, "tool.md"), "utf8").replace("It is one moment.", "It is one moment, in the seller's time zone."));
+    const edited = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tools-")), "tool.json");
+    fs.writeFileSync(edited, fs.readFileSync(path.join(ADOPT, "tool.json"), "utf8").replace("It is one moment.", "It is one moment, in the seller's time zone."));
     process.env.TOOLS_FILE = edited;
     const changed = await run("g1-01", "clean", { readToolDefinition: realConnect.readToolDefinition });
     const hashOf = async r => (await r.store.list(`user:schedule_pickup:t${thread}`)).find(x => x.tool_definition)?.tool_definition?.hash;
@@ -166,7 +164,8 @@ function askAllGiven(id) {
     delete process.env.TOOLS_FILE;
     const same = await run("g1-01", "clean", { readToolDefinition: realConnect.readToolDefinition });
     check("TOOLS_FILE points elsewhere: that declaration is read, and the record shows the change", hChanged !== await hashOf(same), true);
-    check("a file that is not a declaration is not read", (() => { try { realConnect.readToolFile("# nothing"); return "read"; } catch { return "refused"; } })(), "refused");
+    const refuses = t => { try { realConnect.readToolFile(t); return "read"; } catch { return "refused"; } };
+    check("a file that is not a tool definition is not read", [refuses("# nothing"), refuses('{"name": "x"}'), refuses(JSON.stringify(TOOL))], ["refused", "refused", "read"]);
     if (prior !== undefined) process.env.TOOLS_FILE = prior;
 
     // The MCP connection is kept in connect.js as comments, for tools on someone else's server. Uncommented,

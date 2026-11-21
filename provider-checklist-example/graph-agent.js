@@ -6,7 +6,7 @@
  * results before E2 can be confirmed. It is not a path to adopt: adopt-example/agent.js now runs on
  * LangChain's createAgent with middleware.js.
  *
- * A demonstration: a whole agent to run and watch. Your model and your tools (connect.js, tool.md), the
+ * A demonstration: a whole agent to run and watch. Your model and your tools (connect.js, tool.json), the
  * gate (judge-only.js) with the flow around it (gate.js), your principles (principles.md) in the system
  * prompt. You should not need to edit this file.
  *

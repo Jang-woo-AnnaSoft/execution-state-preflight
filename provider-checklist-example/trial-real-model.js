@@ -6,7 +6,7 @@
  * before E2 took, to compare with them.
  *
  * The model is real (adopt-example/connect.js: MODEL, and that provider's API key in the environment).
- * The tool is read from adopt-example/tool.md, as in use. The system's data and the tool call are
+ * The tool is read from adopt-example/tool.json, as in use. The system's data and the tool call are
  * stand-ins, the same as the tests': the measurements of the chosen condition, and a tool call that
  * only prints. So this shows what the tests cannot: what a real model answers to the gate's prompts.
  *
@@ -89,7 +89,7 @@ const EXPECT_TIME = "2026-10-31T14:00:00+09:00";
 //   --show-lines         the tool's whole description, labelled lines included, as a host that lists a
 //                        server's tools itself would show it (default: the lines taken out, toolsForModel)
 //   --no-label-note      the description without its line saying when the labelled lines are checked
-//                        (tool.md has it, spec 4.2.1). Both the model and the gate read it; the gate as prose
+//                        (tool.json has it, spec 4.2.1). Both the model and the gate read it; the gate as prose
 //   --principles spec    the system prompt from principles.md, spec 6.2 itself (default: gated,
 //                        principles-gated.md)
 const SHOW_LINES = argv.includes("--show-lines"), LABEL_NOTE = !argv.includes("--no-label-note");

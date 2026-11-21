@@ -8,7 +8,7 @@ and checks it.
 The gate code lives there (`judge-only.js` judges, `middleware.js` runs it in LangChain's `createAgent`). This folder holds the comparison with v1 and every test.
 `hooks.js` and `graph.js` here only load `adopt-example/gate.js`, the flow before E2, kept to confirm the earlier tests; so does
 [`graph-agent.js`](./graph-agent.js), `agent.js` as it was then. [`tool.json`](./tool.json) stands in
-for the tool's declaration (`adopt-example/tool.md`, which the tests check it matches): the gate reads it through its port.
+for the tool's declaration (`adopt-example/tool.json`, which the tests check it matches): the gate reads it through its port.
 
 In `hooks-example/` (v1), the hooks hold the rules. `tool.js` keeps the time format, the allowed
 sources and the provider's conditions as JS constants. `hooks.js` decides what "public place",
@@ -153,9 +153,9 @@ over-eager one also quotes the seller's limits.
 
 `adopt-test.js` checks `adopt-example/` itself, from here, so that folder holds no test files:
 
-- that it holds only the files an adopter keeps; that its `tool.md` is the tool these tests run, and that no code there reads it;
+- that it holds only the files an adopter keeps; that its `tool.json` is the tool these tests run;
 - that its `connect.js`, as shipped, fails closed: no server, no definition; no measurement, no run;
-- that the definition is read from `tool.md` by default, or from the files in `TOOLS_FILE`, run after run; and that the MCP connection kept as comments is still code;
+- that the definition is read from `tool.json` by default, or from the files in `TOOLS_FILE`, run after run; and that the MCP connection kept as comments is still code;
 - that start, ask, reply and execute run end to end;
 - that the executing step starts from the record: the arguments are the record's, nothing runs when the
   record cannot be read back, and the result is written back;
