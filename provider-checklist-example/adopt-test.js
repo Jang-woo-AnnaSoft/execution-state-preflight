@@ -224,6 +224,9 @@ function askAllGiven(id) {
     const { modelOptions } = require("../adopt-example/connect");
     const err = env => { try { modelOptions(env); return null; } catch (e) { return e.message; } };
     check("nothing set: nothing sent", modelOptions({}), {});
+    check("an Anthropic model: thinking adaptive, so the answer's shape is offered, not forced",
+      [modelOptions({ MODEL: "anthropic:claude-sonnet-5-5" }), modelOptions({ MODEL: "anthropic:claude-haiku-4-5", MODEL_OPTIONS: '{"thinking":{"type":"disabled"}}' }), modelOptions({ MODEL: "openai:gpt-6" })],
+      [{ thinking: { type: "adaptive" } }, { thinking: { type: "disabled" } }, {}]);
     check("TEMPERATURE=0: sent", modelOptions({ TEMPERATURE: "0" }), { temperature: 0 });
     check("MODEL_OPTIONS: given as it is", modelOptions({ MODEL_OPTIONS: '{"useResponsesApi":true,"reasoning":{"effort":"low"}}' }),
       { useResponsesApi: true, reasoning: { effort: "low" } });
