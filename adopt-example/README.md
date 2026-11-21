@@ -175,9 +175,10 @@ by saying it did not run and which lines could not be checked. That is the expec
 Fill in `MEASUREMENTS` and `TOOLS` and it asks and executes.
 
 **When an MCP server asks for more input.** Under MCP 2026-07-28 a server may answer a tool call with
-`input_required`. The commented MCP client is set not to answer it itself (`autoFulfill: false`):
-input gathered that way would reach the tool without passing the gate. The run stops with status
-`input_required`, nothing executed, and the server's request is returned to you.
+`input_required`. The commented MCP connection is LangChain's (`@langchain/mcp-adapters`), set not to
+gather that input itself (`elicitation: false`; by default it would, with an interrupt): input gathered
+that way would reach the tool without passing the gate. The server cannot ask, the call ends as
+failed (`call_failed`), and nothing is executed. The server's request itself does not come back.
 
 ## 4. Use it: your agent executes (`judge-only.js`)
 

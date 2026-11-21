@@ -160,59 +160,43 @@ async function callTool(name, args) {
   return run(args);
 }
 
-// ── or: the tools on an MCP server ─────────────────────────────────────────────────────────────
+// ── or: the tools on an MCP server, through LangChain's MCP connection ──────────────────────────
 // When the tools are someone else's, served by an MCP server, read them from the server instead: set
 //   MCP_SERVER_URL, uncomment this block, and use mcpListTools, mcpReadToolDefinition and mcpCallTool
-//   as listTools, readToolDefinition and callTool (module.exports, at the end of this file).
+//   as listTools, readToolDefinition and callTool (module.exports, at the end of this file). The
+//   connection is LangChain's (@langchain/mcp-adapters).
 //   The provider writes the rules in the tool's description on the server; the gate reads them from
 //   the server's list. Note that a [Required] line can only be checked if your system can measure what
 //   it names — often data on the provider's side.
 //
-// MCP 2026-07-28 lets a server answer tools/call with input_required: it asks the user for more input
-//   (an elicitation) before it completes the call. The client would normally answer that itself and
-//   retry. Here it must not: input gathered that way reaches the tool without going through the
-//   gate, and is in no decision record. So the client is set to hand such a result back, and the run
-//   stops there, not executed, and the server's request comes back to you. If your tool needs that
-//   input, the provider declares it in the input schema, where the gate asks for it and checks it.
-// The client declares the elicitation capability so that the server's request comes back as data
-//   you can show, rather than as a refusal. It registers no handler for it: on the 2025 protocol, a
-//   server that asks gets "method not found", and the tool reports an error.
-// The tool list: when the server announces changes to it (tools.listChanged), the client refreshes
-//   the list on each notice and the gate reads that list; otherwise the list is read again for each
-//   definition the gate reads. Either way the gate reads what the server serves, and the record keeps
-//   a hash of the definition it read.
+// elicitation: false. MCP 2026-07-28 lets a server answer tools/call with input_required: it asks the
+//   user for more input before it completes the call. The adapter, by default, would gather that input
+//   itself, with a LangGraph interrupt, and call again. Here it must not: input gathered that way
+//   reaches the tool without going through the gate, and is in no decision record. With elicitation
+//   off, the client does not declare it, the server cannot ask, and the call ends as failed, not
+//   executed. If your tool needs that input, the provider declares it in the input schema, where the
+//   gate asks for it and checks it. (The server's request itself does not come back: only that the
+//   call did not complete.) Checked against a local server on 2026-07-28 with adapter 2.0.3.
+// The definitions: the server's list is read again for each definition the gate reads, so the gate
+//   reads what the server serves, and the record keeps a hash of the definition it read.
 //
-// let toolList = null;
-// const CLIENT_OPTIONS = {
-//   versionNegotiation: { mode: "auto" },     // 2026-07-28 with a server that offers it, 2025 otherwise
-//   inputRequired: { autoFulfill: false },    // never answer a server's request for input behind the gate
-//   capabilities: { elicitation: {} },        // so the request is handed back, not refused
-//   listChanged: { tools: { onChanged: (error, tools) => { toolList = error ? null : tools; } } },
-// };
-//
-// // { inputRequired } when the server asked for input instead of completing; the result otherwise.
-// function toToolResult(result) {
-//   const { isInputRequiredResult } = require("@modelcontextprotocol/client");
-//   return isInputRequiredResult(result) ? { inputRequired: result.inputRequests ?? {} } : result;
-// }
-//
-// let mcpClient = null;
-// async function client() {
-//   if (!mcpClient) {
+// let mcp = null;
+// function mcpClient() {
+//   if (!mcp) {
 //     if (!process.env.MCP_SERVER_URL) throw new Error("set MCP_SERVER_URL");
-//     const { Client, StreamableHTTPClientTransport } = require("@modelcontextprotocol/client");
-//     const c = new Client({ name: "adopt-example", version: "1.0.0" }, CLIENT_OPTIONS);
-//     await c.connect(new StreamableHTTPClientTransport(new URL(process.env.MCP_SERVER_URL)));
-//     mcpClient = c;
+//     const { MultiServerMCPClient } = require("@langchain/mcp-adapters");
+//     mcp = new MultiServerMCPClient({
+//       servers: { tools: { url: process.env.MCP_SERVER_URL, elicitation: false } },
+//       prefixToolNameWithServerName: false,   // the tools keep the names their definitions have
+//     });
 //   }
-//   return mcpClient;
+//   return mcp;
 // }
 //
+// // The definitions as the server lists them: name, description, inputSchema.
 // async function mcpListTools() {
-//   const c = await client();
-//   const announces = c.getServerCapabilities()?.tools?.listChanged === true;
-//   if (!toolList || !announces) toolList = (await c.listTools(undefined, { cacheMode: "refresh" })).tools;
-//   return toolList;
+//   const client = await mcpClient().getClient("tools");
+//   return (await client.listTools(undefined, { cacheMode: "refresh" })).tools;
 // }
 //
 // async function mcpReadToolDefinition(name) {
@@ -221,10 +205,19 @@ async function callTool(name, args) {
 //   return tool;
 // }
 //
-// // Called only with the arguments in the gate's record, once the record reads as ready.
+// // Called only with the arguments in the gate's record, once the record reads as ready: the adapter's
+// //   LangChain tool. A result the tool reports as an error comes back as one; a call that did not
+// //   complete (it failed, or the server asked for input) is thrown.
 // async function mcpCallTool(name, args) {
-//   const c = await client();
-//   return toToolResult(await c.callTool({ name, arguments: args }, { allowInputRequired: true }));
+//   const tool = (await mcpClient().getTools()).find(t => t.name === name);
+//   if (!tool) throw new Error(`the server lists no tool named ${JSON.stringify(name)}`);
+//   try {
+//     const content = await tool.invoke(args);
+//     return { content: typeof content === "string" ? [{ type: "text", text: content }] : content };
+//   } catch (e) {
+//     if (e?.result?.isError) return e.result;
+//     throw e;
+//   }
 // }
 
 // ── measure: your system's values ──────────────────────────────────────────────────────────────
