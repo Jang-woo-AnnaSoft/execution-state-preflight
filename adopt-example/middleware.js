@@ -74,6 +74,7 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
                                labelMessage = userSegments } = {}) {
   const model = connect.MODEL_NAME ?? "model";
   const store = connect.store;
+  const steps = connect.steps ?? connect.store;   // where the judging steps are kept (connect.js steps)
   const judge = createJudge({
     ask: connect.ask, measure: connect.measure, readToolDefinition: connect.readToolDefinition,
     measurements: Object.keys(connect.MEASUREMENTS ?? {}), storage: store, userId, model, readPreSet: connect.readPreSet,
@@ -109,7 +110,7 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
       //   under the call's id, and taken from there on the way back: the gate's model calls are not made
       //   again, and no record is written twice. The answers come back in the same order.
       const stepsKey = `preflight-steps:${unitKey}:${toolCall.id}`;
-      const kept = await store.list(stepsKey);
+      const kept = await steps.list(stepsKey);
       let r;
       for (let k = 0; ; k++) {
         let step = kept[k];
@@ -122,7 +123,7 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
             : judged.ask && judged.message ? { text: judged.message, block: [], message: judged.message, options: judged.options ?? null }
             : null;
           step = { k, r: judged, question };
-          await store.persist(stepsKey, step);
+          await steps.persist(stepsKey, step);
         }
         r = step.r;
         const q = step.question;

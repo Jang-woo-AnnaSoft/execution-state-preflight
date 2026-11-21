@@ -47,6 +47,7 @@ The gate asks about the time, the stand-in user answers yes, and the tool runs.
 | [`judge-only.js`](./judge-only.js) | Do not edit. Gives the library its model calls and a validator; judges one tool call and writes the record |
 | [`judge-only-example.js`](./judge-only-example.js) | Read and adapt. Your agent's side: ask, judge again, read the record, execute, write the result |
 | [`middleware.js`](./middleware.js) | Do not edit. The same agent's side, as LangChain middleware for `createAgent` |
+| [`records.js`](./records.js) | Do not edit. The decision records in a LangGraph `BaseStore` (`connect.js` picks which one) |
 | [`agent.js`](./agent.js) | Demonstration. `createAgent` with `middleware.js`. Run it, or call it from your app. No edits needed |
 | [`gate.js`](./gate.js) | Kept to confirm the earlier tests (the flow `agent.js` ran on before). Not a way in |
 
@@ -139,7 +140,7 @@ be compared by code, the same way every time: no model judges at run time whethe
 | The provider's notices | `notify(lines)` | How your app shows a `[Notice]` line to the user before the tool runs, when no question carried it. As shipped it prints them. With no `notify`, a run that has a notice to show and nothing to show it with does not execute |
 | The tool call | `TOOLS` | Your tool, by name: it takes the arguments in the gate's record and does the thing. For an MCP server, the commented `mcpCallTool` |
 | The user's settings | `readPreSet(userId, toolName)` | Optional. What the user saved for this tool, read from your own storage. As shipped it returns none |
-| Records | `store` | Append-only, somewhere the agent cannot rewrite. It also needs `list(key)`: the gate reads what a conversation was asked, and the kept forms, with it |
+| Records | `store` | Append-only, somewhere the agent cannot rewrite. A LangGraph `BaseStore` through `records.js`: `InMemoryStore` as shipped, kept only while the process runs. To keep records longer, change that one line in `connect.js` to a persistent store such as `PostgresStore` |
 | Waiting conversations | `checkpointer` | A persistent LangGraph checkpointer, for example Postgres |
 
 **Keys.** Keys and addresses come from environment variables only. Never write them into these

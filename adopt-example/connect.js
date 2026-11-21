@@ -26,7 +26,6 @@
  *   TOOLS_FILE       your declaration of the tools: files in the format of tool.md, separated by
  *                    commas (default ./tool.md, beside this file)
  *   MCP_SERVER_URL   only with the MCP connection below, uncommented: the server that serves the tools
- *   RECORD_PATH      where the records file goes (default ./records.jsonl)
  *
  * A function left unconnected fails closed: a measurement that is not connected is "not measured", so
  * a check that needs it is unverified and the run does not execute.
@@ -34,7 +33,8 @@
 
 const fs = require("fs");
 const path = require("path");
-const { MemorySaver } = require("@langchain/langgraph");
+const { MemorySaver, InMemoryStore } = require("@langchain/langgraph");
+const { recordStore } = require("./records");
 
 // ── the model ──────────────────────────────────────────────────────────────────────────────────
 // The model is chosen once, at start, from MODEL. It is not chosen per request: what the gate is
@@ -276,28 +276,19 @@ async function notify(lines) {
 }
 
 // ── store: decision records ────────────────────────────────────────────────────────────────────
-// Append-only. load returns the latest record that executed, for the key (spec 5.2). list returns every
-//   record under the key, oldest first: the gate reads what a conversation was asked, and the kept
-//   translations of the provider's lines, with it. A store without list counts no reply.
-// This file is a starting point. In a real system, keep records where the agent process cannot
-//   rewrite them (spec 8.2): a write-once table, a log service, a separate account.
-const RECORD_PATH = process.env.RECORD_PATH ?? "./records.jsonl";
-const store = {
-  async persist(key, record) {
-    fs.appendFileSync(RECORD_PATH, JSON.stringify({ key, record }) + "\n");
-    return record;
-  },
-  async load(key) {
-    const all = await this.list(key);
-    for (let i = all.length - 1; i >= 0; i--) if (all[i]?.execution_decision === "executed") return all[i];
-    return null;
-  },
-  async list(key) {
-    if (!fs.existsSync(RECORD_PATH)) return [];
-    return fs.readFileSync(RECORD_PATH, "utf8").trim().split("\n").filter(Boolean)
-      .map(l => JSON.parse(l)).filter(e => e.key === key).map(e => e.record);
-  },
-};
+// Append-only, in a LangGraph BaseStore (records.js). load returns the latest record that executed, for
+//   the key (spec 5.2). list returns every record under the key, oldest first: the gate reads what a
+//   conversation was asked, and the kept translations of the provider's lines, with it. steps: the
+//   middleware's own judging steps, kept so that resuming does not judge again.
+// InMemoryStore keeps the records only while this process runs. To keep them longer, change this one
+//   line to a persistent store, for example PostgresStore:
+//     const { PostgresStore } = require("@langchain/langgraph-checkpoint-postgres/store");
+//     const baseStore = PostgresStore.fromConnString(process.env.DATABASE_URL);   // await baseStore.setup() once
+// Keep it where the agent process cannot rewrite records (spec 8.2): not handed to the agent
+//   (createAgent's store), where its tools and other middleware reach it.
+const baseStore = new InMemoryStore();
+const store = recordStore(baseStore);
+const steps = recordStore(baseStore, "steps");
 
 // ── readPreSet: the user's settings for a tool ─────────────────────────────────────────────────
 // (userId, toolName) → { field: { value, trust, approved_by, approved_at, approved_in } } (spec 5.2).
@@ -317,7 +308,7 @@ const checkpointer = new MemorySaver();
 
 // chatModel: the agent's model itself, for LangChain's createAgent (agent.js); chat is the same model,
 //   called one turn at a time (judge-only-example.js).
-module.exports = { ask, say, chat, chatModel: model, listTools, readToolDefinition, measure, labelInput, notify, callTool, store, readPreSet, checkpointer,
+module.exports = { ask, say, chat, chatModel: model, listTools, readToolDefinition, measure, labelInput, notify, callTool, store, steps, readPreSet, checkpointer,
                    MEASUREMENTS, TOOLS, MODEL_NAME, readToolFile, askWith, structuredMethod, modelOptions };
 // With the MCP connection above uncommented:
 //   listTools: mcpListTools, readToolDefinition: mcpReadToolDefinition, callTool: mcpCallTool
