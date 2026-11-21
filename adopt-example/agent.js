@@ -2,7 +2,7 @@
 
 /**
  * A demonstration: a whole agent to run and watch. LangChain's createAgent, with your model and your
- * tools (connect.js, tool.md), the gate as its middleware (middleware.js), and your principles
+ * tools (connect.js, tool.json), the gate as its middleware (middleware.js), and your principles
  * (principles-gated.md) as its system prompt. You should not need to edit this file.
  *
  * This departs from spec 3.5, as the flow before it did. The gate ends with the record and the executing
@@ -43,7 +43,8 @@ function systemPrompt(file = "principles-gated.md") {
   return "You are an assistant. You have tools; use them to carry out what the user asks.\n\n" + principles;
 }
 
-// Your declared tools as LangChain tools: the model sees them without the provider's labelled lines
+// Your declared tools (MCP tool definitions) as LangChain tools, one line each: tool(fn, { name,
+//   description, schema: inputSchema }). The model sees them without the provider's labelled lines
 //   (toolsForModel); the gate reads the full definition itself. Each calls connect.callTool with the
 //   arguments the middleware hands it, which are the record's. A server's request for more input, or a
 //   tool's reported failure, is not a result: nothing ran as asked.

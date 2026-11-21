@@ -6,7 +6,7 @@
  *   ask                 the model, for the gate's questions to it: told where to look, it reports where
  *                       the user's words are, and writes what it is asked to write as JSON
  *   chat                the agent's model: reads the conversation and the tools, and calls a tool
- *   listTools           the tools, as you declare them (tool.md); or as an MCP server lists them
+ *   listTools           the tools, as you declare them (tool.json); or as an MCP server lists them
  *   readToolDefinition  one tool's definition, from that list: the gate reads it itself
  *   measure             your system's values, read when the gate asks, with the values it has settled
  *   labelInput          who wrote each part of an incoming message
@@ -23,8 +23,8 @@
  *   MODEL_OPTIONS    optional: a JSON object given to that package as it is, e.g. '{"useResponsesApi":true}'
  *                    for an OpenAI model that calls tools only through the Responses API
  *   TEMPERATURE      optional: sent only when set, e.g. TEMPERATURE=0
- *   TOOLS_FILE       your declaration of the tools: files in the format of tool.md, separated by
- *                    commas (default ./tool.md, beside this file)
+ *   TOOLS_FILE       your declaration of the tools: MCP tool definitions, one JSON file each,
+ *                    separated by commas (default ./tool.json, beside this file)
  *   MCP_SERVER_URL   only with the MCP connection below, uncommented: the server that serves the tools
  *
  * A function left unconnected fails closed: a measurement that is not connected is "not measured", so
@@ -122,23 +122,19 @@ async function chat({ system, messages, tools }) {
 }
 
 // ── the tools: your declaration, and your call ─────────────────────────────────────────────────
-// You build the agent and the tools together, so you are the tools' provider (spec 4.2), and a file in
-//   the format of tool.md is your declaration of them: name, description with the rules in words, input
-//   schema. The agent's model and the gate read the tools from it, on every run. Build the tools from
-//   the same declaration: a tool that does something its declaration does not say is the provider's
-//   gap, here as anywhere.
+// You build the agent and the tools together, so you are the tools' provider (spec 4.2), and a file
+//   like tool.json is your declaration of each: an MCP tool definition (name, description with the
+//   rules in words, inputSchema), as a provider registers it on an MCP server. The agent's model and the
+//   gate read the tools from it, on every run. Build the tools from the same declaration: a tool that
+//   does something its declaration does not say is the provider's gap, here as anywhere.
 function readToolFile(text) {
-  const block = (heading, kind) => {
-    const at = text.search(new RegExp(`^## ${heading}\\s*$`, "m"));
-    if (at < 0) throw new Error(`tool file: no "## ${heading}" section`);
-    const m = new RegExp("```" + kind + "\\n([\\s\\S]*?)\\n```").exec(text.slice(at));
-    if (!m) throw new Error(`tool file: no ${kind} block under "## ${heading}"`);
-    return m[1];
-  };
-  return { name: block("Name", "text").trim(), description: block("Description", "text"),
-           inputSchema: JSON.parse(block("Input schema", "json")) };
+  const t = JSON.parse(text);
+  if (!t || typeof t.name !== "string" || typeof t.description !== "string" || !t.inputSchema || typeof t.inputSchema !== "object") {
+    throw new Error("tool file: not a tool definition (name, description, inputSchema)");
+  }
+  return t;
 }
-const toolFiles = () => (process.env.TOOLS_FILE ?? path.join(__dirname, "tool.md"))
+const toolFiles = () => (process.env.TOOLS_FILE ?? path.join(__dirname, "tool.json"))
   .split(",").map(f => f.trim()).filter(Boolean);
 
 async function listTools() {

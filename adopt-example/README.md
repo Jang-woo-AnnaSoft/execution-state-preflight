@@ -9,7 +9,7 @@ from that record. Start with LangChain's `createAgent`: `middleware.js` does thi
 of your own, `judge-only-example.js` shows how. Only the second keeps the executing party outside the
 agent's graph, as the specification describes (spec 3.5).
 
-There are two ways in. What you write (`tool.md`) and what you connect (`connect.js`) are the same in
+There are two ways in. What you write (`tool.json`) and what you connect (`connect.js`) are the same in
 both.
 
 | | LangChain `createAgent` (recommended) | Your own loop |
@@ -40,7 +40,7 @@ The gate asks about the time, the stand-in user answers yes, and the tool runs.
 
 | File | What you do |
 |---|---|
-| [`tool.md`](./tool.md) | **Write.** Your declaration of the tool: name, rules in words, input schema |
+| [`tool.json`](./tool.json) | **Write.** Your declaration of the tool, as an MCP tool definition: name, rules in words, input schema |
 | [`connect.js`](./connect.js) | **Fill in.** Your model, your tools, your system's values, your storage |
 | [`principles-gated.md`](./principles-gated.md) | Goes into your agent's system prompt (both flows put it there). What the model needs to know when a gate judges its calls (spec 6.2, last paragraph) |
 | [`principles.md`](./principles.md) | The specification's 6.2 as prompt sentences, for a model with no gate (`systemPrompt("principles.md")`) |
@@ -54,11 +54,18 @@ The gate asks about the time, the stand-in user answers yes, and the tool runs.
 You also need the library, [`execution-state-preflight.js`](../execution-state-preflight.js): one
 file, no dependencies. Copy it next to this folder or into it.
 
-## 1. Declare the tool: `tool.md`
+## 1. Declare the tool: `tool.json`
 
 You build the tool, so you are its provider (spec 4.2), and you write its rules. They go in the
-tool's definition, which the agent's model and the gate both read from `tool.md`, on every run. The
+tool's definition, which the agent's model and the gate both read from `tool.json`, on every run. The
 gate reads it itself, once the model has called the tool.
+
+`tool.json` is an MCP tool definition: `name`, `description` and `inputSchema`, as a provider
+registers a tool on an MCP server. The same file serves if you move the tool to a server later. In
+the agent it becomes a LangChain tool in one line, `tool(fn, { name, description, schema: inputSchema })`
+(`agent.js`). In the JSON, the description is one string; its lines are separated by `\n`. The tests
+run this same tool, from [`provider-checklist-example/tool.json`](../provider-checklist-example/tool.json),
+and check that the two are the same.
 
 Two places, and nothing else:
 
@@ -91,8 +98,20 @@ The lines below are checked after this tool is called and before it runs: [Requi
 A label starts its line, in the tool's description. A list marker, a quote or heading mark, or emphasis
 before it changes nothing. A labelled line anywhere else, such as an argument's description, is prose.
 
-Build the tool itself from the same declaration. Changing a rule is changing its line: there is no
-code to change and nothing to redeploy on the agent's side.
+Build the tool itself from the same declaration, and connect it in `connect.js` (`TOOLS`). Changing a
+rule is changing its line: there is no code to change and nothing to redeploy on the agent's side.
+
+The lines name what your system must be able to read. In `connect.js`, `MEASUREMENTS` connects them,
+each read for the listing the gate settled:
+
+| Line | Measurement |
+|---|---|
+| The sale must be agreed | `order_status` |
+| The listing must be the seller's own | `listing_owned_by_seller` |
+| The time … a pickup request the buyer sent in the app | `time` |
+| The buyer's contact is read from the platform | `buyer_contact` |
+
+Until they are connected, the `[Required]` lines are unverified and nothing runs.
 
 **Several tools?** One file each, listed in `TOOLS_FILE`, separated by commas.
 
@@ -134,7 +153,7 @@ be compared by code, the same way every time: no model judges at run time whethe
 | What | In `connect.js` | What you put there |
 |---|---|---|
 | Model | `ask`, `say`, `chat` | Your chat model, chosen by `MODEL="provider:model"`. Install that provider's package. `ask` answers the gate in the shape it asks for (LangChain's `withStructuredOutput`), `say` writes the words of a question in plain text. With Anthropic, through its structured outputs (`method: "jsonSchema"`), as Anthropic recommends: Claude Opus 5.5 and Sonnet 5.5 refuse a forced tool call |
-| The tools' definitions | `listTools`, `readToolDefinition` | Nothing: they read `tool.md` (or the files in `TOOLS_FILE`). For an MCP server, uncomment the MCP connection |
+| The tools' definitions | `listTools`, `readToolDefinition` | Nothing: they read `tool.json` (or the files in `TOOLS_FILE`). For an MCP server, uncomment the MCP connection |
 | Your system's values | `MEASUREMENTS` | Calls to your own APIs. The gate calls one when it needs it, with the values it has settled (`values.item_id`). Never from the conversation |
 | Who wrote what | `labelInput(message)` | Your input path marks what the user typed. Pasted or quoted text, other people's messages and tool output are untrusted |
 | The provider's notices | `notify(lines)` | How your app shows a `[Notice]` line to the user before the tool runs, when no question carried it. As shipped it prints them. With no `notify`, a run that has a notice to show and nothing to show it with does not execute |
@@ -291,7 +310,7 @@ MODEL=anthropic:<model-name> node agent.js "Set up the pickup for LST-2291, 2pm 
 ```
 
 With `MEASUREMENTS` and `TOOLS` connected (as shipped, the run stops first: section 3), the model
-calls the tool. The gate reads the tool's definition from `tool.md` and judges. Here the
+calls the tool. The gate reads the tool's definition from `tool.json` and judges. Here the
 time is missing: "2pm this Saturday" is not a date-time. The model asks, and under its words code shows
 the value it read, as it will be used:
 
@@ -362,7 +381,7 @@ only what you keep. They check:
 
 - this folder holds only these files, `principles.md` matches spec 6.2, and each line of
   `principles-gated.md` names spec sections that exist and is in the system prompt by default;
-- the tool is read from `tool.md` by default, and `connect.js` as shipped fails closed;
+- the tool is read from `tool.json` by default, and `connect.js` as shipped fails closed;
 - the MCP connection kept as comments is still code once uncommented;
 - the model calls the tool, the gate asks, the user replies in words, and the tool runs;
 - judging returns no arguments and no decision, and executes nothing; the agent's side executes from
