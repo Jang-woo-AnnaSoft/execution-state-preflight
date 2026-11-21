@@ -129,7 +129,7 @@ The rules an execution needs, split by who declares them. This split is the core
 
 ## Writing the provider's checklist
 
-The checklist is written in the tool's definition: each condition on a line of its own in the description, with a label, and the forms of the values in the input schema. Shortened from [`adopt-example/tool.md`](./adopt-example/tool.md):
+The checklist is written in the tool's definition: each condition on a line of its own in the description, with a label, and the forms of the values in the input schema. Shortened from [`adopt-example/tool.json`](./adopt-example/tool.json):
 
 ```text
 Schedule an in-person pickup for a marketplace item. The buyer sees it at once.
@@ -226,7 +226,7 @@ This file is the overview. **The specification is the standard; the adopt exampl
 
 Start from [`adopt-example/`](./adopt-example/), with the library next to it.
 
-1. **Declare the tool** in [`tool.md`](./adopt-example/tool.md): what it does, each rule on a labelled line, and the input schema.
+1. **Declare the tool** in [`tool.json`](./adopt-example/tool.json), an MCP tool definition: what it does, each rule on a labelled line, and the input schema.
 2. **Connect** your model, your tool and your system's data in [`connect.js`](./adopt-example/connect.js).
 3. **Judge each tool call before it runs**, from your agent's own loop, and execute from the record:
 
