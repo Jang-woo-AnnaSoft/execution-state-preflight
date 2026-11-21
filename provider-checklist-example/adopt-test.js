@@ -94,7 +94,7 @@ function askAllGiven(id) {
   console.log("--- 1. the folder holds only what an adopter keeps ---");
   // records.jsonl is what running the example leaves behind (connect.js RECORD_PATH), not a file to keep.
   const files = fs.readdirSync(ADOPT).filter(f => f !== "node_modules" && f !== "records.jsonl").sort();
-  check("adopt-example files", files, ["README.md", "agent.js", "connect.js", "gate.js", "judge-only-example.js", "judge-only.js", "package-lock.json", "package.json", "principles-gated.md", "principles.md", "tool.md"]);
+  check("adopt-example files", files, ["README.md", "agent.js", "connect.js", "gate.js", "judge-only-example.js", "judge-only.js", "middleware.js", "package-lock.json", "package.json", "principles-gated.md", "principles.md", "tool.md"]);
   // tool.md is the declaration the agent reads by default: it must be the tool the tests run.
   const md = fs.readFileSync(path.join(ADOPT, "tool.md"), "utf8");
   const blocks = [...md.matchAll(/```(\w+)\n([\s\S]*?)\n```/g)].map(m => [m[1], m[2]]);
