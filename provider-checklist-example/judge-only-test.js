@@ -22,6 +22,7 @@ const { runArm, measuredFor, measurePort, MEASUREMENTS } = require("./arm");
 const TOOL = require("./tool.json");
 const { buildUserTurn } = require("./prompts");
 const { makeAsk, makeChat } = require("./stub");
+const shapes = require("./shape-check");
 const { keepForPrior, loadPrior } = require(path.join(__dirname, "..", "execution-state-preflight"));
 const S = require("./instructions.json");
 
@@ -47,7 +48,7 @@ function standIn(id, condition, over = {}) {
     calls, store, shown, prompts, heard, events,
     connect: {
       // Every prompt the gate's model calls were sent, kept for the checks.
-      ask: async (m, system, user, hook) => { prompts.push({ hook, system, user }); return askInner(m, system, user, hook); },
+      ask: shapes.watch(async (m, system, user, hook, schema) => { prompts.push({ hook, system, user }); return askInner(m, system, user, hook, schema); }),
       // What the agent's model is given, kept for the checks.
       chat: async a => { shown.push(a?.tools ?? null); heard.push(a?.messages ?? null); return over.chat ? over.chat(a, chatInner) : chatInner(a); },
       listTools: async () => [over.tool ?? TOOL],
@@ -962,6 +963,9 @@ function askAllGiven(id) {
       [JSON.stringify(waiting?.response_schema ?? waiting?.responseSchema) === JSON.stringify(answerSchema(qs1)), done.segs],
       [true, [{ trust: "user", field: "value:time", answer: true }]]);
   }
+
+  console.log("\n--- [ANSWER SHAPES] ---");
+  shapes.report(check);
 
   console.log(failed ? `\n${failed} FAILED` : "\nall ok");
   process.exit(failed ? 1 : 0);

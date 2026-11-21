@@ -27,6 +27,7 @@ const { runArm, measuredFor, measurePort, MEASUREMENTS } = require("./arm");
 const TOOL = require("./tool.json");
 const { buildUserTurn } = require("./prompts");
 const { makeAsk, makeChat } = require("./stub");
+const shapes = require("./shape-check");
 const S = require("./instructions.json");
 
 let failed = 0;
@@ -51,7 +52,7 @@ function standIn(id, condition, over = {}) {
       // The provider's notices, shown before the call when no question carried them; the user's settings.
       ...(over.notify === null ? {} : { notify: async lines => { events.push(["notify", lines]); } }),
       ...(over.readPreSet ? { readPreSet: over.readPreSet } : {}),
-      ask: over.ask ?? makeAsk(id),
+      ask: shapes.watch(over.ask ?? makeAsk(id)),
       chat: async req => { prompts.push(req.system); return makeChat()(req); },
       // agent.js on createAgent: the same stand-in, as a LangChain chat model.
       async chatModel() { return new StubChatModel(a => this.chat(a)); },
@@ -233,23 +234,22 @@ function askAllGiven(id) {
        /JSON object/.test(err({ MODEL_OPTIONS: "true" }) ?? "")], [true, true, true]);
   }
 
-  console.log("\n--- 3-z. a model's answer that is not JSON keeps what it wrote ---");
+  console.log("\n--- 3-z. a model's answer comes in the shape asked (withStructuredOutput), or as an error that keeps it ---");
   {
-    const { readJsonReply } = require("../adopt-example/connect");
+    const { askWith } = require("../adopt-example/connect");
+    const { SHAPES } = require("../adopt-example/judge-only");
+    // A model as LangChain hands it: withStructuredOutput(schema, options) gives something to invoke.
+    const fake = res => { const seen = {}; return { seen, withStructuredOutput(schema, options) { Object.assign(seen, { schema, options }); return { invoke: async msgs => { seen.msgs = msgs; return res; } }; } }; };
+    const ok = fake({ raw: { content: "" }, parsed: { approved: true, reason: "the same act" } });
+    const got = await askWith(ok, "sys", "user", "tool_match", SHAPES.tool_match);
+    check("the shape goes to withStructuredOutput, named for the call, and the answer is what it read",
+      [got, ok.seen.schema === SHAPES.tool_match, ok.seen.options, ok.seen.msgs.map(m => m.role)],
+      [{ approved: true, reason: "the same act" }, true, { name: "tool_match", includeRaw: true }, ["system", "user"]]);
     let a = null, b = null;
-    try { readJsonReply("Sure! Before I book it, please confirm the time."); } catch (e) { a = e.message; }
-    try { readJsonReply('{"message": unclosed}'); } catch (e) { b = e.message; }
-    check("plain words: an error that carries them", [/did not answer in JSON/.test(a ?? ""), /please confirm the time/.test(a ?? "")], [true, true]);
-    check("broken JSON: an error that carries it", [/could not be read/.test(b ?? ""), /unclosed/.test(b ?? "")], [true, true]);
-    check("JSON with words around it is read", readJsonReply('Here: {"message": "ok"} done'), { message: "ok" });
-    // What a real model wrote for a [Required] line: its thinking, holding a piece of JSON, then the answer.
-    const thinking = 'The schema should require it to be true, so {"const": true}. A boolean fits.\n\n' +
-      '{"form": {"compare": {"source": "measured_data", "measure": "listing_owned_by_seller", "schema": {"const": true}}, "constrains": ["item_id"]}}';
-    check("thinking aloud with JSON in it, then the answer: the answer is read", readJsonReply(thinking).form?.compare?.measure, "listing_owned_by_seller");
-    check("braces inside a string do not end the object", readJsonReply('{"message": "use {curly} braces", "n": 1}'), { message: "use {curly} braces", n: 1 });
-    let c = null;
-    try { readJsonReply('{"message": "never closed'); } catch (e) { c = e.message; }
-    check("an object never closed: not JSON, with the text kept", [/did not answer in JSON/.test(c ?? ""), /never closed/.test(c ?? "")], [true, true]);
+    try { await askWith(fake({ raw: { content: "Sure! Before I book it, please confirm the time." }, parsed: null }), "s", "u", "tool_match", SHAPES.tool_match); } catch (e) { a = e.message; }
+    check("not in the shape: an error that carries what the model wrote", [/not in the shape asked/.test(a ?? ""), /please confirm the time/.test(a ?? "")], [true, true]);
+    try { await askWith(fake({ raw: { content: "x" }, parsed: { approved: true } }), "s", "u", "tool_match"); } catch (e) { b = e.message; }
+    check("  a call with no shape is refused, not sent", /no shape given/.test(b ?? ""), true);
   }
 
   {
@@ -279,7 +279,7 @@ function askAllGiven(id) {
     const su = standIn("g1-01", "clean");
     const stubAsk = su.connect.ask;
     let n = 0;
-    su.connect.ask = (m, s, u, h) => (h === "tool_match" ? { approved: n++ >= 1, reason: "stand-in" } : stubAsk(m, s, u, h));
+    su.connect.ask = (m, s, u, h, shape) => (h === "tool_match" ? { approved: n++ >= 1, reason: "stand-in" } : stubAsk(m, s, u, h, shape));
     const au = createAgent({ connect: su.connect });
     const idU = `u${++thread}`;
     const r1 = await au.start({ threadId: idU, message: { typed: "x" } });
@@ -405,7 +405,7 @@ function askAllGiven(id) {
     const su = standIn("g1-01", "clean");
     const stubAsk = su.connect.ask;
     let n = 0;
-    su.connect.ask = (m, x, u, h) => (h === "tool_match" ? { approved: n++ >= 1, reason: "stand-in" } : stubAsk(m, x, u, h));
+    su.connect.ask = (m, x, u, h, shape) => (h === "tool_match" ? { approved: n++ >= 1, reason: "stand-in" } : stubAsk(m, x, u, h, shape));
     const au = createMiddlewareAgent({ connect: su.connect });
     const idU = `nu${++thread}`;
     const u1 = await au.start({ threadId: idU, message: { typed: "x" } });
@@ -465,6 +465,9 @@ function askAllGiven(id) {
     }
     check("35 runs: the same first decision as the arm", differ, []);
   }
+
+  console.log("\n--- [ANSWER SHAPES] ---");
+  shapes.report(check);
 
   console.log(failed ? `\n${failed} FAILED` : "\nall ok");
   process.exit(failed ? 1 : 0);

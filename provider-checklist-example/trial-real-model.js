@@ -124,7 +124,7 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
   const calls = [];
   const store = createStorage();
   const connect = {
-    ask: (model, system, user, hook) => timed(hook ?? "ask", { system, user }, () => askInner(model, system, user, hook)),
+    ask: (model, system, user, hook, shape) => timed(hook ?? "ask", { system, user }, () => askInner(model, system, user, hook, shape)),
     ...(STUB ? {} : { say: (model, system, user, hook) => timed(hook ?? "say", { system, user }, () => real.say(model, system, user, hook)) }),
     chat: a => timed("agent_chat", { system: a?.system, messages: a?.messages, tools: a?.tools }, () => chatInner(a)),
     // agent.js: the stand-in as a LangChain chat model (timed through chat), or the real one (timed

@@ -18,6 +18,7 @@ const { measuredFor, measurePort, MEASUREMENTS } = require("./arm");
 const TOOL = require("./tool.json");
 const { buildUserTurn } = require("./prompts");
 const { makeAsk } = require("./stub");
+const shapes = require("./shape-check");
 const S = require("./instructions.json");
 
 let failed = 0;
@@ -49,7 +50,7 @@ function setup(id, condition, over = {}) {
   const askInner = over.ask ?? makeAsk(id);
   const store = createStorage();
   const connect = {
-    ask: async (m, system, user, hook) => { prompts.push(hook); return askInner(m, system, user, hook); },
+    ask: shapes.watch(async (m, system, user, hook, schema) => { prompts.push(hook); return askInner(m, system, user, hook, schema); }),
     readToolDefinition: async name => [TOOL].find(t => t.name === name),
     measure: measurePort(measuredFor(ctx, date)),
     labelInput: realConnect.labelInput,
@@ -149,6 +150,9 @@ const count = (list, hook) => list.filter(h => h === hook).length;
     const state = await mute.start();
     check("  no way to tell it: not run", [mute.calls.length, mute.toolResult(state)?.status], [0, "error"]);
   }
+
+  console.log("\n--- [ANSWER SHAPES] ---");
+  shapes.report(check);
 
   console.log(failed ? `\n${failed} FAILED` : "\nall ok");
   process.exit(failed ? 1 : 0);
