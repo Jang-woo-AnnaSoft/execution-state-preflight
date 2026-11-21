@@ -129,23 +129,15 @@ The rules an execution needs, split by who declares them. This split is the core
 
 ## Writing the provider's checklist
 
-The checklist is written in the tool's definition: each condition on a line of its own in the description, with a label, and the forms of the values in the input schema. Shortened from [`adopt-example/tool.json`](./adopt-example/tool.json):
+Each condition goes on a labelled line of its own in the tool's description; the forms of the values go in the input schema. Three lines from [`adopt-example/tool.json`](./adopt-example/tool.json):
 
 ```text
-Schedule an in-person pickup for a marketplace item. The buyer sees it at once.
-The lines below are checked after this tool is called and before it runs. Call it with what the user said; what is missing is asked or checked then.
 [Required] The sale must be agreed, as shown by the order status.
 [Verify] The time is the one the seller states. It is one moment.
-[Verify] The location is the place the seller names, not a place read from the platform.
-[Required] The buyer's contact is read from the platform.
 [Notice] The buyer sees the time and location immediately.
 ```
 
-- `[Required]` is confirmed only from the system's own data. The user's words do not fill it.
-- `[Verify]` is the user's. A value the user did not give counts only once the user approves it.
-- `[Notice]` is told to the user and blocks nothing.
-
-Alignment and governance stay as they are, and each decides its own rules in its own layer. To apply one to a tool at execution, write it here as a line. A rule for one user goes in that user's checklist; a rule for every tool goes in the principles the model is given, and, where it needs checking, in the provider checklist of each tool it concerns (spec 7.2).
+`[Required]` is confirmed only from the system's own data, `[Verify]` only by the user, and `[Notice]` is told to the user and blocks nothing. How to write them is in [adopt example, section 1](./adopt-example/README.md#1-declare-the-tool-tooljson).
 
 ## Who does what
 
@@ -175,7 +167,7 @@ Two gates. Neither produces a value or a justification, and neither executes —
 | 3 | `measured_data` | measured from the environment |
 | 4 | `prior_state` | a value in a prior `executed` record. Never settles a slot; it is shown to the user as a candidate and counts, as `user_answer`, only once confirmed |
 
-A search order, not a ranking by trustworthiness. `instruction` is an array of trust-labeled segments, not a string. Pass a string and the `instruction` source closes; nothing is confirmed from it. Untrusted text — a forwarded email, a tool result, a web page, or text pasted into the user's own message — cannot settle a value on its own. To use something from it, ask the user and take the answer back as `user_answer`. The labels are set by the adopting system when the message arrives, not by the model (spec 5.2).
+A search order, not a ranking by trustworthiness. Text the user did not write cannot settle a value on its own; how the user's words are labelled is in [adopt example, section 3](./adopt-example/README.md#3-connect-your-system-connectjs).
 
 **You do not have to run all of it. Apply it only to irreversible executions, and only the parts that fit (spec 1.2).**
 
