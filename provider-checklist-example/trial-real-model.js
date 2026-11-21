@@ -13,7 +13,8 @@
  *   MODEL=anthropic:<model-name> node trial-real-model.js
  *   MODEL=anthropic:<model-name> node trial-real-model.js --id g1-01 --condition clean --reply yes
  *   MODEL=... node trial-real-model.js --id g2-01 --reply "Saturday at 3pm, Hongdae station lockers" --reply yes --reply yes
- *     each --reply is what the seller says next, whether the gate asked or the assistant did
+ *     each --reply is what the seller says next, whether the gate asked or the assistant did; a
+ *     verdict not to execute ends the run, and the replies left are not sent
  *   add --no-checklist to have the seller's conditions taken from their words and put into a form by
  *     the model, instead of handed in with the forms the test data already wrote
  *   add --form to answer the gate's questions through the form (answerSchema; each field a segment of the user's), not in words.
@@ -171,7 +172,10 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
   };
   let n = 0;
   show(r);
-  while (["waiting", "replied", "not_executed"].includes(r.status) && n < replies.length) {
+  // A verdict not to execute ends the run: the replies are written ahead and do not read it, so one sent
+  //   after it would be the script's words put in the seller's mouth, not the seller's answer to it.
+  //   The assistant's words without a tool call are not a verdict: the seller answers them.
+  while (["waiting", "replied"].includes(r.status) && n < replies.length) {
     const qs = r.status === "waiting" ? (r.question?.questions ?? []) : [];
     // Nothing in the reply fits a field (the seller restates the act), or a field wants a value typed and
     //   the reply is words, not JSON (its value is in the words, not in a field): words.
