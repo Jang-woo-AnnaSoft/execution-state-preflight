@@ -138,6 +138,15 @@ function latestReply(segs, words) {
 }
 const ISO_WORDS = Object.keys(READINGS);
 
+// A condition's form as a model answers it in the gate's shape (judge-only.js SHAPES): a JSON Schema
+//   inside it is written as JSON text. The gate reads it back.
+function asAnswered(form) {
+  const c = form?.compare;
+  if (!c || typeof c !== "object" || typeof c.kind === "string") return form;
+  return { ...form, compare: c.source === "measured_data"
+    ? { source: c.source, measure: c.measure, schema_json: JSON.stringify(c.schema) } : { schema_json: JSON.stringify(c) } };
+}
+
 // The model call. Each of the gate's hooks names itself (the fourth argument); v1's hooks do not, and
 //   are recognised by the reply shape their prompts ask for.
 function makeAsk(instructionId, extractor = "faithful") {
@@ -153,7 +162,7 @@ function makeAsk(instructionId, extractor = "faithful") {
     if (hook === "comparable_form" || user.includes('Reply as {"form"')) {
       const wording = (user.match(/^Condition: (.*)$/m) ?? [])[1] ?? "";
       const by = (user.match(/^Declared by: (\w+)/m) ?? [])[1];
-      return { form: by === "user" ? userFormFor(wording) : providerFormFor(wording) };
+      return { form: asAnswered(by === "user" ? userFormFor(wording) : providerFormFor(wording)) };
     }
     if (hook === "user_conditions" || user.includes('Reply as {"conditions"')) {
       const segs = segmentsIn(user);
@@ -229,4 +238,4 @@ function makeChat({ tool = "schedule_pickup", text = null } = {}) {
   };
 }
 
-module.exports = { makeAsk, makeChat, extractionFor, ACTION, EXTRACTORS, PROVIDER_FORMS, providerFormFor, userFormFor, READINGS };
+module.exports = { makeAsk, makeChat, extractionFor, ACTION, EXTRACTORS, PROVIDER_FORMS, providerFormFor, userFormFor, READINGS, asAnswered };

@@ -21,7 +21,7 @@ const realConnect = require(path.join(ADOPT, "connect"));
 const { runArm, measuredFor, measurePort, MEASUREMENTS } = require("./arm");
 const TOOL = require("./tool.json");
 const { buildUserTurn } = require("./prompts");
-const { makeAsk, makeChat } = require("./stub");
+const { makeAsk, makeChat, asAnswered } = require("./stub");
 const shapes = require("./shape-check");
 const { keepForPrior, loadPrior } = require(path.join(__dirname, "..", "execution-state-preflight"));
 const S = require("./instructions.json");
@@ -220,7 +220,7 @@ function askAllGiven(id) {
     const stub = makeAsk("g2-01");
     const ask = (m, s, u, h) => {
       if (h === "comparable_form" && /Declared by: user/.test(u)) {
-        if (/Condition: Nothing after 8pm/.test(u)) return { form: { compare: BAD, constrains: ["time"] } };
+        if (/Condition: Nothing after 8pm/.test(u)) return { form: asAnswered({ compare: BAD, constrains: ["time"] }) };
         if (/Condition: public places only/.test(u)) return { form: null };
       }
       if (h === "propose_value") return { value: "2026-10-31T15:00:00+09:00" };
@@ -255,7 +255,7 @@ function askAllGiven(id) {
           : { conditions: [{ quote: "Nothing after 8pm, and public places only.", segment_index: 3, constrains: ["time", "location"] }] };
       }
       if (h === "comparable_form" && /Declared by: user/.test(u)) {
-        if (/Condition: Nothing after 8pm$/m.test(u)) return { form: { compare: GOOD, constrains: ["time"] } };
+        if (/Condition: Nothing after 8pm$/m.test(u)) return { form: asAnswered({ compare: GOOD, constrains: ["time"] }) };
         return { form: null };
       }
       if (h === "extraction") {
@@ -298,7 +298,7 @@ function askAllGiven(id) {
           { quote: "Nothing after 8pm", segment_index: 3, constrains: ["time"], ...(back >= 0 ? { withdrawn_by: { quote: "drop the 8pm limit", segment_index: back } } : {}) },
           { quote: "public places only", segment_index: 3, constrains: ["location"] }] };
       }
-      if (h === "comparable_form" && /Declared by: user/.test(u)) return /Condition: Nothing after 8pm$/m.test(u) ? { form: { compare: GOOD, constrains: ["time"] } } : { form: null };
+      if (h === "comparable_form" && /Declared by: user/.test(u)) return /Condition: Nothing after 8pm$/m.test(u) ? { form: asAnswered({ compare: GOOD, constrains: ["time"] }) } : { form: null };
       if (h === "extraction") {
         const segs = segsOf(u, "\n\nFields to locate");
         const at = segs.findIndex(x => x.trust === "user" && x.text.includes("This Saturday at 9pm"));
@@ -339,7 +339,7 @@ function askAllGiven(id) {
     const ask = (m, sys, u, h) => {
       if (h === "user_conditions") return { conditions: [{ quote: "Nothing after 8pm", segment_index: 3, constrains: ["time"] }, { quote: "public places only", segment_index: 3, constrains: ["location"] }] };
       if (h === "comparable_form" && /Declared by: user/.test(u)) {
-        if (/Condition: Nothing after 8pm$/m.test(u)) { formProposals++; return { form: { compare: GOOD, constrains: ["time"] } }; }
+        if (/Condition: Nothing after 8pm$/m.test(u)) { formProposals++; return { form: asAnswered({ compare: GOOD, constrains: ["time"] }) }; }
         return { form: null };
       }
       if (h === "extraction") {
@@ -620,7 +620,7 @@ function askAllGiven(id) {
     //   the time shown, in the question that shows the time ([SHOWN TOGETHER]), and one yes executes.
     const noType = inner => async (m, system, user, hook) =>
       (hook === "comparable_form" && String(user).includes("Nothing after 8pm")
-        ? { form: { compare: { pattern: "T(?:[01][0-9]:[0-5][0-9]:[0-9]{2}|20:00:00)" }, constrains: ["time"] } }
+        ? { form: asAnswered({ compare: { pattern: "T(?:[01][0-9]:[0-5][0-9]:[0-9]{2}|20:00:00)" }, constrains: ["time"] }) }
         : inner(m, system, user, hook));
     const sol = await run("g2-01", "clean", ["Saturday 3pm, Hongdae station lockers", "yes"], { ask: noType(makeAsk("g2-01")), userChecklist: [] });
     const solAsks = sol.records.filter(x => x.actor !== "executor" && x.execution_decision === "ask_user");
@@ -654,7 +654,7 @@ function askAllGiven(id) {
     //   the time question: rejected, the first one not reported again, and the run ended at the ceiling.
     //   The stand-in reader places every answer on the latest yes, the same way.
     const itemByApproval = inner => async (m, system, user, hook) => (hook === "comparable_form" && /The item is the listing/.test(user)
-      ? { form: { compare: { kind: "user_approval" }, constrains: ["item_id"] } } : inner(m, system, user, hook));
+      ? { form: asAnswered({ compare: { kind: "user_approval" }, constrains: ["item_id"] }) } : inner(m, system, user, hook));
     const carried = await run("g1-01", "clean", ["yes, but make it Saturday 7pm", "yes"], { ask: itemByApproval(makeAsk("g1-01")) });
     const cg = carried.records.filter(x => x.actor !== "executor");
     const itemAnswer = cg.at(-1)?.value_checks?.find(c => c.kind === "answer" && c.status === "checked" && /^approve:/.test(c.target));
@@ -941,7 +941,7 @@ function askAllGiven(id) {
     //   model that reads the user's conditions, as taking back "Nothing after 8pm". Fields are not words.
     const noType = inner => async (m, system, user, hook) =>
       (hook === "comparable_form" && String(user).includes("Nothing after 8pm")
-        ? { form: { compare: { pattern: "T(?:[01][0-9]:[0-5][0-9]:[0-9]{2}|20:00:00)" }, constrains: ["time"] } }
+        ? { form: asAnswered({ compare: { pattern: "T(?:[01][0-9]:[0-5][0-9]:[0-9]{2}|20:00:00)" }, constrains: ["time"] }) }
         : inner(m, system, user, hook));
     const late = await run("g2-01", "clean", ["Schedule the pickup: Saturday 9pm, Hongdae station lockers", { answers: "next" }],
       { ask: noType(makeAsk("g2-01")), userChecklist: [], formNext: qs => keep(qs, "Nothing after 8pm") });

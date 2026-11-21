@@ -224,9 +224,10 @@ function askAllGiven(id) {
     const { modelOptions } = require("../adopt-example/connect");
     const err = env => { try { modelOptions(env); return null; } catch (e) { return e.message; } };
     check("nothing set: nothing sent", modelOptions({}), {});
-    check("an Anthropic model: thinking adaptive, so the answer's shape is offered, not forced",
-      [modelOptions({ MODEL: "anthropic:claude-sonnet-5-5" }), modelOptions({ MODEL: "anthropic:claude-haiku-4-5", MODEL_OPTIONS: '{"thinking":{"type":"disabled"}}' }), modelOptions({ MODEL: "openai:gpt-6" })],
-      [{ thinking: { type: "adaptive" } }, { thinking: { type: "disabled" } }, {}]);
+    const { structuredMethod } = require("../adopt-example/connect");
+    check("an Anthropic model: the answer's shape goes through its structured outputs; another: LangChain's default",
+      [structuredMethod({ MODEL: "anthropic:claude-sonnet-5-5" }), structuredMethod({ MODEL: "openai:gpt-6" }), modelOptions({ MODEL: "anthropic:claude-sonnet-5-5" })],
+      ["jsonSchema", undefined, {}]);
     check("TEMPERATURE=0: sent", modelOptions({ TEMPERATURE: "0" }), { temperature: 0 });
     check("MODEL_OPTIONS: given as it is", modelOptions({ MODEL_OPTIONS: '{"useResponsesApi":true,"reasoning":{"effort":"low"}}' }),
       { useResponsesApi: true, reasoning: { effort: "low" } });
@@ -248,6 +249,8 @@ function askAllGiven(id) {
     check("the shape goes to withStructuredOutput, named for the call, and the answer is what it read",
       [got, ok.seen.schema === SHAPES.tool_match, ok.seen.options, ok.seen.msgs.map(m => m.role)],
       [{ approved: true, reason: "the same act" }, true, { name: "tool_match", includeRaw: true }, ["system", "user"]]);
+    await askWith(ok, "sys", "user", "tool_match", SHAPES.tool_match, "jsonSchema");
+    check("  the method, when given, goes with it", ok.seen.options, { name: "tool_match", includeRaw: true, method: "jsonSchema" });
     let a = null, b = null;
     try { await askWith(fake({ raw: { content: "Sure! Before I book it, please confirm the time." }, parsed: null }), "s", "u", "tool_match", SHAPES.tool_match); } catch (e) { a = e.message; }
     check("not in the shape: an error that carries what the model wrote", [/not in the shape asked/.test(a ?? ""), /please confirm the time/.test(a ?? "")], [true, true]);

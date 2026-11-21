@@ -21,7 +21,7 @@ function watch(ask) {
     seen.calls++;
     if (!schema || typeof schema !== "object") { seen.noShape.add(hook); return out; }
     const fits = ajv.validate(schema, out);
-    if (!fits && seen.misfit.length < 5) seen.misfit.push(`${hook}: ${ajv.errorsText(ajv.errors)} in ${JSON.stringify(out).slice(0, 160)}`);
+    if (!fits && seen.misfit.length < 5) seen.misfit.push(`${hook}: ${JSON.stringify(out).slice(0, 200)}`);
     return out;
   };
 }
