@@ -68,6 +68,12 @@ function modelOptions(env = process.env) {
     try { options = JSON.parse(env.MODEL_OPTIONS); } catch (e) { throw new Error(`MODEL_OPTIONS is not JSON (${e.message})`); }
     if (options === null || typeof options !== "object" || Array.isArray(options)) throw new Error("MODEL_OPTIONS must be a JSON object");
   }
+  // Anthropic: thinking is adaptive unless MODEL_OPTIONS says otherwise. Claude Opus 5.5, Sonnet 5.5 and
+  //   Fable 5.1 on refuse a forced tool call, which LangChain's withStructuredOutput sends (ask, below)
+  //   unless thinking is set; with it, LangChain offers the shape's tool without forcing it. For these
+  //   models adaptive is what they do anyway. A model that does not take it (Claude 4.5 and earlier): set
+  //   MODEL_OPTIONS' thinking yourself.
+  if (String(env.MODEL ?? "").startsWith("anthropic:") && !("thinking" in options)) options = { ...options, thinking: { type: "adaptive" } };
   const temperature = env.TEMPERATURE;
   return temperature === undefined || temperature === "" ? options : { ...options, temperature: Number(temperature) };
 }
@@ -75,13 +81,13 @@ const MODEL_NAME = process.env.MODEL ?? "model";
 const textOf = res => (typeof res.content === "string" ? res.content
   : (res.content ?? []).map(p => (typeof p === "string" ? p : p?.text ?? "")).join(""));
 
-// The gate's prompts ask for JSON. A reply that is not JSON is an error: the gate treats a failed
+// The gate's model calls. An answer not in the shape asked is an error: the gate treats a failed
 //   extraction as "not found", never as a value.
 async function ask(_model, system, user, hook, schema) {
   return askWith(await model(), system, user, hook, schema);
 }
 // The answer's shape, given with each call (judge-only.js), is the model's to keep: LangChain's
-//   withStructuredOutput hands it to the provider (Anthropic: a tool the model must call) and reads the
+//   withStructuredOutput hands it to the provider (Anthropic: a tool for the answer) and reads the
 //   answer back. Only the shape: what the values say is the gate's to check. An answer the provider
 //   could not read in that shape is an error, with what the model wrote kept in it: the gate treats the
 //   failure as unconfirmed, and the text says why.
