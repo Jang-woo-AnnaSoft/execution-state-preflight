@@ -198,7 +198,9 @@ const SHAPES = {
   question: obj({ message: STR }),
   stop: obj({ message: STR }),
 };
-// Extraction: one entry for each of the tool's fields, found or not.
+// Extraction: one entry for each of the tool's fields, found or not. Each entry has two optional keys,
+//   and Anthropic's structured outputs take at most 24 optional keys in a request: a tool with more than
+//   12 input fields is refused there, and the extraction fails (unconfirmed, so nothing runs on it).
 const extractionShape = names => obj(Object.fromEntries(names.map(n => [n, obj({ found: BOOL, value: STR, segment_index: INT }, ["found"])])));
 // A form as the gate keeps it: the JSON Schema written as text read back. Text that is not a JSON
 //   object is no form. A form already in its kept shape (a stand-in, an adopter's own hook) is taken as
