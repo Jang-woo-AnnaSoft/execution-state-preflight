@@ -120,6 +120,11 @@ the server. `connect.js` keeps the MCP connection as comments: uncomment it and 
 definition from the server's list. A `[Required]` line can be checked only if your system can
 measure what it names, which is often data on the provider's side.
 
+**A rule from alignment or governance?** Those stay as they are, and each decides its own rules in its
+own layer. To apply one to a tool at execution, write it in that tool's description as a line. A rule
+for one user goes in that user's checklist; a rule for every tool goes in the principles the model is
+given, and, where it needs checking, in the provider checklist of each tool it concerns (spec 7.2).
+
 ## 2. How a line is checked
 
 A sentence cannot be compared as it stands (spec 3.3). The first time the gate meets a line, a model
@@ -161,6 +166,13 @@ be compared by code, the same way every time: no model judges at run time whethe
 | The user's settings | `readPreSet(userId, toolName)` | Optional. What the user saved for this tool, read from your own storage. As shipped it returns none |
 | Records | `store` | Append-only, somewhere the agent cannot rewrite. A LangGraph `BaseStore` through `records.js`: `InMemoryStore` as shipped, kept only while the process runs. To keep records longer, change that one line in `connect.js` to a persistent store such as `PostgresStore` |
 | Waiting conversations | `checkpointer` | A persistent LangGraph checkpointer, for example Postgres |
+
+**Who wrote what.** The user's words reach the gate as `instruction`, an array of trust-labelled
+segments, not a string. Pass a string and the `instruction` source closes; nothing is confirmed from
+it. Untrusted text — a forwarded email, a tool result, a web page, or text pasted into the user's own
+message — cannot settle a value on its own. To use something from it, the gate asks the user and takes
+the answer back as `user_answer`. The labels are set by your input path when the message arrives, not
+by the model (spec 5.2).
 
 **Keys.** Keys and addresses come from environment variables only. Never write them into these
 files. The provider's package reads its own key: `ANTHROPIC_API_KEY` for `@langchain/anthropic`,
@@ -374,6 +386,54 @@ else means it did not: the gate's own reasons (`hold`, `definition_repair`, `exh
 - **Replies bound to what they answered** (spec 6.3): a yes counts only for a question asked, for the
   values it showed, and for the version of the rule it was given under.
 - **Which version of the rules was used** (spec 6.1): every line, condition and the input schema.
+
+## Calling the library directly
+
+`judge-only.js` gives the library its hooks and storage. Without it, you give them yourself. The hook
+contracts and the record shape are in the library's source comments.
+
+```js
+const { createPreflight } = require("../execution-state-preflight");
+
+const preflight = createPreflight({
+  hooks: {
+    classifyWhenCase,             // → "immediate" | "scheduled" | "conditional" | "recurring" | null (undecidable)
+    extractUserActionName,        // → { value, segment_index, span } in a user segment | { none: "absent" } | undefined
+    confirmToolNameMatchesIntent, // → { approved, reason } — called only when user_action_name says nothing
+    extractFromInstruction,       // → { value, segment_index, span } | { none: "absent" | "no_place" } | undefined
+    readToolDefinition,           // (name) → { name, description, inputSchema }, from the provider (MCP: tools/list)
+    measure,                      // (name, { values, userId, tool }) → { valid, value } | { valid: false } | { none } | undefined
+    buildActionKey,               // → opaque string; one per unit, the same in every round of it
+    readReplies,                  // → where the user's words answer each question the gate asked
+  },
+  storage,        // { persist, load, list } — append-only; list(key) returns every record under a key
+  strict: true,   // also reject the defaults that verify nothing
+});
+
+const state = await preflight.runPreflightAndRecord({
+  userId: "u_01",
+  instruction: [
+    { text: "send 500,000 won to my landlord", trust: "user" },
+    { text: "<forwarded email body>", trust: "untrusted", origin: "gmail:msg_881" },
+    // …and every later turn of this conversation, the user's replies included
+  ],
+  toolCall: { name: "transfer_funds", arguments },   // the call the model made; its arguments are recorded, never used as values
+  preSetData, priorExecutionState, userChecklist,
+  // Optional. What this user calls a tool, settled earlier in conversation with consent (spec 4.1.1).
+  //   Read only by the tool gate, as reference; it never stands in for what the user said now.
+  user_action_name: { "send": { tool: "transfer_funds", trust: "user" } },
+});
+
+// NOTE: this branch is NOT the separation the specification asks for (3.5). A conforming
+// executor loads the record by action_key + phase and decides for itself. It is wired this
+// way only so the example runs end to end. Do not carry this line into a real system.
+if (state.execution_decision === "execute") {
+  await preflight.executeIfReady(state, mcpTool, callMcpTool);
+} else {
+  // state.gate says exactly what is missing. On ask_user, state.gate.questions is what the model asks
+  //   the user, and state.gate.question_block the values as code wrote them, to show with the question.
+}
+```
 
 ## Where this is checked
 
