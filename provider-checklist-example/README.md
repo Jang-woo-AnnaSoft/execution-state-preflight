@@ -208,7 +208,7 @@ START → agent ─ tool call ─→ gate ─ something to ask ─→ ask_user �
 `graph-test.js` checks each of these. It also checks that the graph's first verdict equals the arm's
 in all 35 runs. The validator and LangGraph are installed in `adopt-example/` (pinned: ajv 8.20.0,
 ajv-formats 3.0.1, @langchain/langgraph 1.5.2, @langchain/core 1.2.20, zod 4.6.7, langchain 1.5.19,
-@modelcontextprotocol/client 2.4.0). The library still has none.
+@langchain/mcp-adapters 2.0.3). The library still has none.
 
 ## What this folder does not do yet
 

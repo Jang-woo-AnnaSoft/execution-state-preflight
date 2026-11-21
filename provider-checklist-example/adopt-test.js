@@ -171,13 +171,14 @@ function askAllGiven(id) {
     // The MCP connection is kept in connect.js as comments, for tools on someone else's server. Uncommented,
     //   it must still be code: checked here for syntax, not run.
     const src = fs.readFileSync(path.join(ADOPT, "connect.js"), "utf8");
-    const start = src.indexOf("// let toolList = null;");
+    const start = src.indexOf("// let mcp = null;");
     const end = src.indexOf("\n\n", src.indexOf("// async function mcpCallTool"));
     const uncommented = src.slice(start, end).split("\n").map(l => l.replace(/^\/\/ ?/, "")).join("\n");
     let syntax = "ok";
-    try { new Function("require", "process", `${uncommented}\nreturn { mcpListTools, mcpReadToolDefinition, mcpCallTool, CLIENT_OPTIONS };`); } catch (e) { syntax = e.message; }
+    try { new Function("require", "process", `${uncommented}\nreturn { mcpListTools, mcpReadToolDefinition, mcpCallTool, mcpClient };`); } catch (e) { syntax = e.message; }
     check("the MCP connection kept as comments is code once uncommented", [start > 0, syntax], [true, "ok"]);
-    check("  it still keeps the server's requests for input behind the gate", /autoFulfill: false/.test(uncommented) && /listChanged/.test(uncommented), true);
+    check("  LangChain's MCP connection, and it keeps the server's requests for input behind the gate",
+      [/require\("@langchain\/mcp-adapters"\)/.test(uncommented), /elicitation: false/.test(uncommented), /cacheMode: "refresh"/.test(uncommented)], [true, true, true]);
   }
 
   console.log("\n--- 3. labelInput as shipped: only what the user typed is the user's ---");
