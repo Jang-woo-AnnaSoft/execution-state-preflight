@@ -171,27 +171,46 @@ const FORM_KINDS = [
 //   keys are required. Whether a value fits (a slot that exists, a segment that is the user's, a quote
 //   that is there) is the gate's own check, as before. Where the prompt leaves a part open (a form's
 //   compare, one of many kinds), so does the shape.
-const STR = { type: "string" }, INT = { type: "integer" };
-const QUOTE_AT = { type: "object", properties: { quote: STR, segment_index: INT }, required: ["quote", "segment_index"] };
+// Each object is closed (additionalProperties: false), as Anthropic's structured outputs require. A JSON
+//   Schema inside an answer (a condition's form) cannot be closed: it is written as JSON text
+//   (schema_json), and the gate reads it back (openForm).
+const STR = { type: "string" }, INT = { type: "integer" }, BOOL = { type: "boolean" };
+const obj = (properties, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });
+const nullable = s => ({ anyOf: [s, { type: "null" }] });
+const SCHEMA_JSON = { type: "string", description: "the JSON Schema, written as JSON text" };
+const COMPARE = { anyOf: [
+  obj({ kind: STR, slot: STR, measured_within_user_range: BOOL }, ["kind", "slot"]),
+  obj({ kind: STR }),
+  obj({ source: STR, measure: STR, schema_json: SCHEMA_JSON }),
+  obj({ schema_json: SCHEMA_JSON }),
+] };
 const SHAPES = {
-  when_case: { type: "object", properties: { when_case: { type: ["string", "null"] } }, required: ["when_case"] },
-  action_name: { type: "object", properties: { action_name: { type: ["string", "null"] }, segment_index: INT }, required: ["action_name"] },
-  tool_match: { type: "object", properties: { approved: { type: "boolean" }, reason: STR }, required: ["approved", "reason"] },
-  comparable_form: { type: "object", required: ["form"], properties: {
-    form: { type: ["object", "null"], properties: { compare: { type: "object" }, constrains: { type: "array", items: STR } }, required: ["compare"] } } },
-  user_conditions: { type: "object", required: ["conditions"], properties: { conditions: { type: "array", items: {
-    type: "object", properties: { quote: STR, segment_index: INT, constrains: { type: "array", items: STR }, withdrawn_by: QUOTE_AT },
-    required: ["quote", "segment_index"] } } } },
-  propose_value: { type: "object", properties: { value: {} }, required: ["value"] },
-  replies: { type: "object", required: ["replies"], properties: { replies: { type: "array", items: {
-    type: "object", properties: { target: STR, answer: { type: "boolean" }, none: STR, choice: INT, quote: STR, segment_index: INT },
-    required: ["target"] } } } },
-  question: { type: "object", properties: { message: STR }, required: ["message"] },
-  stop: { type: "object", properties: { message: STR }, required: ["message"] },
+  when_case: obj({ when_case: nullable(STR) }),
+  action_name: obj({ action_name: nullable(STR), segment_index: INT }, ["action_name"]),
+  tool_match: obj({ approved: BOOL, reason: STR }),
+  comparable_form: obj({ form: nullable(obj({ compare: COMPARE, constrains: { type: "array", items: STR } })) }),
+  user_conditions: obj({ conditions: { type: "array", items: obj(
+    { quote: STR, segment_index: INT, constrains: { type: "array", items: STR }, withdrawn_by: obj({ quote: STR, segment_index: INT }) },
+    ["quote", "segment_index"]) } }),
+  propose_value: obj({ value: { anyOf: [STR, { type: "number" }, BOOL, { type: "null" }] } }),
+  replies: obj({ replies: { type: "array", items: obj(
+    { target: STR, answer: BOOL, none: STR, choice: INT, quote: STR, segment_index: INT }, ["target"]) } }),
+  question: obj({ message: STR }),
+  stop: obj({ message: STR }),
 };
 // Extraction: one entry for each of the tool's fields, found or not.
-const extractionShape = names => ({ type: "object", required: names, properties: Object.fromEntries(names.map(n => [n, {
-  type: "object", properties: { found: { type: "boolean" }, value: STR, segment_index: INT }, required: ["found"] }])) });
+const extractionShape = names => obj(Object.fromEntries(names.map(n => [n, obj({ found: BOOL, value: STR, segment_index: INT }, ["found"])])));
+// A form as the gate keeps it: the JSON Schema written as text read back. Text that is not a JSON
+//   object is no form. A form already in its kept shape (a stand-in, an adopter's own hook) is taken as
+//   it is.
+function openForm(c) {
+  if (!c || typeof c !== "object" || typeof c.schema_json !== "string") return c;
+  let schema;
+  try { schema = JSON.parse(c.schema_json); } catch { return null; }
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return null;
+  const { schema_json, ...rest } = c;
+  return rest.source !== undefined ? { ...rest, schema } : schema;
+}
 
 function createHooks({ model = "model", ask, runId = "run", unitKey = null, meter, measure, readToolDefinition, measurements = [] }) {
   if (typeof ask !== "function") throw new Error("createHooks: ask is required");
@@ -369,9 +388,9 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
         `Kinds:\n${FORM_KINDS.map(k => `  ${k}`).join("\n")}\n\n` +
         'Reply as {"form": {"compare": <one of the kinds>, "constrains": ["<field>", ...]}} or {"form": null}',
         "comparable_form");
-      const f = out?.form;
+      const f = out?.form && typeof out.form === "object" ? { ...out.form, compare: openForm(out.form.compare) } : out?.form;
       // The model looked and no form fits: said so, not left as no answer.
-      if (out && typeof out === "object" && "form" in out && f === null) return null;
+      if (out && typeof out === "object" && "form" in out && out.form === null) return null;
       if (!f || typeof f !== "object" || !f.compare || typeof f.compare !== "object") return undefined;
       if (f.compare.source === "measured_data" && !measurements.includes(f.compare.measure)) return undefined;
       const constrains = Array.isArray(f.constrains) ? f.constrains.filter(n => n in props) : [];
@@ -782,5 +801,5 @@ function createJudge({ ask, measure, readToolDefinition, measurements = [], stor
 
 module.exports = {
   createJudge, judgeRound, writeResult, noticesFor, writeQuestion, writeStop, stopFacts, toolsForModel, messagesFor, afterCall, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
-  createPreflight, labelledLines, readTranslatedForms, renderValue, answerSchema, formSegments, SHAPES, extractionShape,
+  createPreflight, labelledLines, readTranslatedForms, renderValue, answerSchema, formSegments, SHAPES, extractionShape, openForm,
 };

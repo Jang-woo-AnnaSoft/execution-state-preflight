@@ -68,12 +68,6 @@ function modelOptions(env = process.env) {
     try { options = JSON.parse(env.MODEL_OPTIONS); } catch (e) { throw new Error(`MODEL_OPTIONS is not JSON (${e.message})`); }
     if (options === null || typeof options !== "object" || Array.isArray(options)) throw new Error("MODEL_OPTIONS must be a JSON object");
   }
-  // Anthropic: thinking is adaptive unless MODEL_OPTIONS says otherwise. Claude Opus 5.5, Sonnet 5.5 and
-  //   Fable 5.1 on refuse a forced tool call, which LangChain's withStructuredOutput sends (ask, below)
-  //   unless thinking is set; with it, LangChain offers the shape's tool without forcing it. For these
-  //   models adaptive is what they do anyway. A model that does not take it (Claude 4.5 and earlier): set
-  //   MODEL_OPTIONS' thinking yourself.
-  if (String(env.MODEL ?? "").startsWith("anthropic:") && !("thinking" in options)) options = { ...options, thinking: { type: "adaptive" } };
   const temperature = env.TEMPERATURE;
   return temperature === undefined || temperature === "" ? options : { ...options, temperature: Number(temperature) };
 }
@@ -84,16 +78,22 @@ const textOf = res => (typeof res.content === "string" ? res.content
 // The gate's model calls. An answer not in the shape asked is an error: the gate treats a failed
 //   extraction as "not found", never as a value.
 async function ask(_model, system, user, hook, schema) {
-  return askWith(await model(), system, user, hook, schema);
+  return askWith(await model(), system, user, hook, schema, structuredMethod());
+}
+// How the shape reaches the provider. Anthropic: its structured outputs (method "jsonSchema"), as it
+//   recommends; Claude Opus 5.5 and Sonnet 5.5 refuse the forced tool call LangChain sends otherwise.
+//   Another provider: LangChain's default for it.
+function structuredMethod(env = process.env) {
+  return String(env.MODEL ?? "").startsWith("anthropic:") ? "jsonSchema" : undefined;
 }
 // The answer's shape, given with each call (judge-only.js), is the model's to keep: LangChain's
-//   withStructuredOutput hands it to the provider (Anthropic: a tool for the answer) and reads the
+//   withStructuredOutput hands it to the provider (structuredMethod, below) and reads the
 //   answer back. Only the shape: what the values say is the gate's to check. An answer the provider
 //   could not read in that shape is an error, with what the model wrote kept in it: the gate treats the
 //   failure as unconfirmed, and the text says why.
-async function askWith(m, system, user, hook, schema) {
+async function askWith(m, system, user, hook, schema, method) {
   if (!schema || typeof schema !== "object") throw new Error(`no shape given for the model's answer (${hook ?? "ask"})`);
-  const res = await m.withStructuredOutput(schema, { name: hook ?? "answer", includeRaw: true })
+  const res = await m.withStructuredOutput(schema, { name: hook ?? "answer", includeRaw: true, ...(method ? { method } : {}) })
     .invoke([{ role: "system", content: system }, { role: "user", content: user }]);
   if (res?.parsed && typeof res.parsed === "object") return res.parsed;
   const t = (res?.raw ? textOf(res.raw) : "") || JSON.stringify(res?.raw?.tool_calls ?? null);
@@ -318,6 +318,6 @@ const checkpointer = new MemorySaver();
 // chatModel: the agent's model itself, for LangChain's createAgent (agent.js); chat is the same model,
 //   called one turn at a time (judge-only-example.js).
 module.exports = { ask, say, chat, chatModel: model, listTools, readToolDefinition, measure, labelInput, notify, callTool, store, readPreSet, checkpointer,
-                   MEASUREMENTS, TOOLS, MODEL_NAME, readToolFile, askWith, modelOptions };
+                   MEASUREMENTS, TOOLS, MODEL_NAME, readToolFile, askWith, structuredMethod, modelOptions };
 // With the MCP connection above uncommented:
 //   listTools: mcpListTools, readToolDefinition: mcpReadToolDefinition, callTool: mcpCallTool
