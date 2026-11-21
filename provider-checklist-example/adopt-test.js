@@ -105,8 +105,7 @@ function askAllGiven(id) {
 
 (async () => {
   console.log("--- 1. the folder holds only what an adopter keeps ---");
-  // records.jsonl is what running the example leaves behind (connect.js RECORD_PATH), not a file to keep.
-  const files = fs.readdirSync(ADOPT).filter(f => f !== "node_modules" && f !== "records.jsonl").sort();
+  const files = fs.readdirSync(ADOPT).filter(f => f !== "node_modules").sort();
   check("adopt-example files", files, ["README.md", "agent.js", "connect.js", "gate.js", "judge-only-example.js", "judge-only.js", "middleware.js", "package-lock.json", "package.json", "principles-gated.md", "principles.md", "records.js", "tool.json"]);
   // tool.json is the declaration the agent reads by default, an MCP tool definition: it must be the tool the tests run.
   const declared = JSON.parse(fs.readFileSync(path.join(ADOPT, "tool.json"), "utf8"));
