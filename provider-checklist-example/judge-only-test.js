@@ -23,6 +23,10 @@ const TOOL = require("./tool.json");
 const { buildUserTurn } = require("./prompts");
 const { makeAsk, makeChat, asAnswered } = require("./stub");
 const shapes = require("./shape-check");
+const { recordStore } = require(path.join(__dirname, "..", "adopt-example", "records"));
+const { InMemoryStore } = require(path.join(__dirname, "..", "adopt-example", "node_modules", "@langchain/langgraph"));
+// Records in a LangGraph BaseStore, as connect.js keeps them.
+const baseStoreRecords = () => recordStore(new InMemoryStore());
 const { keepForPrior, loadPrior } = require(path.join(__dirname, "..", "execution-state-preflight"));
 const S = require("./instructions.json");
 
@@ -43,7 +47,7 @@ function standIn(id, condition, over = {}) {
   const askInner = over.ask ?? makeAsk(id);
   const ins = S.instructions.find(i => i.id === id), text = over.text ?? ins.text;
   let first = true;
-  const store = over.store ?? createStorage();
+  const store = over.store ?? baseStoreRecords();
   return {
     calls, store, shown, prompts, heard, events,
     connect: {

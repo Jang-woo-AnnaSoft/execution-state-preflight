@@ -28,6 +28,10 @@ const TOOL = require("./tool.json");
 const { buildUserTurn } = require("./prompts");
 const { makeAsk, makeChat } = require("./stub");
 const shapes = require("./shape-check");
+const { recordStore } = require(path.join(__dirname, "..", "adopt-example", "records"));
+const { InMemoryStore } = require(path.join(__dirname, "..", "adopt-example", "node_modules", "@langchain/langgraph"));
+// Records in a LangGraph BaseStore, as connect.js keeps them.
+const baseStoreRecords = () => recordStore(new InMemoryStore());
 const S = require("./instructions.json");
 
 let failed = 0;
@@ -65,7 +69,7 @@ function standIn(id, condition, over = {}) {
         return realConnect.labelInput(msg);
       }),
       callTool: async (name, args) => { events.push("call"); calls.push({ name, args }); return { ok: true }; },
-      store: gate.createStorage(),
+      store: baseStoreRecords(),
       checkpointer: new gate.MemorySaver(),
       // The names this system can measure (connect.js's MEASUREMENTS keys).
       MEASUREMENTS: Object.fromEntries(MEASUREMENTS.map(n => [n, async () => undefined])),
@@ -103,7 +107,7 @@ function askAllGiven(id) {
   console.log("--- 1. the folder holds only what an adopter keeps ---");
   // records.jsonl is what running the example leaves behind (connect.js RECORD_PATH), not a file to keep.
   const files = fs.readdirSync(ADOPT).filter(f => f !== "node_modules" && f !== "records.jsonl").sort();
-  check("adopt-example files", files, ["README.md", "agent.js", "connect.js", "gate.js", "judge-only-example.js", "judge-only.js", "middleware.js", "package-lock.json", "package.json", "principles-gated.md", "principles.md", "tool.md"]);
+  check("adopt-example files", files, ["README.md", "agent.js", "connect.js", "gate.js", "judge-only-example.js", "judge-only.js", "middleware.js", "package-lock.json", "package.json", "principles-gated.md", "principles.md", "records.js", "tool.md"]);
   // tool.md is the declaration the agent reads by default: it must be the tool the tests run.
   const md = fs.readFileSync(path.join(ADOPT, "tool.md"), "utf8");
   const blocks = [...md.matchAll(/```(\w+)\n([\s\S]*?)\n```/g)].map(m => [m[1], m[2]]);
@@ -184,7 +188,6 @@ function askAllGiven(id) {
   console.log("\n--- 3-b. the stores keep every record and can list them ---");
   {
     const os = require("os"), { execFileSync } = require("child_process");
-    const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "adopt-")), "records.jsonl");
     const script = `const { store } = require(${JSON.stringify(path.join(ADOPT, "connect"))});
       (async () => {
         await store.persist("k", { n: 1, execution_decision: "hold" });
@@ -193,7 +196,7 @@ function askAllGiven(id) {
         await store.persist("k", { n: 3, execution_decision: "ask_user" });
         console.log(JSON.stringify({ list: (await store.list("k")).map(r => r.n), load: (await store.load("k"))?.n, none: await store.list("absent") }));
       })();`;
-    const out = JSON.parse(execFileSync(process.execPath, ["-e", script], { env: { ...process.env, RECORD_PATH: tmp } }).toString());
+    const out = JSON.parse(execFileSync(process.execPath, ["-e", script], { env: process.env }).toString());
     check("connect.js store: list is every record under the key, oldest first", out.list, [1, 2, 3]);
     check("  load is the latest that executed", out.load, 2);
     check("  an unknown key lists nothing", out.none, []);

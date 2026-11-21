@@ -19,6 +19,10 @@ const TOOL = require("./tool.json");
 const { buildUserTurn } = require("./prompts");
 const { makeAsk } = require("./stub");
 const shapes = require("./shape-check");
+const { recordStore } = require(path.join(__dirname, "..", "adopt-example", "records"));
+const { InMemoryStore } = require(path.join(__dirname, "..", "adopt-example", "node_modules", "@langchain/langgraph"));
+// Records in a LangGraph BaseStore, as connect.js keeps them.
+const baseStoreRecords = () => recordStore(new InMemoryStore());
 const S = require("./instructions.json");
 
 let failed = 0;
@@ -48,7 +52,7 @@ function setup(id, condition, over = {}) {
   const ins = S.instructions.find(i => i.id === id), text = over.text ?? ins.text;
   const prompts = [], calls = [], events = [];
   const askInner = over.ask ?? makeAsk(id);
-  const store = createStorage();
+  const store = baseStoreRecords();
   const connect = {
     ask: shapes.watch(async (m, system, user, hook, schema) => { prompts.push(hook); return askInner(m, system, user, hook, schema); }),
     readToolDefinition: async name => [TOOL].find(t => t.name === name),

@@ -41,6 +41,10 @@ const { createMain, systemPrompt } = require(path.join(ADOPT, "judge-only-exampl
 const { createAgent } = require(path.join(ADOPT, "agent"));
 const { StubChatModel } = require("./stub-chat-model");
 const { BaseCallbackHandler } = require(path.join(ADOPT, "node_modules", "@langchain/core/callbacks/base"));
+const { recordStore } = require(path.join(__dirname, "..", "adopt-example", "records"));
+const { InMemoryStore } = require(path.join(__dirname, "..", "adopt-example", "node_modules", "@langchain/langgraph"));
+// Records in a LangGraph BaseStore, as connect.js keeps them.
+const baseStoreRecords = () => recordStore(new InMemoryStore());
 const { createStorage } = require(path.join(ADOPT, "judge-only"));
 const { keepForPrior } = require(path.join(__dirname, "..", "execution-state-preflight"));
 const real = require(path.join(ADOPT, "connect"));
@@ -122,7 +126,7 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
 
   let first = true;
   const calls = [];
-  const store = createStorage();
+  const store = baseStoreRecords();
   const connect = {
     ask: (model, system, user, hook, shape) => timed(hook ?? "ask", { system, user }, () => askInner(model, system, user, hook, shape)),
     ...(STUB ? {} : { say: (model, system, user, hook) => timed(hook ?? "say", { system, user }, () => real.say(model, system, user, hook)) }),
