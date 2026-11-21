@@ -747,7 +747,7 @@ async function noticesFor(storage, record) {
  */
 // readPreSet: (userId, toolName) → the user's settings for the tool (preSetData, see judgeRound), from
 //   your store. Optional: without it there are none. How a setting comes to be stored, and the user's
-//   consent to it, is yours (README, "What this doesn't do").
+//   consent to it, is yours (README, "For safety, consider these").
 function createJudge({ ask, measure, readToolDefinition, measurements = [], storage, userId = "user", model = "model", runId = "judge", readPreSet }) {
   for (const [n, f] of Object.entries({ ask, readToolDefinition })) {
     if (typeof f !== "function") throw new Error(`createJudge: ${n} is required`);
