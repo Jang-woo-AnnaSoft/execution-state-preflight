@@ -31,9 +31,17 @@ const textOf = m => (typeof m?.content === "string" ? m.content
 
 // Who wrote each part, read from the kind of message (rule 1 of judge-only-example.js): a HumanMessage is
 //   the user's, the assistant's words are its own, and another tool's result is not the user's. Words of
-//   someone else inside a HumanMessage are yours to label when they come in: labelMessage(message, index)
-//   returns the segments for one HumanMessage.
-const userSegments = m => [{ trust: "user", text: textOf(m) }];
+//   someone else inside a HumanMessage are yours to label when they come in: either put the segments on
+//   the message (additional_kwargs.preflight_segments, as labelInput gives them; humanMessage below), or
+//   pass labelMessage(message, index), which returns the segments for one HumanMessage.
+const userSegments = m => (Array.isArray(m?.additional_kwargs?.preflight_segments)
+  ? m.additional_kwargs.preflight_segments : [{ trust: "user", text: textOf(m) }]);
+// A HumanMessage from labelled segments: the model reads someone else's words marked as such, and the
+//   gate reads the segments.
+function humanMessage(segments, fields = {}) {
+  const content = segments.map(s => (s.trust === "user" ? s.text : `[context, not the user's words] ${s.text}`)).join("\n\n");
+  return new HumanMessage({ ...fields, content, additional_kwargs: { ...(fields.additional_kwargs ?? {}), preflight_segments: segments } });
+}
 
 // The gate's conversation, from the agent's messages and what the gate asked and was answered inside
 //   its own calls (state preflightCalls, by tool call id). Those go right after the message that made
@@ -60,7 +68,8 @@ const RAN_WITH = "Note: the system ran this call with the values the user confir
   "message. Do not issue your original call again. Executed:";
 
 // gated(name): which tools are judged. All of them, unless you say otherwise.
-// userChecklist: the user's standing settings, already confirmed by them (spec 4.4).
+// userChecklist: the user's standing settings, already confirmed by them (spec 4.4). Or per run, in the
+//   run's context: invoke(input, { configurable, context: { userChecklist } }).
 function preflightMiddleware({ connect = defaultConnect, userId = "user", gated = () => true, userChecklist = [],
                                labelMessage = userSegments } = {}) {
   const model = connect.MODEL_NAME ?? "model";
@@ -78,7 +87,10 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
 
   return createMiddleware({
     name: "PreflightMiddleware",
-    stateSchema: z.object({ preflightCalls: z.record(z.string(), z.array(z.any())).default({}) }),
+    // preflightCalls: what the gate asked and was answered inside each call, by tool call id.
+    // preflightLast: how the latest judged call ended, for the app (agent.js reports it). n counts them.
+    stateSchema: z.object({ preflightCalls: z.record(z.string(), z.array(z.any())).default({}),
+                            preflightLast: z.any().optional() }),
     wrapToolCall: async (request, handler) => {
       const { toolCall } = request;
       if (!gated(toolCall.name)) return handler(request);
@@ -88,7 +100,9 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
       const base = segmentsFor(request.state?.messages, calls, labelMessage);
       const call = { name: toolCall.name, arguments: toolCall.args ?? null, id: toolCall.id };
       const mine = [];
-      const done = message => new Command({ update: { messages: [message], preflightCalls: { ...calls, [toolCall.id]: mine } } });
+      const last = { n: (request.state?.preflightLast?.n ?? 0) + 1, tool_call_id: toolCall.id, name: toolCall.name };
+      const ended = outcome => ({ preflightCalls: { ...calls, [toolCall.id]: mine }, preflightLast: { ...last, ...outcome } });
+      const done = (message, outcome) => new Command({ update: { messages: [message], ...ended(outcome) } });
       const reply = (content, status) => new ToolMessage({ content, name: toolCall.name, tool_call_id: toolCall.id, status });
 
       // LangGraph runs this node again from the top when it resumes. Each judging step is kept, in order,
@@ -101,7 +115,8 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
         let step = kept[k];
         if (!step) {
           const conversation = [...base, ...mine];
-          const judged = await judge.run({ unitKey, conversation, toolCall: call, userChecklist });
+          const judged = await judge.run({ unitKey, conversation, toolCall: call,
+                                           userChecklist: request.runtime?.context?.userChecklist ?? userChecklist });
           const question = judged.questions.length > 0 ? await askUser(conversation, judged)
             // The gate could not tell what is wanted, or which tool: its own words, to be answered in words.
             : judged.ask && judged.message ? { text: judged.message, block: [], message: judged.message, options: judged.options ?? null }
@@ -114,23 +129,25 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
         if (!q) break;
         mine.push(afterCall(call, "waiting", q.message, r.settled));
         const answer = interrupt({
-          type: "preflight_question", tool_call_id: toolCall.id, name: toolCall.name,
+          type: "preflight_question", tool_call_id: toolCall.id, name: toolCall.name, record_key: r.key,
           message: q.message, text: q.text, block: q.block, questions: r.questions, notices: r.notices,
           ...(q.options ? { options: q.options } : {}),
         }, r.questions.length > 0 ? { responseSchema: answerSchema(r.questions) } : undefined);
         const segments = answer && typeof answer === "object" && typeof answer.typed === "string"
           ? connect.labelInput({ typed: answer.typed }) : connect.labelInput({ form: answer });
-        if (segments.length === 0) return done(reply(`${NOT_ANSWERED}\n${q.message}`, "error"));
+        if (segments.length === 0) return done(reply(`${NOT_ANSWERED}\n${q.message}`, "error"), { status: "cancelled" });
         mine.push(...segments);
       }
 
       // Nothing to ask. The executing side decides from the record this step wrote (spec 3.5).
       const record = r.key ? (await store.list(r.key)).filter(x => x && "execution_decision" in x).at(-1) : null;
       const notRun = async (why, extra = {}) => {
-        const stop = r.message ? { message: r.message }
+        const stop = r.message ? { message: r.message, facts: null }
           : await writeStop({ ask: connect.ask, say: connect.say, model }, { record, conversation: [...base, ...mine] });
         if (record?.action_key) await judge.recordResult(record, { executed: false, why, ...extra });
-        return done(reply(`${NOT_RUN}\n${stop.message}`, "error"));
+        return done(reply(`${NOT_RUN}\n${stop.message}`, "error"),
+          { status: "not_executed", decision: record?.execution_decision ?? null, reason: record?.reason ?? r.reason ?? null, why,
+            stop: { message: stop.message, facts: stop.facts ?? null } });
       };
       const why = whyNotReady(record, toolCall.name);
       if (why !== null) return notRun(why);
@@ -145,23 +162,30 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
       const args = record.call_arguments;
       let result;
       try { result = await handler({ ...request, toolCall: { ...toolCall, args } }); }
+      // A call that fails is reported, not retried. A tool may say what kind of failure it was (e.kind:
+      //   "tool_error", "input_required"); anything else is the call itself failing.
       catch (e) {
         const error = String(e?.message ?? e);
         await judge.recordResult(record, { ok: false, error, told });
-        return done(reply(`The call failed: ${error}`, "error"));
+        return done(reply(`The call failed: ${error}`, "error"),
+          { status: typeof e?.kind === "string" ? e.kind : "call_failed", decision: record.execution_decision, reason: record.reason ?? null,
+            callError: error, ...(e?.serverRequests ? { serverRequests: e.serverRequests } : {}) });
       }
       const message = ToolMessage.isInstance(result) ? result
         : (result?.update?.messages ?? []).find(m => ToolMessage.isInstance(m) && m.tool_call_id === toolCall.id);
-      if (message?.status === "error") await judge.recordResult(record, { ok: false, error: textOf(message) || "the tool reported an error", told });
+      const failedCall = message?.status === "error";
+      if (failedCall) await judge.recordResult(record, { ok: false, error: textOf(message) || "the tool reported an error", told });
       else await judge.recordResult(record, { ok: true, told });
+      const outcome = { decision: record.execution_decision, reason: record.reason ?? null,
+        ...(failedCall ? { status: "tool_error", callError: textOf(message) || "the tool reported an error" } : { status: "executed", executedWith: args, told }) };
       const sameArgs = JSON.stringify(args) === JSON.stringify(toolCall.args ?? null);
       const shown = !message || sameArgs ? message
         : new ToolMessage({ ...message, content: `${RAN_WITH} ${toolCall.name} with arguments ${JSON.stringify(args)}.\n\nTool response:\n${textOf(message)}` });
-      if (ToolMessage.isInstance(result)) return done(shown);
-      return new Command({ ...result, update: { ...result.update, preflightCalls: { ...calls, [toolCall.id]: mine },
+      if (ToolMessage.isInstance(result)) return done(shown, outcome);
+      return new Command({ ...result, update: { ...result.update, ...ended(outcome),
         messages: (result.update?.messages ?? []).map(m => (m === message ? shown : m)) } });
     },
   });
 }
 
-module.exports = { preflightMiddleware, segmentsFor };
+module.exports = { preflightMiddleware, segmentsFor, humanMessage };

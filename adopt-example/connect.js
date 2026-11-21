@@ -325,7 +325,9 @@ async function readPreSet(userId, toolName) {
 //   example PostgresSaver from @langchain/langgraph-checkpoint-postgres.
 const checkpointer = new MemorySaver();
 
-module.exports = { ask, say, chat, listTools, readToolDefinition, measure, labelInput, notify, callTool, store, readPreSet, checkpointer,
+// chatModel: the agent's model itself, for LangChain's createAgent (agent.js); chat is the same model,
+//   called one turn at a time (judge-only-example.js).
+module.exports = { ask, say, chat, chatModel: model, listTools, readToolDefinition, measure, labelInput, notify, callTool, store, readPreSet, checkpointer,
                    MEASUREMENTS, TOOLS, MODEL_NAME, readToolFile, readJsonReply, modelOptions };
 // With the MCP connection above uncommented:
 //   listTools: mcpListTools, readToolDefinition: mcpReadToolDefinition, callTool: mcpCallTool

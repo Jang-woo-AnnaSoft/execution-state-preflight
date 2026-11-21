@@ -4,23 +4,28 @@ The files you keep in your own system, when you build the agent and its tools to
 the tools, connect your model, your tools and your system's data, and the gate decides whether each
 tool call has everything it needs before it runs.
 
-**Use `judge-only.js`.** The gate judges and writes the record, and your agent executes from that
-record. This is the structure the specification describes (spec 3.5).
+**Both ways in judge with `judge-only.js`.** The gate judges and writes the record, and the tool runs
+from that record. Start with LangChain's `createAgent`: `middleware.js` does this for you. With a loop
+of your own, `judge-only-example.js` shows how. Only the second keeps the executing party outside the
+agent's graph, as the specification describes (spec 3.5).
 
-`agent.js` is a demonstration: a whole agent to run and watch, with the flow written for you. **It
-departs from spec 3.5.** The one difference left is that the gate and the executing step are in one
-graph. What you write (`tool.md`) and what you connect (`connect.js`) are the same in both.
+There are two ways in. What you write (`tool.md`) and what you connect (`connect.js`) are the same in
+both.
 
-| | `judge-only.js` (recommended) | `agent.js` (demonstration) |
+| | LangChain `createAgent` (recommended) | Your own loop |
 |---|---|---|
-| For | Your agent, existing or new, with its own loop | Trying it end to end before you wire anything |
-| Start from | [`judge-only-example.js`](./judge-only-example.js) | [`agent.js`](./agent.js) |
-| Who runs the flow (ask, wait, call again) | Your agent's own loop | `gate.js`, a LangGraph graph |
-| Who executes the tool | Your agent, after reading the record | The graph's executing step, after reading the record |
-| The gate and the executing side | Two parties: the gate ends with the record | **Departs from spec 3.5**: the gate and the executing step are in one graph |
-| What you must keep yourself | Eight things, listed in [section 4](#4-use-it-your-agent-executes-judge-onlyjs) | Nothing in the flow |
+| For | An agent built on `createAgent`, existing or new | An agent with a loop of its own |
+| Start from | [`middleware.js`](./middleware.js), as `agent.js` uses it | [`judge-only-example.js`](./judge-only-example.js) |
+| Who runs the flow (ask, wait, call again) | `createAgent`; the call waits on `interrupt()` | Your agent's own loop |
+| Who executes the tool | The middleware, after reading the record | Your agent, after reading the record |
+| The gate and the executing side | **Departs from spec 3.5**: both run inside the agent's graph | Two parties: the gate ends with the record |
+| What you must keep yourself | The labels on the user's messages, a checkpointer, `connect.notify` | Eight things, listed in [section 4](#4-use-it-your-agent-executes-judge-onlyjs) |
 
-Sections 1 to 3 are for both. Section 4 is `judge-only.js`. Section 5 is the demonstration.
+`agent.js` is the first way as a whole agent to run and watch. Sections 1 to 3 are for both. Section 4
+is your own loop, and how the middleware does the same. Section 5 is the demonstration.
+
+`gate.js`, the LangGraph graph `agent.js` ran on before, is kept to confirm the earlier tests: the
+comparisons with the October records run on it. It is not a way in.
 
 **To watch a whole run first, with stand-in models and no API key:**
 
@@ -42,8 +47,8 @@ The gate asks about the time, the stand-in user answers yes, and the tool runs.
 | [`judge-only.js`](./judge-only.js) | Do not edit. Gives the library its model calls and a validator; judges one tool call and writes the record |
 | [`judge-only-example.js`](./judge-only-example.js) | Read and adapt. Your agent's side: ask, judge again, read the record, execute, write the result |
 | [`middleware.js`](./middleware.js) | Do not edit. The same agent's side, as LangChain middleware for `createAgent` |
-| [`agent.js`](./agent.js) | Demonstration. Run it, or call it from your app. No edits needed |
-| [`gate.js`](./gate.js) | Demonstration. Do not edit. The flow around `judge-only.js`, as a LangGraph graph |
+| [`agent.js`](./agent.js) | Demonstration. `createAgent` with `middleware.js`. Run it, or call it from your app. No edits needed |
+| [`gate.js`](./gate.js) | Kept to confirm the earlier tests (the flow `agent.js` ran on before). Not a way in |
 
 You also need the library, [`execution-state-preflight.js`](../execution-state-preflight.js): one
 file, no dependencies. Copy it next to this folder or into it.
@@ -271,14 +276,14 @@ whether a run reaches execution shows only once the asking is wired in. Each rou
 
 ## 5. The demonstration: a whole agent (`agent.js`)
 
-The same gate, with the flow written for you as a LangGraph graph. The graph does the flow's part of
-section 4 itself: it shows the values unchanged, judges again after a reply, executes from the record
-and writes the result back. It also gives its model the tools without the labelled lines, and tells
-the user why when nothing runs.
+The same gate in LangChain's `createAgent`, with `middleware.js`. The middleware does the flow's part
+of section 4 itself: it shows the values unchanged, judges again with the answer, executes from the
+record and writes the result back. The agent gives its model the tools without the labelled lines,
+and the user is told why when nothing runs.
 
-**This departs from spec 3.5.** The one difference left is that the gate and the executing step are in
-one graph; the specification has the executing party outside the gate. It shows the behaviour, end to
-end.
+**This departs from spec 3.5.** The gate ends with the record and the executing code reads it, but both
+run inside the agent's graph; the specification has the executing party outside the gate. It shows
+the behaviour, end to end.
 
 ```
 MODEL=anthropic:<model-name> node agent.js "Set up the pickup for LST-2291, 2pm this Saturday, Hongdae station lockers."
@@ -307,6 +312,7 @@ const agent = createAgent();
 let r = await agent.start({ threadId, message: { typed, context } });
 // r.status === "waiting": show r.question.message
 r = await agent.reply({ threadId, message: { typed: "yes" } });
+// or from a form: answerSchema(r.question.questions), then agent.reply({ threadId, answers })
 ```
 
 Use one `threadId` per conversation, for every turn of it. The gate reads what it asked in that
@@ -360,7 +366,9 @@ only what you keep. They check:
 - the model calls the tool, the gate asks, the user replies in words, and the tool runs;
 - judging returns no arguments and no decision, and executes nothing; the agent's side executes from
   the record, and reads every decision record the same way the gate decided;
-- in the demonstration too, the executing step starts from the record and writes the result back;
+- in the demonstration (`agent.js` on `createAgent`), the same scenarios as before reach the same first
+  decision, execute from the record and write the result back; the earlier checks still run on the
+  flow before it (`gate.js`, through `provider-checklist-example/graph-agent.js`);
 - as middleware in `createAgent`, the call waits on `interrupt()`, is not judged twice on resume, runs
   with the record's arguments, and runs nothing when the answer is declined;
 - on the same 35 inputs, the first decision here equals the reference run.
