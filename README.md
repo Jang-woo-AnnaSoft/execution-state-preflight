@@ -1,75 +1,109 @@
 # execution-state-preflight
 
-Don't execute on a guess. Check everything stated, and ask or stop when it can't be confirmed.
+**When an agent causes an incident, whose judgment was it?**
 
-Rules are written as sentences in the tool's description, and code does the counting. The checks that used to be hard-coded for each tool are no longer needed.
-
-Before a tool is called, check where the intent, values and conditions came from and whether they were confirmed, and write it into the record.
-
-Models fill blanks, and when blocked they find another way through. The usual expectation is that better models will stop this; better models only find better ways around. The blanks are mostly not facts the model lacks — they are things missing from the input. And models were trained to fill blanks in the first place.
-
-So this does not ask the model whether it knows. Against a checklist kept outside the model, it counts where the model looked, what came back, and what is missing.
+Today this is usually hard to answer.
 
 ---
 
-## A rule in a prompt, a hook, or a checklist
+## Why there is no answer today
 
-A hook is code the harness runs before a tool executes.
+Before an agent calls a tool, the model judges all of this at once:
 
-| | Prompt | Hook | Checklist |
-|---|---|---|---|
-| Written as | Natural language | Code | Natural language (labelled lines) |
-| Read by | The model | The harness | The model too, but the gate reads the tool's definition itself |
-| Who decides it was kept | The model that read it | Code the developer wrote | Code that counts unconfirmed items |
-| Checked against | The model's words | What the code sees, usually the call the model made | Declared sources: the system's data, the user's words |
-| If skipped | Runs, with no mark | Blocked | Stays unconfirmed, and does not run |
-| To change a rule | Edit the sentence | Edit the code and deploy | Edit the sentence |
+- what the user asked for
+- whether to run it now or later
+- whether this tool is the one that does it
+- where each value comes from
+- what to check and what to skip
+- whether it may run
 
-In a prompt, a sentence is a request. The model reads it and decides whether it kept it, and an output that kept it looks the same as one that skipped it. A hook enforces, but each rule is code a developer writes, and it does not look at where a value came from unless that is built too. The checklist does not replace the hook: a place to stop before execution is still needed, and the hook is that place. What changes is that the code running there no longer grows with each rule.
+What is left on the execution side is the final tool call. A misreading, a made-up value and a skipped check all come out in the same shape: "a wrong call".
 
-So one line does two jobs:
+So after an incident, only explanations like these are left: "The model misjudged." "The guardrails were not designed well enough." Neither says *what* was not declared, or *who* should have declared it. That information is usually not recorded.
 
-- **Safety.** Unlike a prompt, a stated condition is not skipped, and nothing runs while it is unconfirmed.
-- **Developer productivity.** Unlike a hook, nobody writes that guarantee as code. A condition is not turned into an `if`; to change it, edit the sentence. Only a rule that needs system data not yet connected needs one more connection.
+How far the model may judge was never set, so there is no line from which to say where it went wrong.
+
+## One case
+
+In the reported Meta Muse case, with "Allow Always" on, Muse agreed in the seller's name to the buyer's proposed 8 to 10 p.m., and the buyer came to the seller's building while the seller was out ([case report](./case-muse-marketplace.en.md)).
+
+The permission was there, the format was right, no policy was broken. One thing was missing: the seller had not set that time.
+
+Such incidents are often classed as "the model misjudged". The precise question is this: **whose part was it to set the time?**
+
+## What this repository does
+
+It splits the judgments the model was carrying implicitly into items, and gives each item an owner.
+
+| Judgment | Owner |
+|---|---|
+| What the request is, and when it runs | What the user said in this request |
+| Whether this tool does it | The tool provider's declaration (what the tool does). Whether it fits the request is the model's judgment, recorded as such and not proven by code |
+| Where each value came from | A declared source: the user's words and answers, settings the user approved, system measurements |
+| Under which conditions it must not run | The provider's declared conditions, the user's limits, the adopting system's common rules |
+| Whether everything is confirmed | Code that counts the unconfirmed items |
+| Whether it may run | The executing party, reading the record |
+
+The model is left to translate conditions into a form that can be compared, find places in the original text, write the words that ask the user, and judge whether the tool fits the request; that judgment is recorded as a judgment. Counting the unconfirmed items and deciding whether it runs is done by code.
+
+## Where the gaps show
+
+This repository does not claim to judge everything on anyone's behalf. What it does is **ask "whose judgment is this?" and make the slots with no owner visible.**
+
+An unconfirmed item does not run, and where it goes is settled: to the user if the user can answer it, to the system if the system can look it up, and to whoever declares it if nobody has.
+
+Below is a real decision record from the example tool (scheduling a pickup), shortened. The seller said "2pm this Saturday". The gate found where those words are, but they are not in the date-time form the tool requires, so it does not settle the time: it asks the seller.
+
+```json
+{
+  "fields": [
+    { "name": "item_id", "value": "LST-2291", "status": "known", "source": "instruction",
+      "located_at": { "segment_index": 3, "span": [46, 54] } },
+    { "name": "time", "value": null, "status": "unknown", "source": null,
+      "located_at": { "segment_index": 3, "span": [58, 75] } },
+    { "name": "buyer_contact", "value": "in-app chat (@kim_2291)", "status": "known", "source": "measured_data" }
+  ],
+  "unknown_count": 1,
+  "execution_decision": "ask_user"
+}
+```
+
+After an incident the question changes. Not "why did it put in this value?" but **"from which source was this slot of the record settled, or was it empty?"**
+
+## How it works
+
+- **Every verdict is recorded.** Each value's source, the conditions confirmed, and what was blocked or did not run. What is kept is not the inside of the model but the record of the verdict.
+- **If someone's part was missing, write it then and there, as a sentence.** One labelled line in the tool's description is enough; no agent code to change or redeploy. From then on, code checks that line on every execution.
+
+```text
+[Required] The sale must be agreed, as shown by the order status.
+[Verify] The time is the one the seller states. It is one moment.
+[Notice] The buyer sees the time and location immediately.
+```
+
+### Before you write one
+
+For "write it, and it is checked" to hold:
+
+- **It needs a label.** A line without one is a sentence the model reads; the gate does not check it.
+- **For a `[Required]` line, the system must be able to measure what it names.** Until that measurement is connected, the line stays unverified and **nothing runs.** This is intended: what cannot be checked does not pass.
+- **The line must be translated into a form that can be compared.** A new or changed line is translated once, by the model, into a form code can compare, and code compares only in that form. A line that cannot be translated stays unconfirmed, and the run stops.
+- **A line translated wrongly is checked as translated.** A kept translation is used as it is until someone reads it.
+- **A changed line is translated again, and approvals given before the change are not used in the next verdict.**
+- **What is checked is what is declared.** A condition written on no line is not checked. Writing that line is someone's part.
+
+## What it does not promise
+
+- It does not claim to prevent every incident. What it stops is limited to what is declared.
+- A condition not declared, declared wrongly or translated wrongly passes. What becomes clear instead is *who did not declare what*.
+- Whether the tool the model chose fits the request is not proven by code (spec 8.1).
+- It does not replace access control, injection defense, or a person's final confirmation.
+
+It puts what the model was doing back under people's responsibility. Whether someone will actually hold that responsibility is for the adopting organization to decide.
 
 ---
 
-## Where this sits
-
-Where work can be undone, let the model act and verify the result; fixing it afterwards is cheaper. An irreversible execution is different. The result cannot be fixed after the fact, so the model has to move inside a declared frame, and the inputs have to be confirmed before execution (spec 1.1).
-
-### What already exists, and where this goes
-
-| | What it does | What it checks | Who judges |
-|---|---|---|---|
-| Alignment | Makes the AI judge well | The AI's dispositions and values, in training | The AI |
-| Governance | Settles who may act, and under what process | Risk tiers, approval paths, access, audit. Lately also a tool call just before execution, against policy: whether a transfer amount is within the limit | People, through declared policy |
-| Harness | Builds the environment around the model and limits what it can reach | Which tools and data the agent can reach, and whether inputs and outputs match their formats | People set the bounds; within them, the AI fills the arguments |
-| This specification | Checks that what people declared was met, and records it | Where the intent, each value and each condition of this call came from, and who confirmed it, just before execution | People. The AI does not judge |
-
-Loop engineering is a method that runs across these: act, verify, record, repeat. It checks the result after the act, and the checker is often another model. This checks before the act, and moves the criteria and the decision into a separate, declared model of execution and code. It is not a model of a business domain: each tool's own rules stay in the checklists its provider and the user write.
-
-Governance, harness and loop together come close to the domain modeling and finite-state machines of earlier systems. Which values are allowed, and which transitions are possible from which state, are fixed outside the model, and the model moves inside them. That frame is already being built. This does not replace it. It adds back one premise the frame cannot restore.
-
-### The broken premise
-
-The frame checks whether a value is allowed and whether a transition is possible. It does not check who set the value. It never had to: a person logged in and typed the values, so the input path was the proof of origin.
-
-With agents, the execution still runs under the user's session and permissions, and the audit log still says the user executed with this value. But the model wrote it. Nothing was tampered with, and the premise breaks anyway.
-
-So some wrong executions pass the whole frame. In [the reported Meta Muse case](./case-muse-marketplace.en.md), with "Allow Always" on, Muse agreed in the seller's name to the buyer's 8 to 10 p.m., and the buyer came to the seller's building while the seller was out. The permission was there, the format was right, no policy was broken. The seller had not set that time.
-
-Authority comes from ownership, not accuracy, and a model that answers for nothing cannot hold it (spec 2.1). The model writes the draft; the agent, the code around the model, checks it.
-
-### What this adds
-
-What login and direct input used to guarantee is checked again, for every execution. Three things are checked:
-
-- **Intent** — what, and when. Settled only from what the user said in this request.
-- **Values** — whether each value came from a declared source. If it came from the user's words, its place is checked against the original text.
-- **Conditions** — whether the provider's declared conditions and the user's limits were confirmed.
-
-Three rules:
+## Three rules
 
 - Every value and condition entering an execution is **checked against a declared source.** Not being prohibited is not a ground for execution.
 - **Where it came from is written into the record.** The source and the place in the original text are kept, so anyone other than the gate can check them again. Blocked executions and checks that did not run are recorded too.
@@ -79,41 +113,7 @@ The rules are declared by whoever holds the knowledge, not by one team for every
 
 **Rules left in a prompt are forgotten as the conversation grows, and gone when the conversation changes.** So these rules live in a checklist outside the model, and code does the counting.
 
-Security research asks where values come from as well. [CaMeL](https://arxiv.org/abs/2503.18813), [FIDES](https://arxiv.org/abs/2505.23643), [PACT](https://arxiv.org/abs/2605.11039) and [ROPE](https://arxiv.org/abs/2608.27496) track the origin of each argument and keep untrusted data out of sensitive arguments; some, like ROPE, go as far as requiring a confirmed origin. What differs here is that no attack is assumed. Without any attack, the model still fills in what is missing. This does not stop at blocking that blank; it sends it back to whoever can fill it, and it counts intent and conditions the same way as values.
-
-Not a new layer. It does for the owner of each value what the frame already does for the actor and the result.
-
-### What that gets you
-
-**It stops wrong executions.** A value whose source is not confirmed does not enter an execution. A value the model made up, or one it took from someone else's text, stays unconfirmed and comes back to the user as a blank (spec 5.2). Even a confirmed value is held if it exceeds the user's limit or the provider's condition.
-
-**It stops executions nobody asked for.** Only an execution unit the user stated can execute. Not being prohibited is not a ground (spec 0, 1.1).
-
-**It stops different executions.** The act is settled only from the user's words in this request, so an act the user did not name does not execute (gate 1). Going around a block or a failure by another tool or another path is not a continuation of the same request; it is a new execution, judged again from the start. Whether the act and the tool match, however, is not proven by code (spec 8.1).
-
-**It leaves a record, and the verdict reproduces.** Each value is recorded with its source and its place in the original text, so someone other than the gate can check it again. The verdict is a count made by code, so the same input gives the same verdict (spec 3.4).
-
-**It raises the execution rate.** Not the number of executions — it means a stopped execution reaches execution after checking. The purpose is not to block but to reach a state where execution is possible (spec 0.1). Questions do not multiply; they surface. Only what is missing comes back, as a list, so it can be filled in one go, and once the user sets a range, requests inside it execute without asking. Items that repeat become pre-set settings (spec 7.2).
-
-**It divides responsibility and makes it traceable.** Which checklist an empty slot belongs to is where the responsibility lies: a value points to the source integration, a condition to the provider's declaration, an intent to the conversation design (spec 7.1). Today, with no record, an anomaly is left blamed on the agent developer or the model. A decision record cannot be made after the incident.
-
-**It opens other ways to improve.** It shows what to fix without retraining the model. None of the three types needs a training budget (spec 7.1). The gate code stays the same as tools are added or models are swapped. Decision records become data by failure type, an input to model development (spec 7.2).
-
-[The case report](./case-muse-marketplace.en.md) maps this incident's message log onto the checklists and is explicit about what this gate would **not** have caught.
-
-### What it costs, and where it fits
-
-The work is not new. To make a call, a model already reads when to run, which act, which tool, the user's limits and the arguments. The gate takes those readings out as separate steps, each with where it was read; code rules on them and writes the record.
-
-The cost is in model calls. In the example, each turn the gate judged took about five more calls. These are the readings above: what a model does inside, turned into steps. They are counted as calls because the call's arguments are not taken as values (spec 5.2): the model reads once inside, and the gate asks again. Each blank the user had to fill took about three more. The provider's lines are translated once per tool definition and kept.
-
-Where it fits: executions that are hard to undo, such as a transfer, a payment, a door unlocked or a machine started (spec 1.1). It runs once per state change; a read such as a balance check need not go through it.
-
-Where it does not: control loops that run in milliseconds. The calls take seconds.
-
-The gate's model reads the user's words. Which model that is, and where it runs, is the adopting system's choice; it can differ from the agent's model (`adopt-example/connect.js` says where to split).
-
-Tested with eight models from two providers (Claude, OpenAI), twelve runs each on the example's scenarios: no wrong execution. A small model could not translate one of the provider's lines, and those runs stopped for definition repair. It also translated another line into a weaker check; a kept translation carries such a mistake until someone reads it. Not tested: banking, payments or physical systems.
+Security research asks where values come from as well. [CaMeL](https://arxiv.org/abs/2503.18813), [FIDES](https://arxiv.org/abs/2505.23643), [PACT](https://arxiv.org/abs/2605.11039) and [ROPE](https://arxiv.org/abs/2608.27496) track the origin of each argument and keep untrusted data out of sensitive arguments; some, like ROPE, go as far as requiring a confirmed origin. What differs here is that no attack is assumed. Without any attack, the model still fills in what is missing.
 
 ---
 
@@ -145,14 +145,7 @@ The lines below are checked after this tool is called and before it runs. Call i
 - `[Verify]` is the user's. A value the user did not give counts only once the user approves it.
 - `[Notice]` is told to the user and blocks nothing.
 
-A line without a label is like a prompt: it is recorded and blocks nothing. A line need not say how to ask. The model asks, and code holds what was answered.
-
-Two lines came from running real models:
-
-- **The second line, without a label.** A model that does not know this specification reads the labelled lines as conditions to meet before calling. So the description says, in a line of its own, that they are checked after the call (spec 4.2.1).
-- **"not a place read from the platform."** For a value the user can give and the system can also read, the line says whether the system's value counts too. Without it, the same line takes a different form each time it is translated (spec 4.2.1).
-
-Alignment and governance stay as they are, and each decides its own rules in its own layer. To apply one to a tool at execution, write it here as a line: a transfer limit from governance, or a principle from alignment such as "a home address is not disclosed when a public place serves the same purpose." It is then checked and recorded like any other. A rule for one user goes in that user's checklist; a rule for every tool goes in the principles the model is given, and, where it needs checking, in the provider checklist of each tool it concerns (spec 7.2).
+Alignment and governance stay as they are, and each decides its own rules in its own layer. To apply one to a tool at execution, write it here as a line. A rule for one user goes in that user's checklist; a rule for every tool goes in the principles the model is given, and, where it needs checking, in the provider checklist of each tool it concerns (spec 7.2).
 
 ## Who does what
 
@@ -162,7 +155,7 @@ Alignment and governance stay as they are, and each decides its own rules in its
 | Model | Translates the lines into a comparable form, asks the user, finds the answers in the user's words, and tells the user why it stopped |
 | System | Reads the facts from real APIs; code decides pass or fail and records it |
 
-From outside, a model's "I checked" cannot be told apart from a real check. So the model translates, asks, finds and tells, and code decides. Better models translate and ask better; the authority to decide does not move to them. Each line's translation is made once and recorded with every verdict, and a line that could not be translated stays unconfirmed and blocks the run.
+From outside, a model's "I checked" cannot be told apart from a real check. So the model translates, asks, finds and tells, and code decides.
 
 ---
 
@@ -184,21 +177,6 @@ Two gates. Neither produces a value or a justification, and neither executes —
 
 A search order, not a ranking by trustworthiness. `instruction` is an array of trust-labeled segments, not a string. Pass a string and the `instruction` source closes; nothing is confirmed from it. Untrusted text — a forwarded email, a tool result, a web page, or text pasted into the user's own message — cannot settle a value on its own. To use something from it, ask the user and take the answer back as `user_answer`. The labels are set by the adopting system when the message arrives, not by the model (spec 5.2).
 
-What comes out is a record, and the record is the point:
-
-```json
-{
-  "fields": [
-    { "name": "amount", "value": 500000, "status": "known",
-      "source": "instruction", "located_at": { "segment_index": 2, "span": [12, 19] } },
-    { "name": "to_account", "status": "unknown", "source": null }
-  ],
-  "unknown_count": 1,
-  "gate": { "unknown_fields": [{ "name": "to_account" }] },
-  "execution_decision": "ask_user"
-}
-```
-
 **You do not have to run all of it. Apply it only to irreversible executions, and only the parts that fit (spec 1.2).**
 
 ---
@@ -212,7 +190,7 @@ This file is the overview. **The specification is the standard; the adopt exampl
 | **The standard** | |
 | [**The specification**](./spec.en.md) · [ko](./spec.ko.md) | What counts as confirmed, who judges, what is recorded. The problems this works through are §2; the three checklists are §4; the slot states and sources are §5 |
 | **Applying it** | |
-| [**Adopt example**](./adopt-example/) | **Start here.** The files you keep to use this, when you build the agent and its tools together: your declaration of each tool (the rules in words), the connections to your own model, tools and data, and the flow the gate runs in. The gate judges and records (`judge-only.js`), and your agent executes from the record. A whole agent to run is there as a demonstration, and the MCP server connection as comments |
+| [**Adopt example**](./adopt-example/) | **Start here.** The files you keep to use this, when you build the agent and its tools together: your declaration of each tool (the rules in words), the connections to your own model, tools and data, and the gate as LangChain `createAgent` middleware (`middleware.js`). The gate judges and records (`judge-only.js`), and the tool runs from the record. A whole agent to run is there (`agent.js`), the same for an agent with a loop of its own (`judge-only-example.js`), and the MCP server connection as comments |
 | **The library** ([`execution-state-preflight.js`](./execution-state-preflight.js)) | What the adopt example runs: one file, no dependencies. Hook contracts, the record shape, and where it departs from the specification are in the source comments, beside the code they describe. **Pre-release:** being tested against real models; the API may still change |
 | **Why each part is there** | |
 | [**The argument, in short**](./model-reasons-agent-executes.en.md) | Why what the model makes up must not reach execution, the two methods, and how this differs from current practice. An essay, not a guide |
@@ -228,28 +206,26 @@ Start from [`adopt-example/`](./adopt-example/), with the library next to it.
 
 1. **Declare the tool** in [`tool.json`](./adopt-example/tool.json), an MCP tool definition: what it does, each rule on a labelled line, and the input schema.
 2. **Connect** your model, your tool and your system's data in [`connect.js`](./adopt-example/connect.js).
-3. **Judge each tool call before it runs**, from your agent's own loop, and execute from the record:
+3. **Put the gate in your agent** as LangChain `createAgent` middleware. Each tool call is judged before it runs; when the user has to answer, the call waits on `interrupt()`, and the tool runs with the record's arguments:
 
 ```js
-const { createJudge } = require("./judge-only");
-const judge = createJudge({ ask, measure, readToolDefinition, measurements, storage, userId });
+const { createAgent } = require("langchain");
+const { MemorySaver, Command } = require("@langchain/langgraph");
+const { preflightMiddleware, humanMessage } = require("./middleware");
+const connect = require("./connect");
 
-const r = await judge.run({ unitKey, conversation, toolCall, userChecklist });
-if (r.questions.length > 0) {
-  // show your model's words, then r.block exactly as it is; add the reply to the conversation; run again
-} else {
-  // readyToExecute, notify and callTool are yours: judge-only-example.js has one of each
-  const record = (await storage.list(r.key)).at(-1);       // the record this round wrote
-  if (readyToExecute(record, toolCall.name)) {              // your own reading of it
-    const { toShow } = await judge.notices(record);         // the provider's notices not shown with a question
-    if (toShow.length) await notify(toShow.map(d => d.description));   // told before the tool runs
-    await callTool(record.tool_call.name, record.call_arguments);
-    await judge.recordResult(record, { ok: true });
-  } else {
-    await judge.recordResult(record, { executed: false, why: "not ready" });   // your decision, recorded too
-  }
+const agent = createAgent({ model, tools, checkpointer: new MemorySaver(), middleware: [preflightMiddleware({ connect })] });
+const config = { configurable: { thread_id: "conversation-1" } };    // one per conversation
+
+let state = await agent.invoke({ messages: [humanMessage(connect.labelInput({ typed }))] }, config);
+const asked = state.__interrupt__?.[0]?.value;                        // { type: "preflight_question", message, block, questions, notices }
+if (asked) {
+  // show asked.message exactly as it is, or render answerSchema(asked.questions) as a form
+  state = await agent.invoke(new Command({ resume: { typed: "yes" } }), config);   // or the form's answers
 }
 ```
+
+[`agent.js`](./adopt-example/agent.js) wires this whole, with your tools from `tool.json`. An agent with a loop of its own uses the gate directly instead ([`judge-only-example.js`](./adopt-example/judge-only-example.js)).
 
 To watch a whole run first, with stand-in models and no API key:
 
@@ -270,13 +246,13 @@ cd adopt-example
 npm install
 npm install --no-save @langchain/anthropic@1.5.13   # or your provider's package
 export ANTHROPIC_API_KEY=...                        # the provider's package reads its key from the environment
-MODEL=anthropic:<model-name> node judge-only-example.js "Set up the pickup for LST-2291, 2pm this Saturday, Hongdae station lockers."
+MODEL=anthropic:<model-name> node agent.js "Set up the pickup for LST-2291, 2pm this Saturday, Hongdae station lockers."
 ```
 
 As shipped, nothing is connected: the `[Required]` lines are unverified, and nothing runs. The run asks
 nothing and ends by saying it did not run and which lines could not be checked. That is the gate
 failing closed, not a fault: fill in `MEASUREMENTS` and `TOOLS` in `connect.js` and it asks and executes.
-The eight things that stay yours, and the whole flow, are in the [adopt example](./adopt-example/#4-use-it-your-agent-executes-judge-onlyjs).
+What stays yours, and the whole flow, are in the [adopt example](./adopt-example/).
 
 <details>
 <summary>Calling the library directly</summary>
@@ -325,27 +301,6 @@ if (state.execution_decision === "execute") {
 ```
 
 </details>
-
----
-
-## What this doesn't do
-
-The library judges and records. What surrounds it belongs to the system that adopts it, and is filled in there:
-
-- **Masking.** Values are recorded as given. Hide what must not be stored or shown, in the storage adapter.
-- **Integrity of what it is handed.** Prior records and stored settings are taken as they come. Keep them where the agent cannot rewrite them (spec 8.2).
-- **Trust labels.** Set on arrival by the system, never by the model (spec 5.2).
-- **Retry.** A failed call is recorded, not retried.
-- **Which tools go through it.** No per-tool risk weighting. Apply it to irreversible executions (spec 1.1).
-- **Locking.** Two runs of one unit at the same time are not kept apart.
-- **Scheduling.** A call for later is judged, asked about while the user is there, and recorded as deferred with what to run it on (`deferred_input`). Running it again when it is due is the adopting system's: its scheduler calls the gate again with that input, and the gate judges it as a call to make now.
-- **Storing settings, consent included.** How a value comes to be kept for next time, and how the user agrees to it, is the adopting system's: a settings page, a "remember this?" in the agent, or a tool of its own, which can go through the gate like any other. The gate only reads. A value counts as a setting only when the store says the user approved it, and who approved it, when and where; a value a model remembered on its own is shown to the user as a candidate (spec 5.2). A one-use setting (spec 3.5, 5.2) is the adopting system's to retire: the gate reads whatever the store returns, so a setting meant for one execution is taken out of the store once the record shows it was used.
-- **Execution across a boundary.** The gate writes the record; the executing party reads it and decides (spec 3.5). The examples do both in one process.
-- **What the model is told.** That the labeled lines are checked after the call, and what the gate said, as the call's result (spec 4.2.1, 6.2). Without it a model holds back the call, and the gate has nothing to judge.
-
-One is a limit of the library itself:
-
-- **Flat arguments assumed.** Branches at the top of the input schema are read; a value nested inside an argument is not a slot of its own.
 
 ---
 
