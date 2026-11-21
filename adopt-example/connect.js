@@ -77,10 +77,22 @@ const textOf = res => (typeof res.content === "string" ? res.content
 
 // The gate's prompts ask for JSON. A reply that is not JSON is an error: the gate treats a failed
 //   extraction as "not found", never as a value.
-async function ask(_model, system, user) {
-  const m = await model();
-  const res = await m.invoke([{ role: "system", content: system }, { role: "user", content: user }]);
-  return readJsonReply(textOf(res));
+async function ask(_model, system, user, hook, schema) {
+  return askWith(await model(), system, user, hook, schema);
+}
+// The answer's shape, given with each call (judge-only.js), is the model's to keep: LangChain's
+//   withStructuredOutput hands it to the provider (Anthropic: a tool the model must call) and reads the
+//   answer back. Only the shape: what the values say is the gate's to check. An answer the provider
+//   could not read in that shape is an error, with what the model wrote kept in it: the gate treats the
+//   failure as unconfirmed, and the text says why.
+async function askWith(m, system, user, hook, schema) {
+  if (!schema || typeof schema !== "object") throw new Error(`no shape given for the model's answer (${hook ?? "ask"})`);
+  const res = await m.withStructuredOutput(schema, { name: hook ?? "answer", includeRaw: true })
+    .invoke([{ role: "system", content: system }, { role: "user", content: user }]);
+  if (res?.parsed && typeof res.parsed === "object") return res.parsed;
+  const t = (res?.raw ? textOf(res.raw) : "") || JSON.stringify(res?.raw?.tool_calls ?? null);
+  const raw = JSON.stringify(t.length > 300 ? t.slice(0, 300) + " …" : t);
+  throw new Error(`the model's answer was not in the shape asked${res?.parsingError ? ` (${res.parsingError.message ?? res.parsingError})` : ""}: ${raw}`);
 }
 
 // The model's plain text, for what is words and not data: the words of a question to the user.
@@ -88,34 +100,6 @@ async function say(_model, system, user) {
   const m = await model();
   const res = await m.invoke([{ role: "system", content: system }, { role: "user", content: user }]);
   return textOf(res);
-}
-
-// The JSON object in a model's answer: the last whole object in it. A model may think aloud before its
-//   answer, and its thinking may hold a piece of JSON of its own ("the schema should be {"const": true}"),
-//   so the text from the first { to the last } is not one object. Each object is found by matching its
-//   braces outside strings; the last one that parses is the answer. An answer with none is an error, with
-//   what the model wrote kept in it: the gate treats the failure as unconfirmed, and the text says why.
-function readJsonReply(text) {
-  const t = String(text ?? "");
-  const raw = () => JSON.stringify(t.length > 300 ? t.slice(0, 300) + " …" : t);
-  const found = [];
-  let lastError = null;
-  for (let i = t.indexOf("{"); i >= 0 && i < t.length; ) {
-    let depth = 0, inString = false, end = -1;
-    for (let j = i; j < t.length; j++) {
-      const ch = t[j];
-      if (inString) { if (ch === "\\") j++; else if (ch === '"') inString = false; continue; }
-      if (ch === '"') inString = true;
-      else if (ch === "{") depth++;
-      else if (ch === "}" && --depth === 0) { end = j; break; }
-    }
-    if (end < 0) break;
-    try { found.push(JSON.parse(t.slice(i, end + 1))); i = t.indexOf("{", end + 1); }
-    catch (e) { lastError = e.message; i = t.indexOf("{", i + 1); }
-  }
-  if (found.length > 0) return found[found.length - 1];
-  if (lastError !== null) throw new Error(`the model's JSON could not be read (${lastError}): ${raw()}`);
-  throw new Error(`the model did not answer in JSON: ${raw()}`);
 }
 
 // The agent's model, with the server's tools bound as they are listed: name, description, input
@@ -328,6 +312,6 @@ const checkpointer = new MemorySaver();
 // chatModel: the agent's model itself, for LangChain's createAgent (agent.js); chat is the same model,
 //   called one turn at a time (judge-only-example.js).
 module.exports = { ask, say, chat, chatModel: model, listTools, readToolDefinition, measure, labelInput, notify, callTool, store, readPreSet, checkpointer,
-                   MEASUREMENTS, TOOLS, MODEL_NAME, readToolFile, readJsonReply, modelOptions };
+                   MEASUREMENTS, TOOLS, MODEL_NAME, readToolFile, askWith, modelOptions };
 // With the MCP connection above uncommented:
 //   listTools: mcpListTools, readToolDefinition: mcpReadToolDefinition, callTool: mcpCallTool

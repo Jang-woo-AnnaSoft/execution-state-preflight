@@ -159,18 +159,46 @@ const FORM_KINDS = [
 ];
 
 /**
- * @param ask   The model call: (model, system, user, hook) → parsed JSON. connect.js supplies it.
+ * @param ask   The model call: (model, system, user, hook, shape) → the answer, in that shape ([ANSWER SHAPES]).
+ *              connect.js supplies it.
  * @param model The model's name, recorded on each translation it writes.
  * @param measure, readToolDefinition   connect.js's ports: the gate calls them itself.
  * @param measurements  The names connect.js can measure. A form may name only these.
  * @param unitKey  The conversation's id (the graph's thread). With the user and the tool, it keys the unit.
  */
+// [ANSWER SHAPES] The shape of each answer the gate asks a model for, as its prompt states it ("Reply as
+//   …"), handed with the call (connect.ask: withStructuredOutput). Only the shape: keys, types, which
+//   keys are required. Whether a value fits (a slot that exists, a segment that is the user's, a quote
+//   that is there) is the gate's own check, as before. Where the prompt leaves a part open (a form's
+//   compare, one of many kinds), so does the shape.
+const STR = { type: "string" }, INT = { type: "integer" };
+const QUOTE_AT = { type: "object", properties: { quote: STR, segment_index: INT }, required: ["quote", "segment_index"] };
+const SHAPES = {
+  when_case: { type: "object", properties: { when_case: { type: ["string", "null"] } }, required: ["when_case"] },
+  action_name: { type: "object", properties: { action_name: { type: ["string", "null"] }, segment_index: INT }, required: ["action_name"] },
+  tool_match: { type: "object", properties: { approved: { type: "boolean" }, reason: STR }, required: ["approved", "reason"] },
+  comparable_form: { type: "object", required: ["form"], properties: {
+    form: { type: ["object", "null"], properties: { compare: { type: "object" }, constrains: { type: "array", items: STR } }, required: ["compare"] } } },
+  user_conditions: { type: "object", required: ["conditions"], properties: { conditions: { type: "array", items: {
+    type: "object", properties: { quote: STR, segment_index: INT, constrains: { type: "array", items: STR }, withdrawn_by: QUOTE_AT },
+    required: ["quote", "segment_index"] } } } },
+  propose_value: { type: "object", properties: { value: {} }, required: ["value"] },
+  replies: { type: "object", required: ["replies"], properties: { replies: { type: "array", items: {
+    type: "object", properties: { target: STR, answer: { type: "boolean" }, none: STR, choice: INT, quote: STR, segment_index: INT },
+    required: ["target"] } } } },
+  question: { type: "object", properties: { message: STR }, required: ["message"] },
+  stop: { type: "object", properties: { message: STR }, required: ["message"] },
+};
+// Extraction: one entry for each of the tool's fields, found or not.
+const extractionShape = names => ({ type: "object", required: names, properties: Object.fromEntries(names.map(n => [n, {
+  type: "object", properties: { found: { type: "boolean" }, value: STR, segment_index: INT }, required: ["found"] }])) });
+
 function createHooks({ model = "model", ask, runId = "run", unitKey = null, meter, measure, readToolDefinition, measurements = [] }) {
   if (typeof ask !== "function") throw new Error("createHooks: ask is required");
-  async function call(system, user, hook) {
+  async function call(system, user, hook, schema = SHAPES[hook]) {
     const entry = { hook, ok: false };
     meter?.calls?.push(entry);
-    const json = await ask(model, system, user, hook);
+    const json = await ask(model, system, user, hook, schema);
     entry.ok = true;
     return json;
   }
@@ -213,7 +241,7 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
       "Words that point to a value given elsewhere are not the value: \"my usual spot\", \"same place as last " +
       "time\", \"the usual\". For such a field report {\"found\": false}; the value is looked up where it is kept.\n\n" +
       `Reply as {${Object.keys(props).map(n => `"${n}": ...`).join(", ")}}`;
-    return call(system, user, "extraction");
+    return call(system, user, "extraction", extractionShape(Object.keys(props)));
   }
 
   return {
@@ -545,7 +573,7 @@ async function writeQuestion({ ask, say, model = "model" }, { questions, convers
       if (t && t.startsWith("{")) { try { const o = JSON.parse(t); if (words(o?.message)) return words(o.message); } catch {} }
       return t;
     }
-    const out = await ask(model, `${QUESTION_SYSTEM} Return JSON only.`, `${user}\n\nReply as {"message": "..."}`, "question");
+    const out = await ask(model, `${QUESTION_SYSTEM} Return JSON only.`, `${user}\n\nReply as {"message": "..."}`, "question", SHAPES.question);
     return words(out?.message);
   } catch { return null; }
 }
@@ -618,7 +646,7 @@ async function writeStop({ ask, say, model = "model" }, { record, conversation }
       text = words(await say(model, `${STOP_SYSTEM} Write only the message itself.`, user, "stop"));
       if (text && text.startsWith("{")) { try { const o = JSON.parse(text); if (words(o?.message)) text = words(o.message); } catch {} }
     } else {
-      text = words((await ask(model, `${STOP_SYSTEM} Return JSON only.`, `${user}\n\nReply as {"message": "..."}`, "stop"))?.message);
+      text = words((await ask(model, `${STOP_SYSTEM} Return JSON only.`, `${user}\n\nReply as {"message": "..."}`, "stop", SHAPES.stop))?.message);
     }
   } catch { text = null; }
   return { message: text ?? STOP_FALLBACK, facts };
@@ -754,5 +782,5 @@ function createJudge({ ask, measure, readToolDefinition, measurements = [], stor
 
 module.exports = {
   createJudge, judgeRound, writeResult, noticesFor, writeQuestion, writeStop, stopFacts, toolsForModel, messagesFor, afterCall, createHooks, createStorage, checkAgainst, segmentsOf, FORM_KINDS, WHEN_CASES,
-  createPreflight, labelledLines, readTranslatedForms, renderValue, answerSchema, formSegments,
+  createPreflight, labelledLines, readTranslatedForms, renderValue, answerSchema, formSegments, SHAPES, extractionShape,
 };
