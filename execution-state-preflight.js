@@ -43,7 +43,7 @@
  *   //   "untrusted" segments, so a value inside them is asked about, not settled. The caller sets the
  *   //   labels when the message arrives, before the model sees it; the model never sets them.
  *   // The gate trusts the label and cannot check it. A carried segment labeled "user" settles its values
- *   //   as instruction (hooks-example/crosscheck, case T01). If the input path loses the distinction,
+ *   //   as instruction (tests/library/crosscheck, case T01). If the input path loses the distinction,
  *   //   so does the label.
  * @property {string} [origin]           // Where an untrusted segment came from (e.g. "gmail:msg_881", "pasted",
  *                                       //   "attachment:invoice.pdf"). For records and questions.

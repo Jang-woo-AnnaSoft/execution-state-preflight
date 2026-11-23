@@ -186,8 +186,7 @@ This file is the overview. **The specification is the standard; the adopt exampl
 | **The library** ([`execution-state-preflight.js`](./execution-state-preflight.js)) | What the adopt example runs: one file, no dependencies. Hook contracts, the record shape, and where it departs from the specification are in the source comments, beside the code they describe. **Pre-release:** being tested against real models; the API may still change |
 | **Why each part is there** | |
 | [**The argument, in short**](./model-reasons-agent-executes.en.md) | Why what the model makes up must not reach execution, the two methods, and how this differs from current practice. An essay, not a guide |
-| [**Hook examples**](./hooks-example/) | What has to be declared, and how much of this you have to keep, each shown by putting a piece in and taking it out |
-| [**Provider checklist example**](./provider-checklist-example/) | The same tool with every rule moved out of code into declarations, the provider's checklist as labelled lines in a standard MCP description, and what that changes, run against the hook examples on the same inputs |
+| [**Tests**](./tests/) | The library's tests and the adopt example's, with stand-in models (`npm run check`); one run with a real model; the harness and raw results of the case report's repeated runs |
 | [**A case report**](./case-muse-marketplace.en.md) | A reported incident mapped onto the checklists |
 
 ---
@@ -223,7 +222,7 @@ To watch a whole run first, with stand-in models and no API key:
 
 ```
 cd adopt-example && npm install
-cd ../provider-checklist-example
+cd ../tests/adopt
 node trial-real-model.js --stub --id g1-01 --reply yes
 ```
 
@@ -258,7 +257,7 @@ A tool's input schema defines the shape of the values it needs. It does not say 
 
 So, a proposal for tool providers: declare conditions in the `description`, each on a labelled line ([Writing the provider's checklist](#writing-the-providers-checklist)). A hint the model may or may not follow becomes a condition checked before execution. It needs no protocol change and can be done today (spec 4.2.1).
 
-The first version of the argument was posted as [If unsure, ask. Never guess. — AI Agent Pre-Execution Checklist](https://discuss.huggingface.co/t/if-unsure-ask-never-guess-ai-agent-pre-execution-checklist/176632). The discussion continues in [Misalignment is not required for an agent to act without authorization](https://discuss.huggingface.co/t/misalignment-is-not-required-for-an-agent-to-act-without-authorization/180541) and [We gave AI a trust we never gave people — The third axis, after capability and permission](https://discuss.huggingface.co/t/we-gave-ai-a-trust-we-never-gave-people-the-third-axis-after-capability-and-permission/183807/), where a team running its own agent is cross-checking the library against its cases ([`hooks-example/crosscheck/`](./hooks-example/crosscheck/)).
+The first version of the argument was posted as [If unsure, ask. Never guess. — AI Agent Pre-Execution Checklist](https://discuss.huggingface.co/t/if-unsure-ask-never-guess-ai-agent-pre-execution-checklist/176632). The discussion continues in [Misalignment is not required for an agent to act without authorization](https://discuss.huggingface.co/t/misalignment-is-not-required-for-an-agent-to-act-without-authorization/180541) and [We gave AI a trust we never gave people — The third axis, after capability and permission](https://discuss.huggingface.co/t/we-gave-ai-a-trust-we-never-gave-people-the-third-axis-after-capability-and-permission/183807/), where a team running its own agent is cross-checking the library against its cases ([`tests/library/crosscheck/`](./tests/library/crosscheck/)).
 
 Contact: [hello@anna.software](mailto:hello@anna.software)
 

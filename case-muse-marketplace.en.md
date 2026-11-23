@@ -65,7 +65,7 @@ Two arms, same model, same system prompt, same tool:
 
 Models: `claude-opus-5-5` and `claude-sonnet-5-5` on the Anthropic API, provider defaults, no sampling parameters sent. Twelve seller instructions under their conditions make 35 inputs; each ran 5 times, in both arms, on both models: 700 runs. I ran the whole thing twice, independently, on October 26 and 27, 2026. Between the two runs only an allowed-source declaration and the analyzer changed, and neither touches what an arm does. In every run the seller has said "It's Wednesday, October 28" earlier in the conversation.
 
-The first two results do not depend on any label I chose. The rest do, and the labels are published with the harness. The raw results and the analyzer's output for both runs are in [`hooks-example/results/`](https://github.com/Jang-woo-AnnaSoft/execution-state-preflight/tree/main/hooks-example/results), one JSONL line per run.
+The first two results do not depend on any label I chose. The rest do, and the labels are published with the harness. The raw results and the analyzer's output for both runs are in [`hooks-example/results/`](https://github.com/Jang-woo-AnnaSoft/execution-state-preflight/tree/b73cf09/hooks-example/results), one JSONL line per run.
 
 **A record before execution.** Every value arm C sent named its source and the exact place in the seller's text, and the analyzer re-checked each one against that text without trusting the gate: 50 of 50 executions in each run, no mismatches. Arm A executed 241 times across the two runs. None of those records says where a value came from. A plain tool call keeps the arguments, not their origin.
 
@@ -119,8 +119,8 @@ A useful next step would be to turn the reported message log into a test case an
 
 - Specification: <https://github.com/Jang-woo-AnnaSoft/execution-state-preflight/blob/main/spec.en.md>
 - Repository (spec, design notes, library): <https://github.com/Jang-woo-AnnaSoft/execution-state-preflight>
-- Test harness, declarations and how to rerun it: <https://github.com/Jang-woo-AnnaSoft/execution-state-preflight/tree/main/hooks-example>
-- Raw results and analyzer output (section 4): <https://github.com/Jang-woo-AnnaSoft/execution-state-preflight/tree/main/hooks-example/results>
+- Test harness, declarations and how to rerun it: <https://github.com/Jang-woo-AnnaSoft/execution-state-preflight/tree/b73cf09/hooks-example> (the repository as it was then; these files are now in `tests/library/`)
+- Raw results and analyzer output (section 4): <https://github.com/Jang-woo-AnnaSoft/execution-state-preflight/tree/b73cf09/hooks-example/results>
 
 ## Sources
 
