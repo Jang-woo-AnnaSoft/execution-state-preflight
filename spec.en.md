@@ -506,7 +506,7 @@ With authority outside the model, decisions and accountability stay with the par
 ### 8.2 Forged records and hook implementation
 
 - Separating the verdict from execution exposes an execution without a verdict as an execution without grounds. It does not expose an execution grounded on a forged decision record.
-- This specification does not define how hooks are implemented. If a hook calls a model to reach a verdict, that verdict is probabilistic, and the gate does not judge again what the hook judged. What the hook pointed to, it does compare with what is at that place (6.3).
+- What a hook points to, the gate compares with what is at that place (6.3): a quoted answer must be in the user's words, and a value must have its declared form and source. What a hook reports without pointing anywhere, such as a measurement, the gate takes as reported. How hooks are implemented is not defined by this specification; if a hook calls a model to make such a report, that report is probabilistic.
 - Mitigation — keep the decision record append-only, somewhere the agent process cannot rewrite. The store's integrity belongs to the adopting system; this specification does not enforce it.
 
 ### 8.3 The gap between check and execution
@@ -518,9 +518,8 @@ With authority outside the model, decisions and accountability stay with the par
 
 ### 8.4 Conflicts between requests and conditions
 
-- A user may try to lift a condition the provider prohibits. This specification does not adjudicate that conflict.
-- A provider condition does not accept a user answer as a source, so the user's request does not change the comparison. The condition stays confirmed and unmet (a hold), and who declared what and who requested what is recorded.
-- Whether to allow the request is decided by a regulator's rules or the adopting system's policy. This specification provides the record needed for that decision. When the agreement changes, the changed rule becomes a line in a checklist.
+- A provider's condition is not lifted by a user's request. It does not accept a user answer as a source, so the request does not change the comparison: the condition stays confirmed and unmet (a hold), the call does not execute, and who declared what and who requested what is recorded.
+- Whether to grant the request as an exception is not ruled on by this specification. A regulator's rules or the adopting system's policy decide it, with the record this specification provides. When the agreement changes, the changed rule becomes a line in a checklist.
 
 ### 8.5 Sub-executions inside a tool
 
