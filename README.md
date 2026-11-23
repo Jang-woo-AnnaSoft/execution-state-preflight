@@ -33,6 +33,8 @@ Such incidents are often classed as "the model misjudged". The precise question 
 
 Everyday requests leave blanks the same way. "Send this to the team lead tomorrow morning" does not say which team lead, or what time; when the model guesses wrong, it is called the user's vague instruction. Which blanks belong to whom is in [the essay's appendix](./model-reasons-agent-executes.en.md#blanks-that-are-called-user-error).
 
+Agents often do not stop when refused. They ask again in other words, or take another route to the same result ([examples](./model-reasons-agent-executes.en.md#a-block-taken-as-a-problem-to-solve)).
+
 ## What this is
 
 A part of the harness, the code around the model that limits what an agent executes. What it proposes is a different scope, different owners of the rules, and a different way to write them.
