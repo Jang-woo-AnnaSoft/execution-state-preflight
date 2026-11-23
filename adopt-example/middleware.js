@@ -11,6 +11,7 @@
  *                       { responseSchema: answerSchema(questions) }), then judged again with the answer
  *   ready     the tool runs with the record's call_arguments, not the model's arguments (spec 3.5)
  *   not ready the user is told why (writeStop), as the call's result with status "error"
+ *   either    the result starts with what the user was asked and answered in the call (withExchange)
  *
  * Resume with Command({ resume }): the form's answers ({ "value:time": true }), MCP elicitation's
  * { action, content }, or words typed ({ typed: "yes" }). Declined, cancelled or empty: no answer. The
@@ -22,7 +23,7 @@
 const { createMiddleware, ToolMessage, HumanMessage, AIMessage } = require("langchain");
 const { interrupt, Command } = require("@langchain/langgraph");
 const { z } = require("zod");
-const { createJudge, writeQuestion, writeStop, answerSchema, afterCall } = require("./judge-only");
+const { createJudge, writeQuestion, writeStop, answerSchema, afterCall, messagesFor } = require("./judge-only");
 const { whyNotReady } = require("./judge-only-example");   // the executing side's own reading of the record
 const defaultConnect = require("./connect");
 
@@ -55,7 +56,9 @@ function segmentsFor(messages, calls, labelMessage) {
       if (t) out.push({ trust: "assistant", text: t });
       for (const tc of m.tool_calls ?? []) if (Array.isArray(calls[tc.id])) out.push(...calls[tc.id]);
     } else if (ToolMessage.isInstance(m)) {
-      out.push(m.tool_call_id in calls ? { trust: "assistant", text: textOf(m) } : { trust: "untrusted", text: textOf(m) });
+      const own = m.tool_call_id in calls;
+      const text = own && typeof m.additional_kwargs?.preflight_result === "string" ? m.additional_kwargs.preflight_result : textOf(m);
+      out.push(own ? { trust: "assistant", text } : { trust: "untrusted", text });
     }
   });
   return out;
@@ -66,6 +69,26 @@ const NOT_ANSWERED = "Not run, and nothing has been sent: the user did not answe
 const NOT_RUN = "Not run. The user was told:";
 const RAN_WITH = "Note: the system ran this call with the values the user confirmed, not the arguments in your " +
   "message. Do not issue your original call again. Executed:";
+
+// What the user was asked and answered inside a call, put before the call's result. The agent's model does
+//   not see these otherwise: a real model (Opus 5.5), told only "Executed: …", told the seller "You didn't
+//   give me that time." Like LangChain's own middleware, which puts the reviewer's words in the result.
+//   Answers are written as messagesFor writes them. A question left without an answer is the result's own.
+//   The text without them is kept (preflight_result): the gate reads the answers from preflightCalls.
+const ASKED = "The system asked the user:";
+const ANSWERED = "The user answered:";
+function withExchange(message, mine) {
+  const said = [...mine];
+  if (said.at(-1)?.after_call) said.pop();
+  if (said.length === 0 || !ToolMessage.isInstance(message)) return message;
+  const lines = said.map(s => (s.after_call ? `${ASKED}\n${s.text}` : `${ANSWERED} ${messagesFor([s])[0]?.content ?? ""}`));
+  const result = textOf(message);
+  const head = lines.join("\n");
+  return new ToolMessage({ ...message,
+    content: typeof message.content === "string" || !Array.isArray(message.content)
+      ? `${head}\n\n${result}` : [{ type: "text", text: `${head}\n\n` }, ...message.content],
+    additional_kwargs: { ...(message.additional_kwargs ?? {}), preflight_result: result } });
+}
 
 // gated(name): which tools are judged. All of them, unless you say otherwise.
 // userChecklist: the user's standing settings, already confirmed by them (spec 4.4). Or per run, in the
@@ -103,7 +126,7 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
       const mine = [];
       const last = { n: (request.state?.preflightLast?.n ?? 0) + 1, tool_call_id: toolCall.id, name: toolCall.name };
       const ended = outcome => ({ preflightCalls: { ...calls, [toolCall.id]: mine }, preflightLast: { ...last, ...outcome } });
-      const done = (message, outcome) => new Command({ update: { messages: [message], ...ended(outcome) } });
+      const done = (message, outcome) => new Command({ update: { messages: [withExchange(message, mine)], ...ended(outcome) } });
       const reply = (content, status) => new ToolMessage({ content, name: toolCall.name, tool_call_id: toolCall.id, status });
 
       // LangGraph runs this node again from the top when it resumes. Each judging step is kept, in order,
@@ -184,7 +207,7 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
         : new ToolMessage({ ...message, content: `${RAN_WITH} ${toolCall.name} with arguments ${JSON.stringify(args)}.\n\nTool response:\n${textOf(message)}` });
       if (ToolMessage.isInstance(result)) return done(shown, outcome);
       return new Command({ ...result, update: { ...result.update, ...ended(outcome),
-        messages: (result.update?.messages ?? []).map(m => (m === message ? shown : m)) } });
+        messages: (result.update?.messages ?? []).map(m => (m === message ? withExchange(shown, mine) : m)) } });
     },
   });
 }
