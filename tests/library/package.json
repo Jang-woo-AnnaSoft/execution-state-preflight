@@ -1,0 +1,26 @@
+{
+  "name": "execution-state-preflight-tests-library",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Offline tests of execution-state-preflight.js, and the repeat-run experiment of the Muse marketplace case",
+  "main": "runner.js",
+  "scripts": {
+    "declarations": "node declaration-test.js",
+    "check": "node declaration-test.js && node declared-checks-test.js && node policy-test.js && node selftest.js && node provider-test.js && node gate-test.js && node value-source-test.js && node provider-conditions-test.js && node payment-limit-test.js && node crosscheck/runner-test.js",
+    "selftest": "node selftest.js",
+    "providertest": "node provider-test.js",
+    "gatetest": "node gate-test.js",
+    "valuetest": "node value-source-test.js",
+    "conditiontest": "node provider-conditions-test.js",
+    "paymenttest": "node payment-limit-test.js",
+    "models": "node runner.js --check --models opus,sonnet --date said",
+    "smoke": "node runner.js --models opus,sonnet --arms A,C --date said --repeats 1",
+    "run1": "node runner.js --models opus,sonnet --arms A,C --date said --repeats 5",
+    "policy": "node policy-test.js",
+    "crosscheck": "node crosscheck/run_crosscheck.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "*"
+  },
+  "license": "SEE LICENSE IN ../LICENSE.md"
+}

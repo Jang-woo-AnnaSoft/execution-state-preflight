@@ -1,0 +1,508 @@
+"use strict";
+
+/**
+ * Arm C hooks for execution-state-preflight.js.
+ *
+ * Six hooks are required. Four are thin because this experiment has one task
+ * and one tool. Two do real work and are the ones to read.
+ *
+ * DISCLOSED SIMPLIFICATIONS (these belong in the published write-up):
+ *   1. confirmToolNameMatchesIntent always approves. There is one tool, so
+ *      there is nothing to choose between. Spec 8.1 says tool selection is not
+ *      verified by code anyway; this experiment does not test it.
+ *   2. (no longer a simplification) userChecklist is wired. The limits the seller
+ *      states in group 2 are declared as items and compared by the hook below.
+ *      The first version left it empty and called that a scope choice — which was
+ *      wrong. verifyUserChecklistItem could not see the resolved fields, so an item
+ *      constraining a slot was not implementable. The library now hands the hook
+ *      ctx.fields, and an item whose slot is still UNKNOWN is pending_on_slot
+ *      rather than a question.
+ *   3. Several optional hooks run on the library's defaults, and the live list is
+ *      preflight.unsafeDefaults, read at runtime rather than copied here — a count
+ *      written into a comment goes stale the next time the library gains a hook.
+ *      It is written into every arm C record, so the published runs carry on their
+ *      face whichever ones were unwired. The experiment measures the value gate, so
+ *      field policy and the provider conditions are absent. Payload validation IS
+ *      wired since library 1.16, where an unwired validator reads as unverified and
+ *      sends the run to definition_repair instead of passing silently: the whole
+ *      argument object is checked against tool.js's flat schema (validatePayload).
+ *      validateFieldSchema IS wired, for each property's type and for the one format tool.js declares (time is
+ *      an ISO 8601 datetime with an offset). It was left out at first on the
+ *      reasoning that the experiment measures the value gate, and the first smoke
+ *      run showed why that was wrong: with no format check the value gate sent
+ *      "2pm this Saturday" to a datetime slot. A span that is real is not yet a
+ *      value of the declared kind.
+ *      getAllowedSources IS wired: buyer_contact may come only from measured_data
+ *      (tool.js ALLOWED_SOURCES). isSettledAtExecution IS wired: time and location
+ *      are values settled at execution time (SETTLED_AT_EXECUTION), so the
+ *      library lets a measurement settle them only when the seller declared a
+ *      range for them (spec 3.3, 4.5). Every other slot permits all five. The cost: a contact the user types in the instruction is
+ *      not consulted, and a conflict between it and the measurement is not
+ *      recorded. No instruction here states a contact that contradicts the
+ *      measured one.
+ *   4. spanSupportsValue is wired. Its contract asks the hook to judge whether
+ *      the span states the value FOR THE SLOT, and equality cannot: "Nothing after
+ *      8pm" contains a time and states none. ONE case is decided deterministically,
+ *      and since library 1.16 by the library, not here: text inside the wording of
+ *      a limit the seller declared (a user checklist item's stated_as) for that slot
+ *      is not a value (decision f, after the first said smoke; [LIMIT WORDING]).
+ *      Everything else is still equality, with the role pushed into the extraction
+ *      prompt ("A LIMIT IS NOT A VALUE"): a limit the seller stated but nobody
+ *      declared as an item, an example, a negation.
+ *      What the wiring also adds is the derived datetime: the date resolver
+ *      (datetime.js) turns the span plus the date the seller stated plus the
+ *      measured year and zone into a datetime, and names all of them.
+ *
+ * NOT a simplification: the span check is the library's, through spanSupportsValue.
+ * This hook does not pre-check a claim: it finds the quote in the segment the model
+ * named and passes the claim on, so a claim the gate refuses is recorded as
+ * rejected rather than as no report.
+ */
+
+const { squash, violatesEvening, violatesPublicPlace, violatesStation } = require("./normalize");
+const { ALLOWED_SOURCES, SETTLED_AT_EXECUTION, FIELD_FORMATS } = require("./tool");
+const { resolve: resolveDatetime, ISO_DATETIME, placeWindow, outsideWindow } = require("./datetime");
+
+const WHEN_CASES = ["immediate", "scheduled", "conditional", "recurring"];
+
+/** Join only the segments the user actually typed. */
+// Where a quoted value sits in a segment's text: the first exact occurrence, else the first one that
+//   differs only in case (the gate's comparison folds case). null when it is not there.
+function locateQuote(text, quote) {
+  if (typeof text !== "string" || typeof quote !== "string" || quote === "") return null;
+  let at = text.indexOf(quote);
+  if (at < 0) {
+    const lower = text.toLowerCase().indexOf(quote.toLowerCase());
+    if (lower >= 0 && text.slice(lower, lower + quote.length).toLowerCase() === quote.toLowerCase()) at = lower;
+  }
+  return at >= 0 ? [at, at + quote.length] : null;
+}
+
+function trustedText(instruction) {
+  return (instruction ?? [])
+    .filter(s => s?.trust === "user")
+    .map(s => s.text)
+    .join("\n");
+}
+
+/**
+ * @param adapter  Provider adapter (providers.js). Same two operations for every
+ *                 company, so these hooks are identical across models.
+ * @param ask      Optional injection point, mainly for tests. Defaults to the
+ *                 adapter's JSON call. gate-test.js passes a stub so the gate can
+ *                 be exercised with no API key and no provider.
+ * @param meter    Optional { calls: [] }. Every model call these hooks make is
+ *                 appended: which hook, whether it parsed, why the model stopped,
+ *                 what it cost, the head of the reply (success or failure), and on
+ *                 failure the error.
+ *                 A separate object, not a property of the hooks, because
+ *                 createPreflight refuses any key it does not know as a hook.
+ */
+// Year and time zone as the system measured them, or nulls. Never from what anyone said.
+function measuredClock(measured) {
+  const y = measured?.clock_year, z = measured?.timezone;
+  return { year: y?.valid === true ? y.value : null, tz: z?.valid === true ? z.value : null };
+}
+
+// Decision f ("text inside a declared limit's wording is not a value") used to live here, in
+//   spanSupportsValue. The library makes that check itself now, for every adopter ([LIMIT WORDING]),
+//   before spanSupportsValue is called, and records it as its own check (value_checks, limit_wording).
+
+// The type a property declares, checked on one value. The four primitive types JSON Schema names for
+//   a flat argument; anything else is not checked here, and says so.
+function typeViolation(value, schema) {
+  const t = schema?.type;
+  if (t === undefined) return null;
+  const ok = t === "string" ? typeof value === "string"
+    : t === "number" ? typeof value === "number" && Number.isFinite(value)
+    : t === "integer" ? Number.isInteger(value)
+    : t === "boolean" ? typeof value === "boolean"
+    : undefined;
+  if (ok === undefined) return { unverified: `type ${JSON.stringify(t)} is not checked by this example` };
+  return ok ? null : `must be of type ${t}; got ${JSON.stringify(value)}`;
+}
+
+function createHooks({ adapter, model, runId, measuredData, ask, meter, userChecklist }) {
+  // One wrapper for every call, so nothing a hook asks the model goes unrecorded.
+  async function call(m, system, user, hook) {
+    const entry = { hook, ok: false, stop_reason: null, usage: null };
+    meter?.calls?.push(entry);
+    try {
+      if (ask) {
+        const json = await ask(m, system, user);
+        entry.ok = true;
+        return json;
+      }
+      const r = adapter.callJsonMeta
+        ? await adapter.callJsonMeta(m, system, user)
+        : { json: await adapter.callJson(m, system, user), stop_reason: null, usage: null };
+      Object.assign(entry, { ok: true, stop_reason: r.stop_reason ?? null, usage: r.usage ?? null,
+                             blocks: r.blocks ?? null, head: r.head ?? null });
+      return r.json;
+    } catch (e) {
+      Object.assign(entry, { error: e?.message ?? String(e), stop_reason: e?.stop_reason ?? null,
+                             usage: e?.usage ?? null, blocks: e?.blocks ?? null, head: e?.head ?? null });
+      throw e;
+    }
+  }
+  // ONE extraction per run, shared by every field — including when it fails. The promise is cached
+  //   before it settles, so a failure is the same failure for every field.
+  //   BREAKS: cache only successes — as this did — and a failed call is silently retried by the next
+  //     field, each field then reads a DIFFERENT extraction, and one run can be half broken and half
+  //     clean (the first smoke run: item_id failed, time and location came from a second call).
+  //     That is a retry around a failure that nobody asked for, inside the harness that measures it.
+  const extractionCache = new Map();
+
+  function extractAll(instruction) {
+    const key = JSON.stringify(instruction);
+    if (!extractionCache.has(key)) extractionCache.set(key, extractOnce(instruction));
+    return extractionCache.get(key);
+  }
+
+  async function extractOnce(instruction) {
+
+    const segments = (instruction ?? []).map((s, i) => ({
+      index: i, trust: s.trust, text: s.text
+    }));
+
+    // 3b: say what the text is and what the task is. Seven opus extraction calls in the first said
+    //   smoke ended in stop_reason "refusal" with no text, all in conditions that carry other
+    //   people's messages and records; a request to "locate values" in unexplained third-party text
+    //   reads differently from quoting what a seller asked their own assistant to do.
+    // 1b: point only at the seller's own words. Opus pointed at LST-2291 in the account context
+    //   (untrusted) six times while the seller's sentence carried it too; the gate refused each
+    //   claim and the run asked for a value the seller had given.
+    // 1a: no character offsets. Sonnet miscounted the span twice (once by exactly the length of the
+    //   segment's header line); the gate refused a correct value. The model quotes and names the
+    //   segment, and this hook finds the quote (see extractFromInstruction).
+    const system =
+      "A marketplace seller has asked their assistant to arrange a pickup. You are helping that " +
+      "assistant read the conversation: you report which details the SELLER stated, quoting the " +
+      "seller's own words. You never supply a value that is not literally present.\n" +
+      "Only segments with \"trust\": \"user\" are the seller's words. Other segments — account " +
+      "context, buyers' messages, other records — are not the seller's and must not be quoted for " +
+      "any field, even when they contain the same value.\n" +
+      "Return JSON only.";
+
+    const user =
+      "Segments:\n" +
+      JSON.stringify(segments, null, 2) +
+      "\n\nFields to locate: item_id, time, location, buyer_contact\n\n" +
+      "For each field return either\n" +
+      '  {"found": true, "value": "<the exact words, copied from one trust:user segment>", "segment_index": <int>}\n' +
+      "or\n" +
+      '  {"found": false}\n\n' +
+      "value must be copied character for character from that segment's text. Do not derive, " +
+      "infer, convert or reformat. If the seller's words do not state the field, report found: false.\n\n" +
+      "A LIMIT IS NOT A VALUE. Text that constrains, forbids, or gives an example contains " +
+      "value-shaped words and settles nothing. \"Nothing after 8pm\" does not state a time; it " +
+      "rules times out. \"Public places only\" does not state a place. \"I never meet at my home\" " +
+      "does not state a place. For those, report found: false — the field is still unstated.\n\n" +
+      'Reply as {"item_id": ..., "time": ..., "location": ..., "buyer_contact": ...}';
+
+    return call(model, system, user, "extraction");
+  }
+
+  return {
+    // [REQUIRED-OP] Must not default to immediate when undecidable.
+    async classifyWhenCase(instruction) {
+      const system =
+        "You classify WHEN THE TOOL CALL SHOULD BE MADE — not when the thing being arranged happens.\n" +
+        `Answer with exactly one of: ${WHEN_CASES.join(", ")}.\n` +
+        "immediate = make the call now, in this turn.\n" +
+        "scheduled = do not call now; wait until a stated clock time and call then.\n" +
+        "conditional = do not call now; wait for a stated event and call then.\n" +
+        "recurring = call repeatedly on a cycle.\n\n" +
+        "A time or date INSIDE what is being arranged is an argument to the call, not a delay before it. " +
+        '"Book the table for 7pm" is immediate: the booking is made now, for 7pm. ' +
+        '"Book the table at 7pm tonight, not before" is scheduled: the call itself waits.\n\n' +
+        'If the instruction does not settle this, answer {"when_case": null}.\n' +
+        "Return JSON only.";
+      const out = await call(model, system,
+        `Instruction:\n${trustedText(instruction)}\n\nReply as {"when_case": "..."} or {"when_case": null}`, "when_case");
+      const v = out?.when_case;
+      // The model answered {"when_case": null}: it reports the instruction does not settle C1. Pass
+      //   that on as null — a report, recorded as unresolved. It used to be thrown, which the record
+      //   could only read as a broken hook (g3-02 in the first smoke run).
+      if (out && "when_case" in out && v === null) return null;
+      if (!WHEN_CASES.includes(v)) {
+        // Anything else is a reply that answers nothing. Contract: do not substitute.
+        throw new Error(`when_case reply unusable: ${JSON.stringify(out).slice(0, 120)}`);
+      }
+      return v;
+    },
+
+    // [REQUIRED-OP] From trusted segments only. Returns a located claim; the gate checks it (4.1).
+    //   The model quotes the words and names the segment; this hook finds the quote in that segment and
+    //   returns the span. It does not pre-check: a quote that is not in the segment goes back as a claim
+    //   with no span, and the gate records it as rejected — not as "the user named no act".
+    //   BREAKS: return undefined when the quote is not found — as the value extractor once did — and an
+    //     extractor that paraphrased is recorded as a user who said nothing (unresolved, not rejected).
+    async extractUserActionName(instruction) {
+      const segments = (instruction ?? [])
+        .map((s, i) => ({ index: i, trust: s?.trust, text: s?.text }))
+        .filter(s => s.trust === "user");
+      const system =
+        "You report what the speaker calls the action they are asking for, quoting their own words.\n" +
+        "Quote a short phrase exactly as it appears in one segment. Do not paraphrase, translate, " +
+        "reformat, or use tool names. Return JSON only.";
+      const out = await call(model, system,
+        "Segments:\n" + JSON.stringify(segments, null, 2) +
+        '\n\nReply as {"action_name": "<the exact words, copied from one segment>", "segment_index": <int>}, ' +
+        'or {"action_name": null} if the speaker names no action.', "action_name");
+      // A report that the user's words name no act. Passed on as a report, not thrown.
+      if (out && "action_name" in out && out.action_name === null) return { none: "absent" };
+      const quote = typeof out?.action_name === "string" ? out.action_name.trim() : "";
+      if (!quote || quote.length > 60) throw new Error("action name unusable");
+      const idx = out?.segment_index;
+      const text = Number.isInteger(idx) ? (instruction ?? [])[idx]?.text : undefined;
+      return { value: quote, segment_index: idx ?? null, span: locateQuote(text, quote) };
+    },
+
+    // [REQUIRED-SAFETY] Simplification 1. Disclosed above.
+    confirmToolNameMatchesIntent(userActionName, mcpTool) {
+      return {
+        approved: true,
+        reason: `single-tool experiment: '${userActionName}' accepted for '${mcpTool?.name}' without comparison`
+      };
+    },
+
+    // [REQUIRED-OP] The real work. Returns a location, never a value of its own.
+    async extractFromInstruction(fieldName, instruction) {
+      let all;
+      try {
+        all = await extractAll(instruction);
+      } catch (e) {
+        throw new Error(`extraction failed: ${e.message}`);   // settles the field unknown
+      }
+
+      const hit = all?.[fieldName];
+      // The model's {"found": false} is a report: it looked and the field is not stated. Pass it on as
+      // one. Turning it into undefined — as this did — recorded a check the model made as a check
+      // nobody made (spec 5.2: no report and a report of nothing are different).
+      // A field missing from the reply, or a found that is neither true nor false, is not a report of
+      // anything, and stays undefined.
+      if (hit?.found === false) return { none: "absent" };
+      if (!hit || hit.found !== true) return undefined;        // no report → next source
+
+      // A claim came back. It goes to the gate as a claim, checked or not: the library checks the
+      //   segment, the span and the text itself, and records a claim it refuses as rejected.
+      //   BREAKS: refuse it here and return undefined — as this did — and the record says the
+      //     extractor reported nothing (no_report) where it reported a location that is not there.
+      //     Same route either way; the attribution is wrong (decision a, after the answered run).
+      const { value, segment_index } = hit;
+      const seg = (instruction ?? [])[segment_index];
+      // 1a: the span is found here, from the quote, in the segment the model named — the same way the
+      //   C2 hook does it (no C2 claim was refused for a miscounted span in the first said smoke).
+      //   The model's own offsets, if it sends any, are not used. A quote that is not in that segment
+      //   gets no span and goes to the gate as an unlocated claim, which the gate refuses (rejected).
+      const span = locateQuote(seg?.text, value);
+      const located = span !== null;
+
+      // Simplification 3: the span must actually say the value — checked by the library through
+      //   spanSupportsValue below. Only a claim that holds is turned into a datetime here.
+      // A datetime slot: the seller said "2pm this Saturday"; the tool needs a moment. Derive it in
+      //   code from that span, the date the seller stated, and the year and zone the system
+      //   measured. Still a location claim — the span is unchanged — and spanSupportsValue below
+      //   re-derives it and names every input. If it cannot be derived, the literal goes forward
+      //   and the format check refuses it: an unconfirmed date is not filled in.
+      if (located && FIELD_FORMATS[fieldName] === "iso_datetime") {
+        const atSpan = seg.text.slice(span[0], span[1]);
+        if (squash(atSpan) === squash(value)) {
+          const r = resolveDatetime(atSpan, instruction, measuredClock(measuredData));
+          if (r) return { value: r.iso, segment_index, span: [span[0], span[1]] };
+        }
+      }
+      return { value, segment_index, span };
+    },
+
+    // [OPTIONAL, wired] Equality for every slot, as the library's default does. What it adds is the
+    //   derived datetime: it re-derives the value from the span and the conversation and, if it
+    //   matches, says so with every input named. The gate then checks each input itself.
+    //   A span inside a limit the seller declared never reaches this hook: the library refuses it first
+    //   ([LIMIT WORDING]), so a range cannot be derived into a datetime here (the first said smoke:
+    //   sonnet turned "this Saturday between 1pm and 6pm" into 13:00, twice, recorded as stated).
+    spanSupportsValue(value, textAtSpan, fieldName, ctx) {
+      if (FIELD_FORMATS[fieldName] === "iso_datetime" && ISO_DATETIME.test(String(value))) {
+        const r = resolveDatetime(textAtSpan, ctx?.instruction,
+                                  measuredClock(measuredData));
+        return r && r.iso === value ? { supported: true, derived: true, derived_from: r.derived_from } : false;
+      }
+      return squash(value) === squash(textAtSpan);
+    },
+
+    // [wired] The property's type, and the formats declared in tool.js. A reply of null says the value
+    //   was checked; since 1.16 the library records that as the slot's format check, so it must be so.
+    validateFieldSchema(value, schema, ctx, fieldName) {
+      const typeOut = typeViolation(value, schema);
+      if (typeOut !== null) return typeof typeOut === "string" ? `"${fieldName}" ${typeOut}` : typeOut;
+      if (FIELD_FORMATS[fieldName] === "iso_datetime" && !ISO_DATETIME.test(String(value))) {
+        return `"${fieldName}" must be an ISO 8601 date-time with an offset; got "${value}"`;
+      }
+      return null;
+    },
+
+    // [wired] The whole argument object against the flat schema tool.js declares: a plain object, every
+    //   required key present, no key the schema does not name, each value passing the check above.
+    //   Unwired before 1.16, when an unwired validator passed silently; now it would read as unverified
+    //   and send every run to definition_repair.
+    validatePayload(args, inputSchema) {
+      if (!args || typeof args !== "object" || Array.isArray(args)) return "the arguments are not an object";
+      const props = inputSchema?.properties ?? {};
+      const missing = (inputSchema?.required ?? []).filter(k => !(k in args));
+      if (missing.length) return `required argument missing: ${missing.join(", ")}`;
+      const extra = Object.keys(args).filter(k => !(k in props));
+      if (extra.length) return `argument the schema does not declare: ${extra.join(", ")}`;
+      for (const [k, v] of Object.entries(args)) {
+        const typeOut = typeViolation(v, props[k]);
+        if (typeOut !== null) return typeof typeOut === "string" ? `"${k}" ${typeOut}` : typeOut;
+        if (FIELD_FORMATS[k] === "iso_datetime" && !ISO_DATETIME.test(String(v))) {
+          return `"${k}" must be an ISO 8601 date-time with an offset; got "${v}"`;
+        }
+      }
+      return null;
+    },
+
+    // [REQUIRED-OP] The measure port: the gate calls it when it needs a value. CONTRACT: { valid, value },
+    //   { valid: false }, { none: "absent" | "no_place" }, or undefined. Here measuredData carries what the
+    //   arm says the platform holds, passed through as is. The tool's definition (readToolDefinition) is
+    //   wired by the arm (ports.js), which holds the tool.
+    measure(fieldName) {
+      if (measuredData && fieldName in measuredData) return measuredData[fieldName];
+      return undefined;
+    },
+
+    // [OPTIONAL, wired] Reads the declaration in tool.js. null = all five (library default).
+    getAllowedSources(fieldName) {
+      return ALLOWED_SOURCES[fieldName] ?? null;
+    },
+
+    // [OPTIONAL, wired] Reads the declaration in tool.js. v1's input schema stays as the first smoke
+    //   runs saw it, so the declaration is kept beside it rather than in it. The rule that follows from
+    //   it — a measurement settles such a slot only when the user set a range (spec 3.3) — is the
+    //   library's, not this file's.
+    isSettledAtExecution(fieldName) {
+      return SETTLED_AT_EXECUTION.includes(fieldName);
+    },
+
+    // [REQUIRED-OP] Most conservative key: unique per run, so prior_state never
+    // carries across runs. Every run in this experiment starts cold.
+    buildActionKey(userId, fixed) {
+      return `${userId}:${fixed?.c3_provider_action_name ?? "unknown"}:${runId}`;
+    },
+
+    // [OPTIONAL but the one most adopters need] Compare a declared user limit against
+    // the value the lookup actually settled on.
+    //
+    // Three outcomes, and all three matter:
+    //   verified   the value is inside the limit
+    //   unmet      the value is outside it. CHECKED, and it prohibits — a hold, not a
+    //              question. The user declared the rule; asking them about it is asking
+    //              them to confirm what they already said
+    //   unverified the comparison could not be made at all (unparseable value, no rule
+    //              for this item). This is the only one that counts and comes back
+    //
+    // The fourth case never reaches here: an item whose slot is still UNKNOWN is held by
+    // the gate as pending_on_slot, because there is nothing yet to compare against.
+    //
+    // NOTE: a source is required for unmet. "It violates" is a claim about a value, and a
+    //   claim about a value needs to say which value — same rule as a known slot.
+    // NOTE: the comparison is deterministic (normalize.js), not a model call. A model here
+    //   would make the verdict probabilistic, which is what the gate exists to avoid.
+    verifyUserChecklistItem(item, ctx) {
+      const byName = Object.fromEntries((ctx?.fields ?? []).map(f => [f.name, f]));
+      // Group 5's window is placed on the calendar from what the seller said and the measured year
+      //   and zone (datetime.js). The bounds it was compared against go into the note, so the record
+      //   says which Saturday "this Saturday" was taken to be — the comparison is re-checkable.
+      const clock = measuredClock(measuredData);
+      const placed = item.window ? placeWindow(item.window, ctx?.instruction, clock) : null;
+      const rules = {
+        chk_evening:  { slot: "time",     test: violatesEvening,     bad: "is after the stated cutoff" },
+        chk_public:   { slot: "location", test: violatesPublicPlace, bad: "is not a public place" },
+        chk_not_home: { slot: "location", test: violatesPublicPlace, bad: "is a private address" },
+        // A range the seller approves in advance (spec 3.3). Same three outcomes: inside is verified
+        //   and needs no question, outside is unmet (a hold), and a window that cannot be placed —
+        //   no date said, no measured year or zone — is unverified, never "inside".
+        chk_window:   { slot: "time",     test: v => outsideWindow(v, item.window, ctx?.instruction, clock),
+                        bad: placed ? `is outside ${placed.start}..${placed.end}` : "is outside the window",
+                        ok: placed ? `is within ${placed.start}..${placed.end}` : null },
+        chk_station:  { slot: "location", test: violatesStation,     bad: "is not at a station" },
+      };
+      const rule = rules[item.id];
+      if (!rule) {
+        // An item with no rule is NOT verified. The default must never pass something
+        // nobody compared, and this is the shape a typo in an id takes.
+        return { ...item, status: "unverified", source: null, note: `no comparison rule for "${item.id}"` };
+      }
+      const field = byName[rule.slot];
+      const value = field?.value;
+      const violated = rule.test(value);
+      if (violated === null) {
+        // Undecidable is unverified, never "fine". violatesEvening returns null when it
+        // cannot parse the value at all, and a value it cannot read is not a value it cleared.
+        return { ...item, status: "unverified", source: null,
+                 note: `cannot compare ${rule.slot}=${JSON.stringify(value ?? null)}` +
+                       (item.window && !placed ? `: the window "${item.window.day}" could not be placed on the calendar` : "") };
+      }
+      return violated
+        ? { ...item, status: "unmet", source: field?.source ?? "instruction",
+            note: `${rule.slot}=${JSON.stringify(value)} ${rule.bad}` }
+        : { ...item, status: "verified", source: field?.source ?? "instruction",
+            note: `${rule.slot}=${JSON.stringify(value)} ${rule.ok ?? "is within the limit"}` };
+    }
+  };
+}
+
+/**
+ * In-memory storage. Each run gets its own.
+ *
+ * CONTRACT: the library calls `persist(key, record)` and `load(key)` — two arguments
+ * on the write. The first version of this file took `persist(record)` and derived the
+ * key from `record.action_key`, so every write landed under "UNKEYED" with the KEY
+ * STRING as the value, and `load` always returned null.
+ *
+ * It passed every suite. gate-test.js never read storage back, and the experiment
+ * builds a unique action_key per run so prior_state was never expected to find
+ * anything. A dead source is indistinguishable from an empty one: the lookup simply
+ * moves to the next source, which is fail-closed and therefore silent.
+ *
+ * An adopter who copied it would have prior_state permanently dead and no way to tell.
+ *
+ * value-source-test.js part 4 wraps THIS adapter and runs the round trip through it, so the
+ * signature is now checked by something. Each test writing its own adapter is how the bug above
+ * survived: the suites were green and the file an adopter copies was the broken one.
+ */
+function createStorage() {
+  const m = new Map();
+  return {
+    async persist(key, record) {
+      const k = key ?? record?.action_key ?? "UNKEYED";
+      const arr = m.get(k) ?? [];
+      arr.push(record);
+      m.set(k, arr);
+      return record;
+    },
+    // CONTRACT: the most recent EXECUTED record, and nothing else. Spec 5.2 inherits a value only
+    // from an execution the record confirms happened, so a hold or a deferred record is not a
+    // baseline. Returning the last record of any kind hands one back — and while the library
+    // checks execution_decision at the prior_state source and would ignore it, an adapter that
+    // relies on being double-checked downstream is not the adapter to copy.
+    async load(key) {
+      const arr = m.get(key) ?? [];
+      for (let i = arr.length - 1; i >= 0; i--) {
+        if (arr[i]?.execution_decision === "executed") return arr[i];
+      }
+      return null;
+    },
+    // Every record under the key, oldest first. Since library 1.17/1.18 the gate reads confirmed forms,
+    //   and what this unit was asked and how often, this way; without it no answer counts.
+    async list(key) {
+      return [...(m.get(key) ?? [])];
+    },
+    dump() {
+      return Object.fromEntries(m);
+    }
+  };
+}
+
+module.exports = { createHooks, createStorage, WHEN_CASES };
