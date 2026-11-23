@@ -1,0 +1,8 @@
+{
+  "name": "execution-state-preflight-tests",
+  "private": true,
+  "description": "All checks: the library (library/) and the adopt example (adopt/). No API calls.",
+  "scripts": {
+    "check": "npm --prefix library run -s check && npm --prefix adopt run -s check"
+  }
+}
