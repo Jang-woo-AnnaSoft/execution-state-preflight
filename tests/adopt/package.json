@@ -1,0 +1,12 @@
+{
+  "name": "execution-state-preflight-tests-adopt",
+  "private": true,
+  "description": "Checks adopt-example/ (judge-only.js, middleware.js, agent.js, connect.js) with stand-in models, and runs the real-model trial",
+  "scripts": {
+    "setup": "npm ci --prefix ../../adopt-example",
+    "check": "npm ci --prefix ../../adopt-example --silent && node test.js && node compare.js > /dev/null && node adopt-test.js && node judge-only-test.js && node middleware-test.js && node records-test.js",
+    "compare": "node compare.js",
+    "adopt": "node adopt-test.js",
+    "judge-only": "node judge-only-test.js"
+  }
+}
