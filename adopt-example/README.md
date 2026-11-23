@@ -66,7 +66,8 @@ and check that the two are the same.
 Two places, and nothing else:
 
 - **The description, in words.** What the tool does, and then each rule on a line of its own,
-  starting with a label. Say what the value is and who gives it. A line need not say how to ask:
+  starting with a label. Write each line so it can be judged: what is checked, where it is read
+  from, and what passes, as a condition in code would need (spec 4.2.1). A line need not say how to ask:
   the model asks, and code holds the answer to what was shown. Say once, in a line without a label,
   that the labelled lines are checked after the call and before it runs: a model that does not know
   the labels reads them as conditions to meet before it calls, and then does not call (spec 4.2.1).
