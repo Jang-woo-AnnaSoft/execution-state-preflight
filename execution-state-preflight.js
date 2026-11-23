@@ -257,8 +257,9 @@ const MSG_TOOL_EXHAUSTED =
 const INTENT_ATTEMPT_LIMIT = 2;
 const TOOL_ATTEMPT_LIMIT = 2;
 // Default ceilings for the value gate's two retriable routes. Overridable per preflight (createPreflight
-//   limits: { ask, lookup }), since 4.5 leaves the value to the adopting system.
-const ASK_ATTEMPT_LIMIT = 2;
+//   limits: { ask, lookup }), since 4.5 leaves the value to the adopting system. Three asks: a value, a
+//   condition and a confirmation are often asked in turn, and two ended runs the user was still answering.
+const ASK_ATTEMPT_LIMIT = 3;
 const LOOKUP_ATTEMPT_LIMIT = 2;
 
 // Named after the act, never after the schema. Branch options travel in gate.branch_options for rendering.
@@ -4709,7 +4710,7 @@ function createPreflight({ hooks = {}, storage, clock, strict = false, limits = 
     throw new Error(`createPreflight(strict): defaults not permitted — ${unsafeDefaults.join(", ")}`);
   }
 
-  // Route ceilings (4.5: "the adopting system sets the ceiling"). Defaults match INTENT_ATTEMPT_LIMIT.
+  // Route ceilings (4.5: "the adopting system sets the ceiling"). Defaults: ASK_ATTEMPT_LIMIT, LOOKUP_ATTEMPT_LIMIT.
   //   A value that is not a non-negative integer falls back to the default rather than to no ceiling.
   const lim = (v, d) => (Number.isInteger(v) && v >= 0 ? v : d);
   const routeLimits = { ask: lim(limits.ask, ASK_ATTEMPT_LIMIT), lookup: lim(limits.lookup, LOOKUP_ATTEMPT_LIMIT) };
