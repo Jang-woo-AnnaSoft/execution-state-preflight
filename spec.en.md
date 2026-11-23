@@ -286,6 +286,7 @@ Every intent, value, and condition item is registered in an external checklist, 
 
 - Providers already write conditions in the tool description. Written with the labels for the three kinds of condition (3.3), [Required], [Verify] and [Notice], those sentences become the checklist, since the description arrives with the tool list.
 - To use labeled sentences as an enforced checklist, the declaring party must be trusted. The gate reads the definition as its provider declared it, not a copy kept on the agent's side. When the same party builds the agent and the tool, that party is the provider. The sentences are put into a form that can be compared and compared only in that form (3.3), and the record keeps which definition the verdict was made under.
+- Write each labelled line so that it can be judged: what is checked, where it is read from (the name of the system data, or the user's words), and what passes (a value or a comparison). These are what a condition in code needs too. If one is missing, whoever translates the line fills it in, and the same sentence can take a different form each time.
 - For a value the user can give and the system can also measure, the sentence says whether the system's value counts too. Left unsaid, the same sentence can be put into a different form each time it is translated. A sentence about such a value has its translated form marked for review. The mark does not change the verdict.
 - The meaning of the labels does not reach a model that does not know this specification. The model choosing a tool may read the labelled sentences as conditions to meet before calling, so the description says in a sentence that they are checked after the tool is chosen and before it runs. The verdict does not depend on what the model read. A model that makes no call leaves the gate nothing to rule on, and nothing is executed.
 
@@ -499,9 +500,9 @@ With authority outside the model, decisions and accountability stay with the par
 
 ### 8.1 Tool selection errors
 
-- A tool name is a label, separate from what the tool can do. Different names can produce the same state change, and a matching name can come with a different capability.
-- Tool selection is not validated by code. Narrow down to a single candidate without asking, and a tool may be chosen just because it is on the list. Whether it passes is then decided by that tool's input schema.
-- Mitigation: state-change declarations depend on the description, so this point leans more on intent confirmation. Recording what the user calls the action (4.1.1) helps.
+- Any agent that picks a tool from a list can pick the wrong one. A tool name is a label, separate from what the tool can do. Different names can produce the same state change, and a matching name can come with a different capability.
+- This specification narrows that risk. The chosen tool is compared with what the user called the action and when they asked for it (4.1), and what the user calls the action is recorded (4.1.1).
+- What remains: whether the tool fits the request is not proven by code. Narrow down to a single candidate without asking, and a tool may be chosen just because it is on the list. Whether it passes is then decided by that tool's input schema.
 
 ### 8.2 Forged records and hook implementation
 
