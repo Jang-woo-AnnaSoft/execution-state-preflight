@@ -112,7 +112,7 @@ For "write it, and it is checked" to hold:
 
 - It does not claim to prevent every incident. What it stops is limited to what is declared.
 - A condition not declared, declared wrongly or translated wrongly passes. What becomes clear instead is *who did not declare what*.
-- Whether the tool the model chose fits the request is not proven by code (spec 8.1).
+- Choosing the wrong tool is a risk for every agent. This narrows it, by comparing the tool with what the user called the action and when they asked, but code cannot prove the choice (spec 8.1).
 - It does not replace access control, injection defense, or a person's final confirmation.
 
 It puts what the model was doing back under people's responsibility. Whether someone will actually hold that responsibility is for the adopting organization to decide.
