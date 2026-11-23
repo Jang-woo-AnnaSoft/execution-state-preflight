@@ -81,7 +81,7 @@ Schema validation, tool-server checks, permission layers, and prompts stay as th
 
 ## Appendix. How this differs from current practice
 
-Current practice checks capability and permission, leaves the rest to the model, and blocks what it can't verify. This spec moves the rest outside the model, and treats what isn't confirmed as something to resolve, not only something to block.
+Current practice checks what the agent can reach and the form of its arguments, leaves the rest to the model, and blocks what it can't verify. This spec moves the rest outside the model, and treats what isn't confirmed as something to resolve, not only something to block.
 
 | | Current practice | This spec |
 |---|---|---|
@@ -92,7 +92,7 @@ Current practice checks capability and permission, leaves the rest to the model,
 | Grounds to trust a value | A looked-up value and a made-up one are the same string. Any source label is written by the model too | The location the model points to is queried directly in a declared source |
 | Tool | The model picks one. If the input schema passes, it runs | Compared with what the user called the action and when they asked for it. Not provable in code |
 | Blanks | The model fills them and leaves no sign it did | They stay unknown. Nothing the model filled in passes through |
-| When something can't be verified | AI governance and security controls usually block execution when a required condition is unmet or can't be verified (fail-closed). What happens after the block is left open | The block is not the end. If the user can answer, the user is asked. If only the system can, it is measured. If nobody can, it goes back to whoever declared it, for definition repair. Once everything is confirmed, the execution is executable. A confirmed condition that prohibits execution is recorded as a hold |
+| When something can't be verified | Checks today usually block execution when a required condition is unmet or can't be verified (fail-closed). What happens after the block is left open | The block is not the end. If the user can answer, the user is asked. If only the system can, it is measured. If nobody can, it goes back to whoever declared it, for definition repair. Once everything is confirmed, the execution is executable. A confirmed condition that prohibits execution is recorded as a hold |
 | Who decides the check is complete | A person clicks through a form the model filled in | Code that counts unknowns. No confidence scores |
 | Who decides to execute | Verification is a branch inside the execution flow, so it can be skipped, and skipping leaves no trace | The verdict ends in a record. The executing party reads it and decides |
 | Record | The tool called and its final arguments. Sources, checked conditions, and runs that didn't execute are not kept | Each slot's state and source, unknown items and their routes, unmet items, and runs that didn't execute |
@@ -103,24 +103,10 @@ Unchanged: schema validation, tool-server checks, permission layers, prompts.
 
 ### The broken premise
 
-A harness checks whether a value is allowed and whether a transition is possible. It does not check who set the value. It never had to: a person logged in and typed the values, so the input path was the proof of origin.
-
-With agents, the execution still runs under the user's session and permissions, and the audit log still says the user executed with this value. But the model wrote it. Nothing was tampered with, and the premise breaks anyway.
-
-So some wrong executions pass every check. In [the reported Meta Muse case](./case-muse-marketplace.en.md), with "Allow Always" on, Muse agreed in the seller's name to the buyer's 8 to 10 p.m., and the buyer came to the seller's building while the seller was out. The permission was there, the format was right, no policy was broken. The seller had not set that time.
-
-Authority comes from ownership, not accuracy, and a model that answers for nothing cannot hold it (spec 2.1). The model writes the draft; the agent, the code around the model, checks it.
+Before, a person logged in and typed the values, so the input path itself was the proof of where a value came from. Now the audit log still says the user executed, but the model wrote the value.
 
 ### What it costs, and where it fits
 
-The work is not new. To make a call, a model already reads when to run, which act, which tool, the user's limits and the arguments. The gate takes those readings out as separate steps, each with where it was read; code rules on them and writes the record.
+The cost is in model calls: about five more for each turn the gate judged, and about three more for each blank the user had to fill. It fits executions that are hard to undo, not control loops that run in milliseconds.
 
-The cost is in model calls. In the example, each turn the gate judged took about five more calls. These are the readings above: what a model does inside, turned into steps. They are counted as calls because the call's arguments are not taken as values (spec 5.2): the model reads once inside, and the gate asks again. Each blank the user had to fill took about three more. The provider's lines are translated once per tool definition and kept.
-
-Where it fits: executions that are hard to undo, such as a transfer, a payment, a door unlocked or a machine started (spec 1.1). It runs once per state change; a read such as a balance check need not go through it.
-
-Where it does not: control loops that run in milliseconds. The calls take seconds.
-
-The gate's model reads the user's words. Which model that is, and where it runs, is the adopting system's choice; it can differ from the agent's model (`adopt-example/connect.js` says where to split).
-
-Tested with eight models from two providers (Claude, OpenAI), twelve runs each on the example's scenarios: no wrong execution. A small model could not translate one of the provider's lines, and those runs stopped for definition repair. It also translated another line into a weaker check; a kept translation carries such a mistake until someone reads it. Not tested: banking, payments or physical systems.
+Tested with eight models from two providers (Claude, OpenAI): twelve runs each on the basic scenarios, and ten or twenty each on the condition scenarios. The code let no wrong execution through.
