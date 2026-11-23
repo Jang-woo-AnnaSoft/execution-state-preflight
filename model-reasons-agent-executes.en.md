@@ -105,8 +105,23 @@ Unchanged: schema validation, tool-server checks, permission layers, prompts.
 
 Before, a person logged in and typed the values, so the input path itself was the proof of where a value came from. Now the audit log still says the user executed, but the model wrote the value.
 
+### Blanks that are called user error
+
+People worry that a model will copy a number wrong. A number the user said is in the user's words, so it can be checked against them. Most requests point instead: "the same account as last time", "like before". The value is not in the words, and the model infers what was meant. When that goes wrong, it is usually called the user's mistake: the instruction was vague. But everyday requests leave blanks. The error is that nobody was declared to fill them, so the model filled them.
+
+| Blank | Who fills it | Examples |
+|---|---|---|
+| A standard or a unit | The provider, in the tool's declaration, before anyone asks (4.2) | The currency, whether a fee is included, items or boxes, tax included or not, 5% of what, the time zone |
+| What the user means | Only the user | How far a price must fall, how old is "old", who "the team" is, what time "tomorrow morning" is, a time the other party proposed |
+| Which target | The system reads what there is, and the user picks (5.2) | "The same account as last time", which team lead, the latest order, everything "all" covers, which version to roll back to |
+| A value in someone else's text | Nothing, on its own: the user confirms it (5.2) | A forwarded email, the buyer's message, a tool result |
+
+A blank that was filled in silently comes out as a declaration or a question, and the record shows whose blank it was.
+
 ### What it costs, and where it fits
 
 The cost is in model calls: about five more for each turn the gate judged, and about three more for each blank the user had to fill. It fits executions that are hard to undo, not control loops that run in milliseconds.
+
+Compared with what is done today, the cost is not only added. Where someone is accountable, as in payments and contracts, a value is already typed in by hand or approved with a separate click. Here only the blanks go back to the user, and an approval is bound to the values shown (6.3), not to a button. Where nobody is clearly accountable, as in schedules, messages and sharing, calls pass without a check. That is where the added calls appear, and where the reported Muse case happened.
 
 Tested with eight models from two providers (Claude, OpenAI): twelve runs each on the basic scenarios, and ten or twenty each on the condition scenarios. The code let no wrong execution through.
