@@ -24,14 +24,11 @@ both.
 `agent.js` is the first way as a whole agent to run and watch. Sections 1 to 3 are for both. Section 4
 is your own loop, and how the middleware does the same. Section 5 is the demonstration.
 
-`gate.js`, the LangGraph graph `agent.js` ran on before, is kept to confirm the earlier tests: the
-comparisons with the October records run on it. It is not a way in.
-
 **To watch a whole run first, with stand-in models and no API key:**
 
 ```
 npm install
-cd ../provider-checklist-example
+cd ../tests/adopt
 node trial-real-model.js --stub --id g1-01 --reply yes
 ```
 
@@ -49,7 +46,6 @@ The gate asks about the time, the stand-in user answers yes, and the tool runs.
 | [`middleware.js`](./middleware.js) | Do not edit. The same agent's side, as LangChain middleware for `createAgent` |
 | [`records.js`](./records.js) | Do not edit. The decision records in a LangGraph `BaseStore` (`connect.js` picks which one) |
 | [`agent.js`](./agent.js) | Demonstration. `createAgent` with `middleware.js`. Run it, or call it from your app. No edits needed |
-| [`gate.js`](./gate.js) | Kept to confirm the earlier tests (the flow `agent.js` ran on before). Not a way in |
 
 You also need the library, [`execution-state-preflight.js`](../execution-state-preflight.js): one
 file, no dependencies. Copy it next to this folder or into it.
@@ -64,7 +60,7 @@ gate reads it itself, once the model has called the tool.
 registers a tool on an MCP server. The same file serves if you move the tool to a server later. In
 the agent it becomes a LangChain tool in one line, `tool(fn, { name, description, schema: inputSchema })`
 (`agent.js`). In the JSON, the description is one string; its lines are separated by `\n`. The tests
-run this same tool, from [`provider-checklist-example/tool.json`](../provider-checklist-example/tool.json),
+run this same tool, from [`tests/adopt/tool.json`](../tests/adopt/tool.json),
 and check that the two are the same.
 
 Two places, and nothing else:
@@ -437,7 +433,7 @@ if (state.execution_decision === "execute") {
 
 ## Where this is checked
 
-The tests are in [`provider-checklist-example/`](../provider-checklist-example/), so this folder holds
+The tests are in [`tests/adopt/`](../tests/adopt/), so this folder holds
 only what you keep. They check:
 
 - this folder holds only these files, `principles.md` matches spec 6.2, and each line of
@@ -448,10 +444,10 @@ only what you keep. They check:
 - judging returns no arguments and no decision, and executes nothing; the agent's side executes from
   the record, and reads every decision record the same way the gate decided;
 - in the demonstration (`agent.js` on `createAgent`), the same scenarios as before reach the same first
-  decision, execute from the record and write the result back; the earlier checks still run on the
-  flow before it (`gate.js`, through `provider-checklist-example/graph-agent.js`);
+  decision, execute from the record and write the result back;
 - as middleware in `createAgent`, the call waits on `interrupt()`, is not judged twice on resume, runs
-  with the record's arguments, and runs nothing when the answer is declined;
+  with the record's arguments, runs nothing when the answer is declined, and its result tells the model
+  what the user was asked and answered;
 - on the same 35 inputs, the first decision here equals the reference run.
 
 ## For safety, consider these

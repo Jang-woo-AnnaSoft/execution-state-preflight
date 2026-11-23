@@ -35,7 +35,7 @@
  *   the engine    every comparison is a JSON Schema, run by a standard validator (Ajv). A schema it
  *                 cannot run leaves the check unverified, never passed
  *
- * gate.js (the demonstration: a whole agent, as a LangGraph flow) judges through this same file.
+ * middleware.js (the gate as LangChain middleware) judges through this same file.
  */
 
 // The library: one file, copied beside this folder (the repository layout) or into it.
@@ -674,7 +674,7 @@ async function writeStop({ ask, say, model = "model" }, { record, conversation }
 }
 
 // One round: judge the tool call against the conversation so far, and write the record. Returns the
-//   library's state. gate.js reads it; createJudge hands on only what there is to ask.
+//   library's state. createJudge reads it and hands on only what there is to ask.
 //   intentAttempt: how many times this conversation was already asked to restate what it wants done.
 //   The caller carries it (the library's contract): those records have no key to count them under.
 //   How often the tool was asked about, the library counts itself, from the unit's records.
