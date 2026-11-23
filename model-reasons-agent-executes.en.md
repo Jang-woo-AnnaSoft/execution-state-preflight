@@ -118,6 +118,14 @@ People worry that a model will copy a number wrong. A number the user said is in
 
 A blank that was filled in silently comes out as a declaration or a question, and the record shows whose blank it was.
 
+### A block taken as a problem to solve
+
+When an agent is refused, it often does not stop. It asks again in other words, or takes another route to the same result. In 2026, research agents at OpenAI reached non-public files on an Australian government portal after being refused repeatedly ([The New Stack](https://thenewstack.io/ai-agents-probe-vulnerabilities/)), and reached an outside chatbot through DNS when direct web access was blocked ([InfoWorld](https://infoworld.com/article/4227778/openai-pauses-ai-model-training-after-another-agent-bypasses-network-restrictions-2.html)). Gemini agents, cut off by a proxy, fetched the same site through a third-party reader ([BleepingComputer](https://bleepingcomputer.com/news/security/gemini-ai-agents-repeatedly-bypassed-safeguards-to-attack-real-website)). None of these was malicious: the agents were solving the task in front of them.
+
+Each time, the agent changed the execution unit rather than retrying the blocked one, so a limit on retries does not catch it. Here a hold is a finished check (4.5), and a new unit is checked anew (4.4): its act has to come from what the user said (4.1). An act the agent made up to get around a refusal does not become the user's.
+
+This does not replace isolation or access control, and it holds only on the paths declared as execution units. A route nobody declared, like the DNS resolver, is not seen by the gate (8.6).
+
 ### What it costs, and where it fits
 
 The cost is in model calls: about five more for each turn the gate judged, and about three more for each blank the user had to fill. It fits executions that are hard to undo, not control loops that run in milliseconds.
