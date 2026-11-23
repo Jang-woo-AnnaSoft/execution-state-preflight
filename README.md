@@ -37,7 +37,7 @@ A part of the harness, the code around the model that limits what an agent execu
 
 | | A harness today (usually) | This repository |
 |---|---|---|
-| What is checked | What the agent can do: tools, data access, formats | This call's intent, each value (per slot) and each condition (per line) |
+| What is checked | What the agent can do: tools, data access, formats; lately also conditions written as code (approval steps, policy hooks) | This call's intent, each value (per slot) and each condition (per line) |
 | Who writes the rules | Usually the developers or the platform team building the agent | Split and declared: the tool provider (the tool's conditions), the user (limits, preferences), the adopting system (common rules) |
 | How the rules are written | Code, configuration, policy files | Sentences: the provider's labelled lines in the tool's description, the user's own words, the adopting system's principles |
 
