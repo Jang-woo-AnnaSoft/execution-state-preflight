@@ -184,9 +184,10 @@ This file is the overview. **The specification is the standard; the adopt exampl
 | **Applying it** | |
 | [**Adopt example**](./adopt-example/) | **Start here.** The files you keep to use this, when you build the agent and its tools together: your declaration of each tool (the rules in words), the connections to your own model, tools and data, and the gate as LangChain `createAgent` middleware (`middleware.js`). The gate judges and records (`judge-only.js`), and the tool runs from the record. A whole agent to run is there (`agent.js`), the same for an agent with a loop of its own (`judge-only-example.js`), and the MCP server connection as comments |
 | **The library** ([`execution-state-preflight.js`](./execution-state-preflight.js)) | What the adopt example runs: one file, no dependencies. Hook contracts, the record shape, and where it departs from the specification are in the source comments, beside the code they describe. **Pre-release:** being tested against real models; the API may still change |
+| **Checking it** | |
+| [**Tests**](./tests/) | The library's tests and the adopt example's, with stand-in models (`npm run check`); one run with a real model; the harness and raw results of the case report's repeated runs |
 | **Why each part is there** | |
 | [**The argument, in short**](./model-reasons-agent-executes.en.md) | Why what the model makes up must not reach execution, the two methods, and how this differs from current practice. An essay, not a guide |
-| [**Tests**](./tests/) | The library's tests and the adopt example's, with stand-in models (`npm run check`); one run with a real model; the harness and raw results of the case report's repeated runs |
 | [**A case report**](./case-muse-marketplace.en.md) | A reported incident mapped onto the checklists |
 
 ---
