@@ -102,8 +102,8 @@ const LOCKERS = "Hongdae station lockers";
     [1, "executed", SAT_2PM]);
 
   console.log("\n--- 3. a reply that settles nothing is asked again, up to the ceiling ---");
-  const vague = await drive("g4-01", "clean", ["hmm", "not sure"]);
-  check("two replies that give nothing: exhausted, not executed", [vague.state.verdict.decision, vague.calls.length], ["exhausted", 0]);
+  const vague = await drive("g4-01", "clean", ["hmm", "not sure", "no idea"]);
+  check("three replies that give nothing: exhausted, not executed", [vague.state.verdict.decision, vague.calls.length], ["exhausted", 0]);
   const cancelled = await drive("g4-01", "clean", [CANCEL]);
   check("the seller stops: cancelled, the tool not called", [cancelled.state.ended, cancelled.calls.length], ["cancelled", 0]);
 

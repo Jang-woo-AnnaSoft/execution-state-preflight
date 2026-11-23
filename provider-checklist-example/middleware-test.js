@@ -11,7 +11,7 @@ const path = require("path");
 const ADOPT = path.join(__dirname, "..", "adopt-example");
 const { createAgent, tool, HumanMessage, FakeToolCallingModel } = require(path.join(ADOPT, "node_modules", "langchain"));
 const { MemorySaver, Command } = require(path.join(ADOPT, "node_modules", "@langchain/langgraph"));
-const { preflightMiddleware } = require(path.join(ADOPT, "middleware"));
+const { preflightMiddleware, segmentsFor } = require(path.join(ADOPT, "middleware"));
 const { createStorage } = require(path.join(ADOPT, "judge-only"));
 const realConnect = require(path.join(ADOPT, "connect"));
 const { measuredFor, measurePort, MEASUREMENTS } = require("./arm");
@@ -102,7 +102,7 @@ const count = (list, hook) => list.filter(h => h === hook).length;
     // On resume LangGraph runs the call again from the top: the first judging is taken as kept.
     check("  the first judging is not made again: one question written, two rounds read",
       [count(t.prompts, "question"), count(t.prompts, "when_case"), t.prompts.length > asked], [1, 2, true]);
-    check("  the model is told the call ran with other values than its own", /^Note: the system ran this call with the values/.test(String(t.toolResult(state)?.content)), true);
+    check("  the model is told the call ran with other values than its own", /\n\nNote: the system ran this call with the values/.test(String(t.toolResult(state)?.content)), true);
   }
 
   console.log("\n--- 2. the model's arguments are not the values ---");
@@ -153,6 +153,47 @@ const count = (list, hook) => list.filter(h => h === hook).length;
     const mute = setup("g1-01", "clean", { text: ALL_GIVEN, ask: askAllGiven("g1-01"), notify: null });
     const state = await mute.start();
     check("  no way to tell it: not run", [mute.calls.length, mute.toolResult(state)?.status], [0, "error"]);
+  }
+
+  // The agent's model does not see the questions and answers inside a call; the result tells it what
+  //   was asked and answered. A real model (Opus 5.5), told only "Executed: …", told the seller
+  //   "You didn't give me that time." It had not seen the answer.
+  const ASKED_LINE = "The system asked the user:\n";
+  console.log("\n--- 7. the call's result says what the user was asked and answered ---");
+  {
+    const t = setup("g1-01", "clean");
+    await t.start();
+    const [q] = await t.waiting();
+    const state = await t.resume({ typed: "yes" });
+    const c = String(t.toolResult(state)?.content);
+    check("typed: the question and the answer, before the result",
+      [c.includes(`The system asked the user:\n${q?.message}`), c.includes("The user answered: yes\n"),
+       c.indexOf("The user answered") < c.indexOf("Note: the system ran this call")], [true, true, true]);
+    const f = setup("g1-01", "clean");
+    await f.start();
+    const fc = String(f.toolResult(await f.resume({ "value:time": true }))?.content);
+    check("  in the form: each field as answered", fc.includes("The user answered: [answered in the form] value:time: yes"), true);
+    // "no" each time, until the asks run out: every question and answer, in order.
+    const n = setup("g1-01", "clean");
+    let ns = await n.start(), asks = 0;
+    while ((await n.waiting()).length && asks < 6) { ns = await n.resume({ "value:time": false }); asks++; }
+    const nc = String(n.toolResult(ns)?.content);
+    check("  not run: each question and answer, before what the user was told",
+      [n.calls.length, nc.split(ASKED_LINE).length - 1, nc.split("The user answered: [answered in the form] value:time: no").length - 1,
+       nc.lastIndexOf("The user answered") < nc.indexOf("Not run.")], [0, asks, asks, true]);
+    const d = setup("g1-01", "clean");
+    await d.start();
+    const [dq] = await d.waiting();
+    const dc = String(d.toolResult(await d.resume({ action: "decline" }))?.content);
+    check("  not answered: the open question is shown once", dc.split(dq?.message).length - 1, 1);
+    const a = setup("g1-01", "clean", { text: ALL_GIVEN, ask: askAllGiven("g1-01") });
+    const ac = String(a.toolResult(await a.start())?.content);
+    check("  nothing asked: nothing added", ac.includes("The system asked the user"), false);
+    // The gate reads the call's questions and answers from the middleware's state, not again from the result.
+    //   (The stand-in model's last turn repeats every message it was given: it is left out.)
+    const upTo = state.messages.findIndex(m => m.getType() === "tool") + 1;
+    const later = segmentsFor(state.messages.slice(0, upTo), state.preflightCalls ?? {}, m => [{ trust: "user", text: String(m.content) }]);
+    check("  the gate reads the answer once", later.filter(s => /\byes\b/.test(s.text ?? "")).length, 1);
   }
 
   console.log("\n--- [ANSWER SHAPES] ---");
