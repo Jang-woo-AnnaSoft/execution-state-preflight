@@ -1161,8 +1161,8 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     // Ceilings, counted from the record. The caller passes 0 every time.
     const s4 = memStorage();
     const decisions = [];
-    for (let i = 0; i < 3; i++) decisions.push((await run(o({ storage: s4 }), { ask_attempt: 0 })).r.execution_decision);
-    check("asks counted from the record: the third round is exhausted, whatever the caller says", decisions, ["ask_user", "ask_user", "exhausted"]);
+    for (let i = 0; i < 4; i++) decisions.push((await run(o({ storage: s4 }), { ask_attempt: 0 })).r.execution_decision);
+    check("asks counted from the record: the fourth round is exhausted, whatever the caller says", decisions, ["ask_user", "ask_user", "ask_user", "exhausted"]);
     const early2 = await run(o({}), { ask_attempt: 5 });
     check("  a caller can bring exhausted forward", early2.r.execution_decision, "exhausted");
 
@@ -1185,10 +1185,10 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const again = await run(o({ storage: s7, noPriorAsk: true }), { userAnswers: { time: SAT_2PM } });
     check("  the next request under its key starts with nothing asked", field(again.r, "time").status, "unknown");
     // The ask before the execution is not counted: 'again' is this request's first ask, so one more is
-    //   allowed before the ceiling of two. Counted, the next round would already be exhausted.
+    //   allowed before the ceiling of three. Counted, the round after next would already be exhausted.
     const fresh = [];
-    for (let i = 0; i < 2; i++) fresh.push((await run(o({ storage: s7 }))).r.execution_decision);
-    check("  and with every count at zero", fresh, ["ask_user", "exhausted"]);
+    for (let i = 0; i < 3; i++) fresh.push((await run(o({ storage: s7 }))).r.execution_decision);
+    check("  and with every count at zero", fresh, ["ask_user", "ask_user", "exhausted"]);
 
     const s8 = memStorage();
     const later = { ...o({ storage: s8, when: "scheduled" }) };

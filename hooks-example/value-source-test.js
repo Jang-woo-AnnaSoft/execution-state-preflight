@@ -610,7 +610,10 @@ const slotOf = state => (state.fields ?? []).find(f => f.name === SLOT) ?? {};
     const { state: ask0 } = await run({});
     check("ask under ceiling: ask_user", ask0.execution_decision, "ask_user");
     check("  next_ask_attempt counts up", ask0.gate?.next_ask_attempt, 1);
-    const { state: ask2 } = await run({ ask_attempt: 2 });
+    // The default ceiling is three asks: two asked, the third still goes to the user.
+    const { state: ask2u } = await run({ ask_attempt: 2 });
+    check("two asked, default ceiling 3: ask_user", ask2u.execution_decision, "ask_user");
+    const { state: ask2 } = await run({ ask_attempt: 3 });
     check("ask at ceiling: exhausted, not hold", ask2.execution_decision, "exhausted");
     check("  and not NULL — a ceiling is not a report", slotOf(ask2).status, "unknown");
     check("  names the route and the slot", `${ask2.gate?.exhausted?.[0]?.route}:${ask2.gate?.exhausted?.[0]?.names}`,
@@ -630,7 +633,7 @@ const slotOf = state => (state.fields ?? []).find(f => f.name === SLOT) ?? {};
     const { state: limBad } = await run({ limits: { ask: "lots" } });
     check("an unreadable limit falls back to the default, not to none", limBad.execution_decision, "ask_user");
     // Instruction time, same ceiling.
-    const { state: laterEx } = await run({ whenCase: "scheduled", ask_attempt: 2 });
+    const { state: laterEx } = await run({ whenCase: "scheduled", ask_attempt: 3 });
     check("at_instruction, ask at ceiling: exhausted", laterEx.execution_decision, "exhausted");
     // A required NULL at instruction time is judged at the trigger, where its sources are re-read.
     const { state: laterNull } = await run({ whenCase: "scheduled", allowed: only("measured_data"), measure: () => ABSENT });

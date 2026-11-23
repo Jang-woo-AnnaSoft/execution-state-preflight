@@ -231,7 +231,7 @@ Slot states are `known` · `unknown` · `"null"` (a string).
 
 - `"null"` arises only when every allowed source reported `absent` (spec 5.1). A required slot at `"null"` is kept in `gate.unmet` as `kind: "required_null"`, and the decision is `hold`.
 - An unconfirmed slot's route is in `fields[].route`; the sources looked up, and what each returned, are in `fields[].lookup_trace` — `found` · `absent` · `no_place` · `no_report` · `cannot_answer` · `rejected` · `failed` · `candidate`.
-- Asking the user and system lookups each have a ceiling (spec 4.5). The caller brings `ask_attempt` / `lookup_attempt`, and the library returns `gate.next_ask_attempt` / `next_lookup_attempt`. Change the defaults with `createPreflight({ limits: { ask, lookup } })`.
+- Asking the user and system lookups each have a ceiling (spec 4.5). The caller brings `ask_attempt` / `lookup_attempt`, and the library returns `gate.next_ask_attempt` / `next_lookup_attempt`. The defaults are three asks and two lookups; change them with `createPreflight({ limits: { ask, lookup } })`.
 
 ### What to check per source
 
