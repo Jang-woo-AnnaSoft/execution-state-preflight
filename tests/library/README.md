@@ -2,7 +2,7 @@
 
 *The offline tests of [`execution-state-preflight.js`](../../execution-state-preflight.js), with the hooks they run on, and the harness and raw results of the repeated-run test the [case report](../../case-muse-marketplace.en.md) cites. The [main README](../../README.md) links here from "Where to read what".*
 
-This document says only **what the code in this folder does and how to use it**. Why it has to be done that way is in the specification ([`../../spec.en.md`](../../spec.en.md), [`../../spec.ko.md`](../../spec.ko.md)); here it points to the relevant section. Run results are in [`results/`](./results/), with the raw data. Questions this harness may raise (is it a tool, why the hooks are long, why not governance) are answered in the [Author's note](#authors-note) at the end.
+This document says only **what the code in this folder does and how to use it**. Why it has to be done that way is in the specification ([`../../spec.en.md`](../../spec.en.md), [`../../spec.ko.md`](../../spec.ko.md)); here it points to the relevant section. Run results are in [`results/`](./results/), with the raw data.
 
 ### This code is not only for checking the specification.
 
@@ -430,19 +430,3 @@ Arms A and B call the model once per run; arm C calls it per hook (extraction on
 | `crosscheck/` | Runs someone else's case file through the actual library and compares decisions ([`crosscheck/README.md`](./crosscheck/README.md)). Running a case file is not part of `npm run check`; the runner's own test (`crosscheck/runner-test.js`) is |
 | `*-test.js`, `selftest.js` | Offline checks (above) |
 | `results/` | Run results and analysis output ([`results/README.md`](./results/README.md)) |
-
-## Author's note
-
-This section is not usage; it is the author's opinion. It answers questions this harness may raise.
-
-### Is this harness a tool?
-
-It is a specification more than a tool. It applies wherever an execution is irreversible. For example, if you tell a robot "don't open this box," a user checklist item about that box comes into being. That item is not attached only to the task you were doing when you said it. It also applies to any later execution that would open the box while the robot is doing something else. Telling an agent "don't open my mailbox" is the same.
-
-### The hooks are too long.
-
-The hooks and the tool definition (`tool.js`) carry some things that belong in the provider checklist: formats (`FIELD_FORMATS`), where a value may come from (`ALLOWED_SOURCES`), values settled at execution time (`SETTLED_AT_EXECUTION`). There is no place to write such small conditions today (spec 2.5), so the hooks carry them instead. As the provider checklist becomes more precise, the hooks get shorter by that much.
-
-### Wouldn't governance cover this?
-
-Governance permissions can't do everything. Governance answers whether this actor may do this, and the limits a user states with each request don't go there. Today those limits go into the model's prompt. They are forgotten as the conversation grows long, and gone in a new conversation. Even if they are saved, it depends on whether the model reads and follows them. The user checklist belongs not in the prompt but in a place where code checks it against the slots before execution.
