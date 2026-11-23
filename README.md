@@ -31,6 +31,22 @@ The permission was there, the format was right, no policy was broken. One thing 
 
 Such incidents are often classed as "the model misjudged". The precise question is this: **whose part was it to set the time?**
 
+## What this is
+
+A part of the harness, the code around the model that limits what an agent executes. What it proposes is a different scope, different owners of the rules, and a different way to write them.
+
+| | A harness today (usually) | This repository |
+|---|---|---|
+| What is checked | What the agent can do: tools, data access, formats | This call's intent, each value (per slot) and each condition (per line) |
+| Who writes the rules | Usually the developers or the platform team building the agent | Split and declared: the tool provider (the tool's conditions), the user (limits, preferences), the adopting system (common rules) |
+| How the rules are written | Code, configuration, policy files | Sentences: the provider's labelled lines in the tool's description, the user's own words, the adopting system's principles |
+
+What is checked widens from the form of values and conditions to where each value came from, the conditions and the intent. Each part of the responsibility gets a name, and rules are no longer written as code one by one.
+
+Nothing unknown is filled in: it runs only with values found in the user's words or the system's data, or settled by asking. Failures and blocks are recorded, not hidden. A tool declared to go through the gate does not run without a verdict.
+
+**The goal is a confirmed execution; blocking is how it gets there.**
+
 ## What this repository does
 
 It splits the judgments the model was carrying implicitly into items, and gives each item an owner.

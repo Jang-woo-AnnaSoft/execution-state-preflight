@@ -101,54 +101,17 @@ Current practice checks capability and permission, leaves the rest to the model,
 
 Unchanged: schema validation, tool-server checks, permission layers, prompts.
 
-### A rule in a prompt, a hook, or a checklist
+### The broken premise
 
-A hook is code the harness runs before a tool executes.
-
-| | Prompt | Hook | Checklist |
-|---|---|---|---|
-| Written as | Natural language | Code | Natural language (labelled lines) |
-| Read by | The model | The harness | The model too, but the gate reads the tool's definition itself |
-| Who decides it was kept | The model that read it | Code the developer wrote | Code that counts unconfirmed items |
-| Checked against | The model's words | What the code sees, usually the call the model made | Declared sources: the system's data, the user's words |
-| If skipped | Runs, with no mark | Blocked | Stays unconfirmed, and does not run |
-| To change a rule | Edit the sentence | Edit the code and deploy | Edit the sentence |
-
-In a prompt, a sentence is a request. The model reads it and decides whether it kept it, and an output that kept it looks the same as one that skipped it. A hook enforces, but each rule is code a developer writes, and it does not look at where a value came from unless that is built too. The checklist does not replace the hook: a place to stop before execution is still needed, and the hook is that place. What changes is that the code running there no longer grows with each rule.
-
-So one line does two jobs:
-
-- **Safety.** Unlike a prompt, a stated condition is not skipped, and nothing runs while it is unconfirmed.
-- **Developer productivity.** Unlike a hook, nobody writes that guarantee as code. A condition is not turned into an `if`; to change it, edit the sentence. Only a rule that needs system data not yet connected needs one more connection.
-
-### Where this sits
-
-Where work can be undone, let the model act and verify the result; fixing it afterwards is cheaper. An irreversible execution is different. The result cannot be fixed after the fact, so the model has to move inside a declared frame, and the inputs have to be confirmed before execution (spec 1.1).
-
-#### What already exists, and where this goes
-
-| | What it does | What it checks | Who judges |
-|---|---|---|---|
-| Alignment | Makes the AI judge well | The AI's dispositions and values, in training | The AI |
-| Governance | Settles who may act, and under what process | Risk tiers, approval paths, access, audit. Lately also a tool call just before execution, against policy: whether a transfer amount is within the limit | People, through declared policy |
-| Harness | Builds the environment around the model and limits what it can reach | Which tools and data the agent can reach, and whether inputs and outputs match their formats | People set the bounds; within them, the AI fills the arguments |
-| This specification | Checks that what people declared was met, and records it | Where the intent, each value and each condition of this call came from, and who confirmed it, just before execution | People. The AI does not judge |
-
-Loop engineering is a method that runs across these: act, verify, record, repeat. It checks the result after the act, and the checker is often another model. This checks before the act, and moves the criteria and the decision into a separate, declared model of execution and code. It is not a model of a business domain: each tool's own rules stay in the checklists its provider and the user write.
-
-Governance, harness and loop together come close to the domain modeling and finite-state machines of earlier systems. Which values are allowed, and which transitions are possible from which state, are fixed outside the model, and the model moves inside them. That frame is already being built. This does not replace it. It adds back one premise the frame cannot restore.
-
-#### The broken premise
-
-The frame checks whether a value is allowed and whether a transition is possible. It does not check who set the value. It never had to: a person logged in and typed the values, so the input path was the proof of origin.
+A harness checks whether a value is allowed and whether a transition is possible. It does not check who set the value. It never had to: a person logged in and typed the values, so the input path was the proof of origin.
 
 With agents, the execution still runs under the user's session and permissions, and the audit log still says the user executed with this value. But the model wrote it. Nothing was tampered with, and the premise breaks anyway.
 
-So some wrong executions pass the whole frame. In [the reported Meta Muse case](./case-muse-marketplace.en.md), with "Allow Always" on, Muse agreed in the seller's name to the buyer's 8 to 10 p.m., and the buyer came to the seller's building while the seller was out. The permission was there, the format was right, no policy was broken. The seller had not set that time.
+So some wrong executions pass every check. In [the reported Meta Muse case](./case-muse-marketplace.en.md), with "Allow Always" on, Muse agreed in the seller's name to the buyer's 8 to 10 p.m., and the buyer came to the seller's building while the seller was out. The permission was there, the format was right, no policy was broken. The seller had not set that time.
 
 Authority comes from ownership, not accuracy, and a model that answers for nothing cannot hold it (spec 2.1). The model writes the draft; the agent, the code around the model, checks it.
 
-#### What it costs, and where it fits
+### What it costs, and where it fits
 
 The work is not new. To make a call, a model already reads when to run, which act, which tool, the user's limits and the arguments. The gate takes those readings out as separate steps, each with where it was read; code rules on them and writes the record.
 
