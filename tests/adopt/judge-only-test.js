@@ -327,13 +327,15 @@ function askAllGiven(id) {
       }
       return stub(m, sys, u, h);
     };
-    const r = await run("g2-01", "clean", ["This Saturday at 9pm at the Hongdae station lockers. Keep 9pm and drop the 8pm limit.", "yes"], { ask, userChecklist: [] });
+    // [WITHDRAW ALONE] The taking back is asked on its own: one yes for it, then one for the time.
+    const r = await run("g2-01", "clean", ["This Saturday at 9pm at the Hongdae station lockers. Keep 9pm and drop the 8pm limit.", "yes", "yes"], { ask, userChecklist: [] });
     const asked = r.records.find(x => (x.gate?.questions ?? []).some(q => q.kind === "withdraw"));
-    check("the taking back is asked about, with the seller's words", ((asked?.gate?.question_block ?? []).find(l => l.includes("remove this condition")) ?? ""),
-      '"Nothing after 8pm" — remove this condition? (you said: "drop the 8pm limit")');
+    check("the taking back is asked about on its own, with the seller's words",
+      [(asked?.gate?.questions ?? []).map(q => q.kind), (asked?.gate?.question_block ?? []).find(l => l.includes("remove this condition")) ?? ""],
+      [["withdraw"], '"Nothing after 8pm" — remove this condition? (you said: "drop the 8pm limit")']);
     const done = r.records.filter(x => x.execution_decision === "execute").at(-1);
     const eight = (done?.user_checklist ?? []).find(i => i.stated_as === "Nothing after 8pm") ?? {};
-    check("  the seller's yes: 21:00 executes, and the record keeps the condition as withdrawn, with the words",
+    check("  the seller's yes to it, then to the time: 21:00 executes, and the record keeps the condition as withdrawn, with the words",
       [r.last.status, r.calls[0]?.args.time, eight.status, eight.withdrawal?.quote], ["executed", "2026-10-31T21:00:00+09:00", "withdrawn", "drop the 8pm limit"]);
     const prompt = r.prompts.find(p => p.hook === "user_conditions")?.system ?? "";
     check("  the model finding conditions is told never to leave one out that was taken back", /also one they later took back: never leave it out/.test(prompt), true);
