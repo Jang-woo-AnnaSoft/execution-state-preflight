@@ -963,6 +963,18 @@ function askAllGiven(id) {
       [true, [{ trust: "user", field: "value:time", answer: true }]]);
   }
 
+  // 1.44: the executing side reads the verdict for its own call (tool_call.id). The stand-in chat model
+  //   gives no id, as some do: the call is given one, and it stays with the call through the answer.
+  console.log("\n--- the call's id ---");
+  {
+    const g = await run("g1-01", "clean", ["yes"]);
+    const recs = g.records.filter(r => "execution_decision" in r);
+    const verdict = recs.find(r => r.execution_decision === "execute"), result = recs.find(r => r.execution_decision === "executed");
+    check("a call without an id is given one, and the result has the id of the verdict it ran on",
+      [recs.map(r => r.execution_decision), recs.every(r => /^call_/.test(r.tool_call?.id ?? "")), result?.tool_call?.id === verdict?.tool_call?.id, g.calls.length],
+      [["ask_user", "execute", "executed"], true, true, 1]);
+  }
+
   console.log("\n--- [ANSWER SHAPES] ---");
   shapes.report(check);
 

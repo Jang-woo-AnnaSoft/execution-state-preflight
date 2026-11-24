@@ -282,7 +282,7 @@ async function run(id, condition, over = {}) {
   check("judge-only.js loads the library and a validator, nothing else", requires(judgeSrc),
     ["./execution-state-preflight", "../execution-state-preflight", "ajv", "ajv/dist/2020", "ajv-formats", "ajv-formats/dist/formats"]);
   check("middleware.js loads LangChain, LangGraph, zod and this folder's files, nothing else", requires(gateSrc),
-    ["langchain", "@langchain/langgraph", "zod", "./judge-only", "./judge-only-example", "./connect"]);
+    ["langchain", "@langchain/langgraph", "@langchain/langgraph/zod", "zod", "./judge-only", "./judge-only-example", "./connect"]);
   // pattern and format appear only as keys passed through from the schema to the question form.
   check("no comparison of its own: no comparison keyword appears in judge-only.js or middleware.js code",
     ["formatMinimum", "formatMaximum", "const:", "maximum", "not_after", "not_before"].filter(k => src.includes(k)), []);

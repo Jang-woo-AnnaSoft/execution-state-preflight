@@ -196,6 +196,36 @@ const count = (list, hook) => list.filter(h => h === hook).length;
     check("  the gate reads the answer once", later.filter(s => /\byes\b/.test(s.text ?? "")).length, 1);
   }
 
+  // Calls the model makes in one message run side by side: two calls, two gates (spec 1.1). Each writes
+  //   the middleware's state in the same step; before 1.44 LangGraph refused that step after both tools
+  //   had run, and neither result reached the conversation.
+  console.log("\n--- 8. two calls in one message: each judged, each run from its own verdict ---");
+  {
+    const two = [[{ name: TOOL.name, args: { item_id: "LST-2291" }, id: "call_1" }, { name: TOOL.name, args: { item_id: "LST-2291" }, id: "call_2" }], []];
+    const t = setup("g1-01", "clean", { text: ALL_GIVEN, ask: askAllGiven("g1-01"), toolCalls: two });
+    let threw = null, state = null;
+    try { state = await t.start(); } catch (e) { threw = e.message.split("\n")[0]; }
+    const results = (state?.messages ?? []).filter(m => m.getType?.() === "tool").map(m => m.tool_call_id);
+    check("the step is not refused, and both results reach the conversation", [threw, results], [null, ["call_1", "call_2"]]);
+    const recs = await t.store.list(t.key);
+    check("  one verdict and one result for each call, by its id",
+      ["call_1", "call_2"].map(id => recs.filter(r => r.tool_call?.id === id).map(r => r.execution_decision)), [["execute", "executed"], ["execute", "executed"]]);
+    check("  the middleware's state keeps both calls", Object.keys(state?.preflightCalls ?? {}).sort(), ["call_1", "call_2"]);
+
+    // Another call's verdict, written under the same key after this one's: not this call's to run on.
+    const o = setup("g1-01", "clean", { text: ALL_GIVEN, ask: askAllGiven("g1-01") });
+    const persist = o.store.persist;
+    o.store.persist = async (key, record) => {
+      await persist(key, record);
+      if (record?.actor !== "executor" && record?.tool_call?.id === "call_1") {
+        await persist(key, { ...record, tool_call: { ...record.tool_call, id: "call_other" }, call_arguments: { ...record.call_arguments, time: "2026-11-01T09:00:00+09:00" } });
+      }
+      return record;
+    };
+    await o.start();
+    check("  a later verdict for another call is not read: it runs on its own", [o.calls.length, o.calls[0]?.time], [1, SAT_2PM]);
+  }
+
   console.log("\n--- [ANSWER SHAPES] ---");
   shapes.report(check);
 
