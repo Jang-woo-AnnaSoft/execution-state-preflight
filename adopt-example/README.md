@@ -76,7 +76,7 @@ Two places, and nothing else:
 
 ```
 Schedule an in-person pickup for a marketplace item. The buyer sees it at once. Times are in the time zone of the seller's account region.
-The lines below are checked after this tool is called and before it runs: [Required] by the platform from its own data, [Verify] with the user, and [Notice] is told to the user. Call it with what the user said; what is missing is asked or checked then.
+This tool's labelled lines are checked after it is called and before it runs: [Required] by the platform from its own data, [Verify] with the user, and [Notice] is told to the user. Call it with what the user said; what is missing is asked or checked then.
 [Required] The sale must be agreed, as shown by the order status. Only the status "agreed" means agreed.
 [Required] The listing must be the seller's own, as shown by the listing's owner on the platform.
 [Verify] The item is the listing the seller names.
