@@ -558,11 +558,18 @@ function createStorage() {
 //   real model asked for JSON here answered in plain words whenever its own earlier turn was in the
 //   conversation. Without say, ask() is used with a JSON reply. null when no words came back: the caller
 //   asks with the list alone.
+//   The items are the ones code found unsettled, and a value an item shows is one the user has to
+//   confirm (a reading of the user's words put into the declared form, a value carried from an earlier
+//   run, a setting the user did not approve) or choose (the instruction and a setting differ). Real
+//   models (Haiku, gpt-6.2-sol, gpt-6.2-astra) asked the seller to name the place while the list showed
+//   one to approve.
 const QUESTION_SYSTEM =
-  "You ask the user, in conversation, for what is still missing before a tool can run. Write one short " +
-  "message, in the language the user writes in. Ask about every item below, and follow the tool's lines " +
-  "on how to ask. Do not write any value yourself: the values to approve are shown under your message, " +
-  "exactly as they will be used.";
+  "You ask the user, in conversation, about what has to be settled before a tool can run. Write one short " +
+  "message, in the language the user writes in. Every item below is still to be settled: ask about each " +
+  "one, and follow the tool's lines on how to ask. For an item that shows a value, ask the user to confirm " +
+  "it or to say another; for one that offers choices, ask which one; ask for a value only where none is " +
+  "shown. Do not write any value yourself: the values to approve are shown under your message, exactly as " +
+  "they will be used.";
 // What a question is about, as the model writing it and the model reading the reply are told: the same
 //   words for both. A model told only a question's kind guessed: "withdraw" became "Cancel the pickup".
 // [FORM FIELDS] The questions as a form: the library's formSchema (5.2). An app that asks in fields
