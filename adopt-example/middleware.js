@@ -114,6 +114,8 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
     name: "PreflightMiddleware",
     // preflightCalls: what the gate asked and was answered inside each call, by tool call id.
     // preflightLast: how the latest judged call ended, for the app (agent.js reports it). n counts them.
+    // preflightResults: how each judged call ended, by tool call id: the app reads those of the model's
+    //   last message, one for each call it made.
     // Calls the model makes in one message run side by side, and each writes both in the same step: they
     //   are merged, by call id, and the last one to end is kept. Without that, LangGraph refuses the
     //   step after the tools have run, and their results never reach the conversation.
@@ -122,6 +124,8 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
                                     { reducer: { fn: (kept, update) => ({ ...(kept ?? {}), ...(update ?? {}) }) } }),
       preflightLast: withLangGraph(z.any().optional(),
                                    { reducer: { fn: (kept, update) => (update === undefined ? kept : update) } }),
+      preflightResults: withLangGraph(z.record(z.string(), z.any()).default({}),
+                                      { reducer: { fn: (kept, update) => ({ ...(kept ?? {}), ...(update ?? {}) }) } }),
     }),
     wrapToolCall: async (request, handler) => {
       const { toolCall } = request;
@@ -133,7 +137,8 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
       const call = { name: toolCall.name, arguments: toolCall.args ?? null, id: toolCall.id };
       const mine = [];
       const last = { n: (request.state?.preflightLast?.n ?? 0) + 1, tool_call_id: toolCall.id, name: toolCall.name };
-      const ended = outcome => ({ preflightCalls: { ...calls, [toolCall.id]: mine }, preflightLast: { ...last, ...outcome } });
+      const ended = outcome => ({ preflightCalls: { ...calls, [toolCall.id]: mine }, preflightLast: { ...last, ...outcome },
+                                  preflightResults: { [toolCall.id]: { ...last, ...outcome } } });
       const done = (message, outcome) => new Command({ update: { messages: [withExchange(message, mine)], ...ended(outcome) } });
       const reply = (content, status) => new ToolMessage({ content, name: toolCall.name, tool_call_id: toolCall.id, status });
 
