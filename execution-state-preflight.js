@@ -2890,7 +2890,9 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
       timestamp: h.now(),
     };
   }
-  const tool_call = { name: toolCall.name, arguments: toolCall.arguments ?? null };
+  // id: the model's id for this call, as its result goes back under it. Calls made side by side are told
+  //   apart by it: the executing side reads the verdict for its own call, not the latest under the key.
+  const tool_call = { name: toolCall.name, arguments: toolCall.arguments ?? null, id: toolCall.id ?? null };
 
   // Step 1: settle Fixed. Hook failures do not throw — they come back as issues.
   //   BREAKS: move this later and later returns record no action_key, severing the lineage.
@@ -4348,7 +4350,10 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.43",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.44",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.44: tool_call carries id, the model's id for the call (null when the call had none). Two calls
+    //        of one tool in one conversation share a key; the executing side reads the verdict whose
+    //        tool_call.id is its own call's. Records before 1.44 have no id.
     //   1.43: [FORM FIELDS] a user's segment may be a field of a form made from the gate's questions:
     //        { field, answer } or { field, text }. located_at may carry field (and no span for an answer).
     //   1.42: [FORM RUNS] a form proposed for a user's condition that the adopter's validator cannot run
