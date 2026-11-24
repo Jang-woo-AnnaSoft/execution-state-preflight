@@ -441,7 +441,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.43");
+    check("schema_version", persisted?.schema_version, "1.44");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -1212,6 +1212,9 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const args = await run({ measured: ALL_MEASURED }, { toolCall: { name: "schedule_pickup", arguments: { time: "made up by the model" } } });
     check("the model's arguments are recorded, never used as values", [args.r.tool_call?.arguments?.time, field(args.r, "time").value],
       ["made up by the model", SAT_2PM]);
+    // 1.44: the call's id, so that the executing side reads the verdict for its own call.
+    const withId = await run({ measured: ALL_MEASURED }, { toolCall: { name: "schedule_pickup", arguments: {}, id: "call_7" } });
+    check("the record keeps the call's id; a call without one records null", [withId.persisted?.tool_call?.id, persisted?.tool_call?.id], ["call_7", null]);
 
     const down = await run({ measured: ALL_MEASURED, over: { readToolDefinition: () => { throw new Error("server down"); } } });
     check("a definition that cannot be read: definition_repair, \"tool definition not read\"", [down.r.execution_decision, down.r.gate?.kind, /tool definition not read/.test(down.r.reason)],
