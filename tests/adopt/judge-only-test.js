@@ -202,12 +202,15 @@ function askAllGiven(id) {
       [/words that give a field its value \(a time, a place, a way to reach someone\) are values/.test(conds?.system ?? ""),
        /"nothing after 8pm" and "public places only" do/.test(conds?.system ?? "")], [true, true]);
     // The gate's question goes back to the model as its call's result, and the messages are ones the
-    //   model library takes as a call and its result.
-    const heard = g1.heard[1] ?? [];
+    //   model library takes as a call and its result. The answer goes to the waiting call itself (8): the
+    //   model's next turn, after the seller writes again, has the call, the question, the answer, the run.
+    const g1h = await run("g1-01", "clean", ["yes", "thanks"]);
+    const heard = g1h.heard[1] ?? [];
     const at = heard.findIndex(m => m.role === "assistant" && m.tool_calls?.length);
     check("the gate asked: the model's next turn has its call, then the result: the question the seller was shown",
-      [at >= 0, heard[at + 1]?.role, String(heard[at + 1]?.content).startsWith("Not run yet, and nothing has been sent. The system is asking the user first. When the user answers, call the tool again with the same request: the system reads the answer then. The user was shown:\n"), heard.at(-1)],
-      [true, "tool", true, { role: "user", content: "yes" }]);
+      [at >= 0, heard[at + 1]?.role, String(heard[at + 1]?.content).startsWith("Not run yet, and nothing has been sent. The system asked the user first; the call waits for the answer and is judged again with it. The user was shown:\n"),
+       heard[at + 2], heard[at + 4]?.content, heard.at(-1)],
+      [true, "tool", true, { role: "user", content: "yes" }, "Run.", { role: "user", content: "thanks" }]);
     const { coerceMessageLikeToMessage } = require(path.join(__dirname, "..", "..", "adopt-example", "node_modules", "@langchain", "core", "messages"));
     const lc = heard.map(m => coerceMessageLikeToMessage(m));
     check("  as LangChain messages: an AI message with the tool call, then a tool message under its id",
@@ -489,7 +492,7 @@ function askAllGiven(id) {
     //   its call saying "my usual spot" and the place settled from the seller's setting, asked the seller
     //   where that was, outside the gate.
     {
-      const usual = await run("g6-01", "clean", ["yes"], {
+      const usual = await run("g6-01", "clean", ["yes", "thanks"], {
         chat: async () => ({ toolCall: { name: TOOL.name, arguments: { item_id: "LST-2291", time: "2026-10-31T14:00:00+09:00", location: "my usual spot" } } }) });
       const first = verdicts(usual)[0];
       const told = JSON.stringify(usual.heard.at(-1) ?? []);
@@ -639,18 +642,19 @@ function askAllGiven(id) {
     check("  a proposed date-time with a space for the T is not shown: the time is asked with nothing to approve",
       [lp.first.status, lp.first.question?.block?.[0], lpv?.value_checks?.find(c => c.id === "time:candidate")?.status], ["waiting", "time: not given yet", "rejected"]);
     // A real run (Opus 5.5, 1.37): after the seller's yes the model did not call again, and said the
-    //   pickup had been sent. The waiting call goes to the gate again (judge-only-example, 8).
+    //   pickup had been sent. The waiting call goes to the gate again with the answer, and the model is not
+    //   asked first (judge-only-example, 8, as middleware.js).
     const SAID_SENT = "You've confirmed the time, so the pickup request is going ahead. Here's what I sent.";
     const noRecall = (a, inner) => (a?.messages?.at(-1)?.content === "yes" && a.messages.at(-2)?.role === "tool" ? { text: SAID_SENT } : inner(a));
     const rs = await run("g1-01", "clean", ["yes"], { chat: noRecall });
-    check("the model answers the seller's yes in words, without calling: the waiting call is judged again and runs",
-      [rs.last.status, rs.last.resubmitted, rs.calls.map(c => c.args.time), rs.records.filter(x => x.actor !== "executor").map(x => x.execution_decision)],
-      ["executed", true, ["2026-10-31T14:00:00+09:00"], ["ask_user", "execute"]]);
+    check("the seller's yes goes to the waiting call: judged again with it, and it runs; the model is not asked",
+      [rs.last.status, rs.heard.length, rs.calls.map(c => c.args.time), rs.records.filter(x => x.actor !== "executor").map(x => x.execution_decision)],
+      ["executed", 1, ["2026-10-31T14:00:00+09:00"], ["ask_user", "execute"]]);
     check("  and what the model said is not shown or kept: it said the pickup had been sent before anything ran",
       [rs.last.reply, rs.heard.flat().some(m => String(m?.content ?? "").includes("going ahead"))], [undefined, false]);
     const rc = await run("g1-01", "order_cancelled", ["yes"], { chat: noRecall });
     check("  after a call that did not run, nothing waits: the model's words are its reply, nothing judged again",
-      [rc.last.status, rc.last.resubmitted, rc.calls.length, rc.records.filter(x => x.actor !== "executor").length], ["replied", undefined, 0, 1]);
+      [rc.last.status, rc.calls.length, rc.records.filter(x => x.actor !== "executor").length], ["replied", 0, 1]);
     // [ANSWER CARRIED] A real run (Haiku 5.5, 1.37): the item line was put in the form of a user approval,
     //   asked with the time, and approved in "yes, but make it Saturday 7pm". The next round asked the new
     //   time only. In the round after, the reader placed the item's yes on the last "yes", which answered
@@ -933,9 +937,11 @@ function askAllGiven(id) {
     const f4 = await run("g1-01", "clean", [{ answers: { "value:time": 3 } }]);
     check("  a field of the wrong kind is not taken: still waiting, the record says so",
       [f4.last.status, f4.records.some(x => (x.value_checks ?? []).some(c => c.target === "value:time" && c.status === "rejected"))], ["waiting", true]);
-    const f5 = await run("g1-01", "clean", [{ answers: { action: "decline" } }]);
-    check("  declined: nothing is written, and the same question waits",
-      [f5.last.status, (f5.last.question?.questions ?? []).map(q => q.target)], ["waiting", qs1.map(q => q.target)]);
+    // As middleware.js: a declined form ends the call. Nothing runs, and the question stays open: the next
+    //   call is asked it again.
+    const f5 = await run("g1-01", "clean", [{ answers: { action: "decline" } }, "go ahead with the pickup"]);
+    check("  declined: the call ends, nothing runs, and the next call is asked the same question",
+      [f5.calls.length, (f5.last.question?.questions ?? []).map(q => q.target)], [0, qs1.map(q => q.target)]);
     // The real run (gpt-6.2-sol, f-g2-01-late, 1.42): a form's answers in fixed lines were read again by the
     //   model that reads the user's conditions, as taking back "Nothing after 8pm". Fields are not words.
     const noType = inner => async (m, system, user, hook) =>
@@ -973,6 +979,56 @@ function askAllGiven(id) {
     check("a call without an id is given one, and the result has the id of the verdict it ran on",
       [recs.map(r => r.execution_decision), recs.every(r => /^call_/.test(r.tool_call?.id ?? "")), result?.tool_call?.id === verdict?.tool_call?.id, g.calls.length],
       [["ask_user", "execute", "executed"], true, true, 1]);
+  }
+
+  // Several calls in one message, as agent.js takes them (spec 1.1: two calls, two gates): one instruction,
+  //   two tools, each its own key. Before, the loop took the first call only: the second was neither judged
+  //   nor recorded, and the model never saw it again.
+  console.log("\n--- several calls in one message ---");
+  {
+    const OTHER = { ...TOOL, name: `${TOOL.name}_copy` };
+    // The stand-in model makes two calls on its first turn, and answers as before after that.
+    const twoCalls = names => { let first = true; return (a, inner) => (first ? (first = false, { toolCalls: names.map((n, i) => ({ name: n, arguments: {}, id: `c${i + 1}` })) }) : inner(a)); };
+    const begin = async (over = {}, names = [TOOL.name, OTHER.name]) => {
+      const s = standIn("g1-01", "clean", { chat: twoCalls(names), ...over });
+      s.connect.listTools = async () => [TOOL, OTHER];
+      s.connect.readToolDefinition = async name => [TOOL, OTHER].find(t => t.name === name);
+      const main = createMain({ connect: s.connect }), threadId = `j${++thread}`;
+      return { s, main, threadId, first: await main.turn({ threadId, message: { typed: "(stand-in)" } }) };
+    };
+    const given = await begin({ text: ALL_GIVEN, ask: askAllGiven("g1-01") });
+    const recs = [...await given.s.connect.store.list(`user:${TOOL.name}:${given.threadId}`), ...await given.s.connect.store.list(`user:${OTHER.name}:${given.threadId}`)];
+    check("nothing to ask: each call is judged and runs, each from its own verdict",
+      [given.first.status, given.first.results.map(r => [r.tool_call_id, r.status]), given.s.calls.length,
+       ["c1", "c2"].map(id => recs.filter(r => r.tool_call?.id === id).map(r => r.execution_decision))],
+      ["several", [["c1", "executed"], ["c2", "executed"]], 2, [["execute", "executed"], ["execute", "executed"]]]);
+
+    const w = await begin();
+    check("  both ask: both wait, each with its question, and the message shows both",
+      [w.first.status, (w.first.waiting ?? []).map(x => [x.tool_call_id, x.question.questions.map(q => q.target)]),
+       (w.first.waiting ?? []).every(x => w.first.question.message.includes(x.question.message)), w.s.calls.length],
+      ["waiting", [["c1", ["value:time"]], ["c2", ["value:time"]]], true, 0]);
+    const typed = await w.main.turn({ threadId: w.threadId, message: { typed: "yes" } });
+    check("  a yes typed after both: each call reads it for its own question, and each runs",
+      [typed.status, typed.results.map(r => [r.tool_call_id, r.status]), w.s.calls.length], ["several", [["c1", "executed"], ["c2", "executed"]], 2]);
+
+    const f = await begin();
+    const byCall = await f.main.turn({ threadId: f.threadId, answers: { c1: { "value:time": true } } });
+    check("  a form answered for one call: that one runs; the other had no answer, and does not",
+      [byCall.status, byCall.results.map(r => [r.tool_call_id, r.status]), f.s.calls.length], ["several", [["c1", "executed"], ["c2", "cancelled"]], 1]);
+
+    const u = await begin();
+    let refused = null;
+    try { await u.main.turn({ threadId: u.threadId, answers: { "value:time": true } }); } catch (e) { refused = e.message; }
+    check("  a form's answers not given by call, with two waiting: refused, nothing runs",
+      [/by tool call id/.test(refused ?? ""), u.s.calls.length], [true, 0]);
+
+    // The same tool twice in one message: one tool, one key, one unit. The model made the second call.
+    //   The first runs, and the unit is done; the second is a new request to it, and is asked again.
+    const same = await begin({}, [TOOL.name, TOOL.name]);
+    const again = await same.main.turn({ threadId: same.threadId, message: { typed: "yes" } });
+    check("  the same tool twice: the first runs; the second, a new request after it, is asked again",
+      [again.status, again.results.map(r => [r.tool_call_id, r.status]), same.s.calls.length], ["waiting", [["c1", "executed"], ["c2", "waiting"]], 1]);
   }
 
   // Spec 4.5: a route at its limit is not tried again. The asks for what is wanted ran out; the model calls

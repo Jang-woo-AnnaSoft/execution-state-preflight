@@ -210,7 +210,6 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
   //   next reply, if one was given, goes in.
   const indent = t => String(t ?? "").split("\n").map(l => "    " + l).join("\n");
   const show = res => {
-    if (res.resubmitted) console.log("\n→ the model did not call again after the answer; the waiting call was judged again");
     if (res.status === "waiting") console.log(`\n→ waiting. The gate's question, as shown to the seller:\n${indent(res.question.message)}`);
     else if (res.status === "replied") console.log(`\n→ the assistant answered in words, without calling the tool (the gate did not run):\n${indent(res.reply)}`);
     else if (res.status === "not_executed") console.log(`\n→ not executed. What the seller is told:\n${indent(res.message)}`);

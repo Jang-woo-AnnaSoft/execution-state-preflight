@@ -379,15 +379,19 @@ function askAllGiven(id) {
   }
   check("35 runs: the same decision", mismatched, []);
 
-  // Two calls in one message, both waiting on a question (spec 1.1: two calls, two gates). Each question is
+  // Two calls in one message, of two tools, both waiting on a question (spec 1.1: two calls, two gates). Each question is
   //   shown, and an answer goes to the call it was given for (spec 6.3). Before, agent.js showed the first
   //   question only, and its answer was handed to both calls: the second ran on a question never shown.
   console.log("\n--- the demonstration: two calls in one message, both asking ---");
   {
     const { FakeToolCallingModel } = require(path.join(ADOPT, "node_modules", "langchain"));
-    const two = () => [[{ name: TOOL.name, args: {}, id: "c1" }, { name: TOOL.name, args: {}, id: "c2" }], []];
+    // One instruction, two tools: each its own key (one tool, one key).
+    const OTHER = { ...TOOL, name: `${TOOL.name}_copy` };
+    const two = () => [[{ name: TOOL.name, args: {}, id: "c1" }, { name: OTHER.name, args: {}, id: "c2" }], []];
     const begin = async () => {
       const s = standIn("g1-01", "clean");
+      s.connect.listTools = async () => [TOOL, OTHER];
+      s.connect.readToolDefinition = async name => [TOOL, OTHER].find(t => t.name === name);
       s.connect.chatModel = async () => new FakeToolCallingModel({ toolCalls: two() });
       const agent = createAgent({ connect: s.connect }), threadId = `t${++thread}`;
       return { s, agent, threadId, first: await agent.start({ threadId, message: { typed: "(stand-in)" } }) };
