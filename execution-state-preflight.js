@@ -3252,6 +3252,12 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
   //   a yes to the value only made the item askable, and it took the next question; a real model's run
   //   ran out of asks on "between 1pm and 6pm" after the seller had said "Saturday 3pm".
   async function buildQuestions({ askFields, approveItems, formItems, withdrawItems = [], values = [], waitingItems = [] }) {
+    // [WITHDRAW ALONE] A condition the user's later words may take back is asked on its own, before
+    //   anything else: removing it is a new declaration of the user's (3.5), and a yes is for it alone.
+    //   Asked with the values, one short yes after several questions answered each of them, and a real
+    //   model's run removed "Nothing after 8pm" on the yes the seller gave to the time and the place.
+    //   The rest is asked in the next question, once this one is answered.
+    if (withdrawItems.length > 0) { askFields = []; approveItems = []; formItems = []; waitingItems = []; }
     const questions = [], block = [], checks = [];
     const shownValues = {};
     for (const f of askFields) {
@@ -4350,7 +4356,10 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.44",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.45",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.45: [WITHDRAW ALONE] a question that asks whether to remove a condition the user took back asks
+    //        nothing else: gate.questions holds only withdraw questions then, while fields still to be
+    //        asked keep route ask_user and are asked in the next question.
     //   1.44: tool_call carries id, the model's id for the call (null when the call had none). Two calls
     //        of one tool in one conversation share a key; the executing side reads the verdict whose
     //        tool_call.id is its own call's. Records before 1.44 have no id.
