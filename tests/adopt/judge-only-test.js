@@ -1016,6 +1016,11 @@ function askAllGiven(id) {
     const byCall = await f.main.turn({ threadId: f.threadId, answers: { c1: { "value:time": true } } });
     check("  a form answered for one call: that one runs; the other had no answer, and does not",
       [byCall.status, byCall.results.map(r => [r.tool_call_id, r.status]), f.s.calls.length], ["several", [["c1", "executed"], ["c2", "cancelled"]], 1]);
+    // Spec 6.4: not running it is the executing side's decision, recorded as its own on the verdict that waited.
+    const c2recs = (await f.s.connect.store.list(`user:${OTHER.name}:${f.threadId}`)).filter(x => "execution_decision" in x);
+    check("  the executing side records that it did not run the unanswered one, and why",
+      [c2recs.map(x => `${x.actor ?? "gate"}:${x.execution_decision}`), /did not answer the question \(decline\)/.test(c2recs.at(-1)?.reason ?? "")],
+      [["gate:ask_user", "executor:not_executed"], true]);
 
     const u = await begin();
     let refused = null;

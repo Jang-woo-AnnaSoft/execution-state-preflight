@@ -132,6 +132,10 @@ const count = (list, hook) => list.filter(h => h === hook).length;
     const state = await t.resume({ action: "decline" });
     const m = t.toolResult(state);
     check("declined: not run, nothing written as an answer", [t.calls.length, m?.status, /did not answer/.test(String(m?.content))], [0, "error", true]);
+    // Spec 6.4: not running it is the executing side's decision, recorded as its own on the verdict that waited.
+    const mine = (await t.store.list(t.key)).filter(x => x?.tool_call?.id === "call_1" && "execution_decision" in x);
+    check("  the executing side records that it did not run it, and why", [mine.map(x => `${x.actor ?? "gate"}:${x.execution_decision}`), /did not answer the question \(decline\)/.test(mine.at(-1)?.reason ?? "")],
+      [["gate:ask_user", "executor:not_executed"], true]);
     await t.say("go ahead with the pickup");
     const again = (await t.waiting())[0];
     check("  the next call is asked the same question", (again?.questions ?? []).map(x => x.target), (first?.questions ?? []).map(x => x.target));
