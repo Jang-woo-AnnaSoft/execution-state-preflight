@@ -379,6 +379,40 @@ function askAllGiven(id) {
   }
   check("35 runs: the same decision", mismatched, []);
 
+  // Two calls in one message, both waiting on a question (spec 1.1: two calls, two gates). Each question is
+  //   shown, and an answer goes to the call it was given for (spec 6.3). Before, agent.js showed the first
+  //   question only, and its answer was handed to both calls: the second ran on a question never shown.
+  console.log("\n--- the demonstration: two calls in one message, both asking ---");
+  {
+    const { FakeToolCallingModel } = require(path.join(ADOPT, "node_modules", "langchain"));
+    const two = () => [[{ name: TOOL.name, args: {}, id: "c1" }, { name: TOOL.name, args: {}, id: "c2" }], []];
+    const begin = async () => {
+      const s = standIn("g1-01", "clean");
+      s.connect.chatModel = async () => new FakeToolCallingModel({ toolCalls: two() });
+      const agent = createAgent({ connect: s.connect }), threadId = `t${++thread}`;
+      return { s, agent, threadId, first: await agent.start({ threadId, message: { typed: "(stand-in)" } }) };
+    };
+    const w = await begin();
+    check("both wait, each with its question, and the message shows both",
+      [w.first.status, (w.first.waiting ?? []).map(x => [x.tool_call_id, x.question.questions.map(q => q.target)]),
+       (w.first.waiting ?? []).every(x => w.first.question.message.includes(x.question.message)), w.s.calls.length],
+      ["waiting", [["c1", ["value:time"]], ["c2", ["value:time"]]], true, 0]);
+    const typed = await w.agent.reply({ threadId: w.threadId, message: { typed: "yes" } });
+    check("  a yes typed after both: each call reads it for its own question, and each runs",
+      [typed.status, typed.results.map(r => [r.tool_call_id, r.status]), w.s.calls.length], ["several", [["c1", "executed"], ["c2", "executed"]], 2]);
+
+    const f = await begin();
+    const byCall = await f.agent.reply({ threadId: f.threadId, answers: { c1: { "value:time": true } } });
+    check("  a form answered for one call: that one runs; the other had no answer, and does not",
+      [byCall.status, byCall.results.map(r => [r.tool_call_id, r.status]), f.s.calls.length], ["several", [["c1", "executed"], ["c2", "cancelled"]], 1]);
+
+    const u = await begin();
+    let refused = null;
+    try { await u.agent.reply({ threadId: u.threadId, answers: { "value:time": true } }); } catch (e) { refused = e.message; }
+    check("  a form's answers not given by call, with two waiting: refused, nothing runs",
+      [/by tool call id/.test(refused ?? ""), u.s.calls.length], [true, 0]);
+  }
+
   console.log("\n--- [ANSWER SHAPES] ---");
   shapes.report(check);
 
