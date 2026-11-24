@@ -441,7 +441,7 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
     const LIMIT = { id: "chk_evening", label: "Required", stated_as: "Nothing after 8pm.", constrains: ["time"] };
     const { r, persisted } = await run({ measured: ALL_MEASURED, tool: tool("Schedule a pickup.\n[Notice] The buyer sees it immediately.") },
       { userChecklist: [LIMIT] });
-    check("schema_version", persisted?.schema_version, "1.44");
+    check("schema_version", persisted?.schema_version, "1.45");
     check("value_checks", persisted?.value_checks?.length, r.value_checks.length);
     check("unverified_value_check_count", persisted?.unverified_value_check_count, r.unverified_value_check_count);
     check("checklist_digest", persisted?.checklist_digest, r.checklist_digest);
@@ -902,6 +902,18 @@ const cond = (r, i = 0) => (r.provider_checklist ?? [])[i] ?? {};
       const c2 = await run({ storage: sC, instruction: conv(), extract: exLate, measured: ALL_MEASURED, over: over([withBack]) });
       const ci = (c2.r.user_checklist ?? []).find(i => i.extracted) ?? {};
       check("  a carried condition taken back in the new words: asked to confirm", [ci.withdrawal?.status, c2.r.execution_decision], ["proposed", "ask_user"]);
+      // [WITHDRAW ALONE] With a value still to ask (no place), the taking back is asked on its own: a yes
+      //   is for it alone. The value is asked in the next question.
+      const exNoPlace = { item_id: exLate.item_id, time: exLate.time };
+      const sA = memStorage();
+      const a1 = await run({ storage: sA, instruction: conv(), extract: exNoPlace, measured: ALL_MEASURED, over: over([withBack]) });
+      check("  with a value still to ask: the taking back is asked alone, the value waits",
+        [(a1.r.gate?.questions ?? []).map(q => q.kind), a1.r.execution_decision, (a1.r.fields ?? []).find(f => f.name === "location")?.route],
+        [["withdraw"], "ask_user", "ask_user"]);
+      const a2 = await run({ storage: sA, instruction: conv({ trust: "user", text: "yes" }), extract: exNoPlace, measured: ALL_MEASURED, over: over([withBack]) });
+      const ai2 = (a2.r.user_checklist ?? []).find(i => i.extracted) ?? {};
+      check("    its yes removes the condition and nothing else: the place is asked next",
+        [ai2.withdrawal?.status, (a2.r.gate?.questions ?? []).map(q => q.target), a2.r.execution_decision], ["confirmed", ["value:location"], "ask_user"]);
     }
 
     const only = "Pick up LST-2291, Hongdae station lockers. Nothing after 8pm.";
