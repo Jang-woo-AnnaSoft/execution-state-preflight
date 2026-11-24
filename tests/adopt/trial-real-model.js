@@ -179,7 +179,8 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
       const t = turnsOf.get(runId); if (!t) return;
       const m = out.generations?.[0]?.[0]?.message;
       t.entry.seconds = (Date.now() - t.t0) / 1000;
-      t.entry.reply = m?.tool_calls?.length ? { toolCall: { name: m.tool_calls[0].name, arguments: m.tool_calls[0].args, id: m.tool_calls[0].id } } : { text: m?.content };
+      // Every call the model made in the turn: calls side by side are each judged (spec 1.1).
+      t.entry.reply = m?.tool_calls?.length ? { toolCalls: m.tool_calls.map(c => ({ name: c.name, arguments: c.args, id: c.id })) } : { text: m?.content };
       console.log(`  [${String(log.calls.indexOf(t.entry) + 1).padStart(2)}] ${"agent_chat".padEnd(16)} ${t.entry.seconds.toFixed(1).padStart(5)}s  ${short(t.entry.reply)}`);
     },
     handleLLMError(e, runId) { const t = turnsOf.get(runId); if (t) { t.entry.error = String(e?.message ?? e); t.entry.seconds = (Date.now() - t.t0) / 1000; } },
@@ -189,7 +190,7 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
     // agent.js, with what it returns put the way judge-only-example.js puts it: a verdict not to run is
     //   not_executed, with what the seller is told.
     const agent = createAgent({ connect, system, callbacks });
-    const norm = res => (["executed", "waiting", "replied", "call_failed", "tool_error"].includes(res.status) ? res
+    const norm = res => (["executed", "waiting", "replied", "call_failed", "tool_error", "several"].includes(res.status) ? res
       : { ...res, status: "not_executed", decision: res.status, message: res.stop?.message ?? "", reason: res.verdict?.reason ?? null });
     let started = false;
     return { turn: async ({ threadId, message, answers, userChecklist }) => {
@@ -213,6 +214,7 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
     if (res.status === "waiting") console.log(`\n→ waiting. The gate's question, as shown to the seller:\n${indent(res.question.message)}`);
     else if (res.status === "replied") console.log(`\n→ the assistant answered in words, without calling the tool (the gate did not run):\n${indent(res.reply)}`);
     else if (res.status === "not_executed") console.log(`\n→ not executed. What the seller is told:\n${indent(res.message)}`);
+    else if (res.status === "several") console.log(`\n→ several calls, each judged on its own:\n${indent((res.results ?? []).map(x => `${x.tool_call_id} ${x.name}: ${x.status}`).join("\n"))}`);
   };
   let n = 0;
   show(r);
@@ -234,8 +236,10 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
     show(r);
   }
 
-  const tool = (await real.listTools())[0];
-  const records = await store.list(`user:${tool.name}:${threadId}`);
+  // The records of every declared tool (one tool, one key): a model may call more than one.
+  const listedTools = await real.listTools(), tool = listedTools[0];
+  const records = [];
+  for (const t of listedTools) records.push(...await store.list(`user:${t.name}:${threadId}`));
   const rec = records.filter(x => x && "execution_decision" in x && x.actor !== "executor").at(-1) ?? null;
   log.records = records;
   log.tool_calls = calls;
@@ -256,7 +260,8 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
       for (const c of rec.user_checklist) console.log(`    ${String(c.status).padEnd(22)} ${short(c.stated_as ?? c.description ?? "", 70)}`);
     }
   }
-  console.log(`tool called:       ${calls.length ? short(calls[0].args, 300) : "no"}`);
+  console.log(`tool called:       ${calls.length === 0 ? "no" : calls.length === 1 ? short(calls[0].args, 300)
+    : `${calls.length} calls: ${calls.map(c => `${c.name} ${short(c.args, 200)}`).join(" | ")}`}`);
   if (id === "g1-01" && condition === "clean") {
     const got = calls[0]?.args?.time ?? null;
     console.log(`expected:          executed, time ${EXPECT_TIME}`);
