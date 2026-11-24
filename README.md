@@ -35,6 +35,19 @@ Everyday requests leave blanks the same way. "Send this to the team lead tomorro
 
 Agents often do not stop when refused. They ask again in other words, or take another route to the same result ([examples](./model-reasons-agent-executes.en.md#a-block-taken-as-a-problem-to-solve)).
 
+## People and models speak differently
+
+An agent is usually designed as "run it if the input is exact, block the rest". But a model has been rewarded for finishing tasks, so it takes a block as a failure. It replaces an inexact input with a plausible value, and when that is blocked too, it tries another route to the same result.
+
+The same words mean different things. What is complete to a person has blanks to a tool, and the model fills them. "They said no" is, to a model, a signal to find another way.
+
+This repository can be read this way:
+
+- People's words need not be exact; a tool's must be. What the model used to fill in at will is checked against the declared forms and sources of the values.
+- Where the model routed around a block, the stop becomes a normal result that keeps its reason, and the blank goes back to whoever can fill it (the user, the system, or whoever declares it), so it returns to the form of a conversation.
+- The model translates: condition sentences into a form that can be compared, places in the user's words, the questions to ask. Code counts the unconfirmed items and records them. Whether it runs, the executing side decides by reading that record.
+- The translations stay in the record for review. Blocked attempts and unconfirmed items are recorded too. After an incident the question changes from "why did the model put this value in?" to "which source settled this slot, and if it was empty, whose part was it?"
+
 ## What this is
 
 A part of the harness, the code around the model that limits what an agent executes. What it proposes is a different scope, different owners of the rules, and a different way to write them.
