@@ -188,7 +188,7 @@ function askAllGiven(id) {
     check("the extraction prompt: report the user's words for a field even when they are not in its form",
       found?.user.includes("Report the user's words for a field even when they are not in the field's declared form"), true);
     check("  and words that point to a value kept elsewhere are not the value",
-      found?.user.includes('Words that point to a value given elsewhere are not the value: "my usual spot", "same place as last time", "the usual". For such a field report {"found": false}'), true);
+      found?.user.includes('Words that point to a value given elsewhere are not the value: "my usual spot", "same place as last time", "the usual". For such a field report it as not found'), true);
     check("  the proposal prompt: the value from the user's words, what the form needs beyond it from the other segments",
       [Boolean(proposed), /The value itself, which moment or which thing, comes only from the user's words/.test(proposed?.system ?? ""),
        /such as the year, or the time zone the tool's description points to, may be taken from the other segments/.test(proposed?.system ?? ""),
@@ -269,8 +269,8 @@ function askAllGiven(id) {
         const at = segs.findIndex(x => x.trust === "user" && x.text.includes("This Saturday at 3pm"));
         return { item_id: { found: true, value: "LST-2291", segment_index: 3 },
           ...(at >= 0 ? { time: { found: true, value: "This Saturday at 3pm", segment_index: at }, location: { found: true, value: "Hongdae station lockers", segment_index: at } }
-                      : { time: { found: false }, location: { found: false } }),
-          buyer_contact: { found: false } };
+                      : { time: { found: false, value: null, segment_index: null }, location: { found: false, value: null, segment_index: null } }),
+          buyer_contact: { found: false, value: null, segment_index: null } };
       }
       if (h === "propose_value") return { value: /^Field: time:/m.test(u) && /This Saturday at 3pm/.test(u) ? "2026-10-31T15:00:00+09:00" : null };
       if (h === "replies") {
@@ -310,7 +310,7 @@ function askAllGiven(id) {
         const at = segs.findIndex(x => x.trust === "user" && x.text.includes("This Saturday at 9pm"));
         return { item_id: { found: true, value: "LST-2291", segment_index: 3 },
           ...(at >= 0 ? { time: { found: true, value: "This Saturday at 9pm", segment_index: at }, location: { found: true, value: "Hongdae station lockers", segment_index: at } }
-                      : { time: { found: false }, location: { found: false } }), buyer_contact: { found: false } };
+                      : { time: { found: false, value: null, segment_index: null }, location: { found: false, value: null, segment_index: null } }), buyer_contact: { found: false, value: null, segment_index: null } };
       }
       if (h === "propose_value") return { value: /^Field: time:/m.test(u) && /This Saturday at 9pm/.test(u) ? "2026-10-31T21:00:00+09:00" : null };
       if (h === "replies") {
@@ -353,7 +353,7 @@ function askAllGiven(id) {
         const at = segs.findIndex(x => x.trust === "user" && x.text.includes("This Saturday at 3pm"));
         return { item_id: { found: true, value: "LST-2291", segment_index: 3 },
           ...(at >= 0 ? { time: { found: true, value: "This Saturday at 3pm", segment_index: at }, location: { found: true, value: "Hongdae station lockers", segment_index: at } }
-                      : { time: { found: false }, location: { found: false } }), buyer_contact: { found: false } };
+                      : { time: { found: false, value: null, segment_index: null }, location: { found: false, value: null, segment_index: null } }), buyer_contact: { found: false, value: null, segment_index: null } };
       }
       if (h === "propose_value") return { value: /^Field: time:/m.test(u) && /This Saturday at 3pm/.test(u) ? "2026-10-31T15:00:00+09:00" : null };
       if (h === "replies") {
@@ -785,7 +785,7 @@ function askAllGiven(id) {
       if (hook === "extraction") {
         const segs = JSON.parse(user.slice(user.indexOf("[", user.indexOf("Segments:")), user.indexOf("\n\nFields to locate")));
         const i = segs.findIndex(sg => sg.trust === "user" && sg.text.includes("noon Saturday"));
-        out.ready_by = i < 0 ? { found: false } : { found: true, value: "noon Saturday", segment_index: i };
+        out.ready_by = i < 0 ? { found: false, value: null, segment_index: null } : { found: true, value: "noon Saturday", segment_index: i };
       }
       return out;
     };
@@ -1051,6 +1051,38 @@ function askAllGiven(id) {
     check("the same words, called five times: asked twice, then it stays exhausted", same, ["ask_user", "ask_user", "exhausted", "exhausted", "exhausted"]);
     const later = [...conversation, { trust: "assistant", text: "What would you like done?" }, { trust: "user", text: "the pickup, please" }];
     check("  the user writes again: a new request, asked again", await decision(later), "ask_user");
+  }
+
+  // Anthropic's structured outputs take at most 24 optional keys in a request (every key not in required
+  //   counts). The shape for reading a tool's fields grows with the tool: it keeps none optional, so a tool
+  //   with many fields still runs. The fixed shapes stay well under the limit.
+  console.log("\n--- optional keys in the answer shapes ---");
+  {
+    const { extractionShape, SHAPES } = require(path.join(ADOPT, "judge-only"));
+    const optional = s => {
+      if (!s || typeof s !== "object") return 0;
+      let n = 0;
+      if (s.properties) {
+        const req = new Set(s.required ?? []);
+        for (const [k, v] of Object.entries(s.properties)) n += (req.has(k) ? 0 : 1) + optional(v);
+      }
+      for (const k of ["items", "additionalProperties"]) if (s[k] && typeof s[k] === "object") n += optional(s[k]);
+      for (const k of ["anyOf", "oneOf", "allOf"]) for (const b of s[k] ?? []) n += optional(b);
+      return n;
+    };
+    const fields = Array.from({ length: 30 }, (_, i) => `field_${i + 1}`);
+    check("a tool with 30 fields: the extraction shape has no optional key",
+      [optional(extractionShape(fields)), optional(extractionShape(Object.keys(TOOL.inputSchema.properties)))], [0, 0]);
+    const most = Math.max(...Object.values(SHAPES).map(optional));
+    check("  every fixed shape stays well under 24", [most < 24, most], [true, most]);
+    // Found, with no words or no place: no claim to check. Not found: absent.
+    const { createHooks } = require(path.join(ADOPT, "judge-only"));
+    const h = createHooks({ ask: async () => ({ item_id: { found: true, value: null, segment_index: null }, time: { found: false, value: null, segment_index: null } }),
+                            readToolDefinition: async () => TOOL });
+    await h.readToolDefinition(TOOL.name);
+    const said = [{ trust: "user", text: "Set up the pickup." }];
+    check("  read back: found with no words is no claim; not found is absent",
+      [await h.extractFromInstruction("item_id", said), await h.extractFromInstruction("time", said)], [undefined, { none: "absent" }]);
   }
 
   console.log("\n--- [ANSWER SHAPES] ---");
