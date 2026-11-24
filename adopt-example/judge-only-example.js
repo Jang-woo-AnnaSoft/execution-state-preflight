@@ -22,8 +22,10 @@
  *      hand it the tool list, you may also take the labelled lines out (judge.toolsForModel, hideLines).
  *   7. Show the provider's notices to the user before the tool runs (spec 3.3). They go with every
  *      question; when nothing was asked, show them before the call (judge.notices, connect.notify).
- *   8. When the user answers a question, put the call that waits on it to the gate again, whether or not
- *      the model calls (waitingCall). Show the gate's verdict, not the model's words.
+ *   8. Put each call the model makes through the gate on its own (spec 1.1), and keep what each waits
+ *      on. When the user answers, put the calls that wait to the gate again with the answer, as they were
+ *      made: the call waits for its answer, as in middleware.js. Show the gate's verdict, not the model's
+ *      words.
  *
  *   const { createMain } = require("./judge-only-example");
  *   const main = createMain();
@@ -33,8 +35,11 @@
  *   // or, from a form: answerSchema(r.question.questions) is the form (LangGraph: interrupt(payload,
  *   //   { responseSchema })); its answers come back as the user's segments, one per field, read by the gate
  *   r = await main.turn({ threadId, answers: { "value:time": true } });
- *   // r.status "executed", or "replied", "not_executed" (r.message tells the user why), "call_failed", "tool_error"
- *   // r.resubmitted: the model did not call again after the answer, and the waiting call was judged again
+ *   // r.status "executed", or "replied", "not_executed" (r.message tells the user why), "cancelled" (the
+ *   //   form was declined: nothing ran, and the question stays open), "call_failed", "tool_error"
+ *   // Several calls in one message: r.waiting has each one that waits, with its question, and
+ *   //   r.question.message shows them all; a form's answers then go by call ({ [tool_call_id]: fields }).
+ *   //   r.results has how each call ended; with several, r.status is "several". As agent.js reports it.
  *
  * Or from a terminal: node judge-only-example.js "Set up the pickup for LST-2291, 2pm this Saturday,
  * Hongdae station lockers."
@@ -96,8 +101,8 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
   });
   // Your agent's own state: each conversation, in order, with who wrote each part.
   const conversations = new Map();
-  // The question each conversation waits on, for answers that come from a form (answerSchema).
-  const waitingQuestion = new Map();
+  // The calls each conversation waits on, each with the question it asked: { toolCall, question }.
+  const waiting = new Map();
 
   // Your model writes the words of the question (writeQuestion). The values are not its to write: they
   //   go under its words as code wrote them.
@@ -107,61 +112,22 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
     return { text: words, block: r.block, questions: r.questions, message: [words, ...r.block.map(l => `- ${l}`)].join("\n") };
   }
 
-  // One message from the user: the first of a conversation, or the answer to a question. The same
-  //   threadId for every turn of one conversation.
-  //   answers: instead of a message, the answers to the questions asked, from a form built with
-  //   answerSchema (LangGraph: interrupt(payload, { responseSchema }), then Command({ resume }); MCP
-  //   elicitation's { action, content }). Each field becomes the user's segment (labelInput({ form })),
-  //   read by the gate itself. Declined or cancelled: nothing is written, and the same question waits.
-  async function turn({ threadId, message, answers, userChecklist = [] }) {
-    const conversation = conversations.get(threadId) ?? [];
-    conversations.set(threadId, conversation);
-    const incoming = answers !== undefined ? connect.labelInput({ form: answers }) : connect.labelInput(message);
-    if (answers !== undefined && incoming.length === 0 && waitingQuestion.has(threadId)) {
-      return { status: "waiting", question: waitingQuestion.get(threadId), answered: "nothing (declined or cancelled)" };
-    }
-    conversation.push(...incoming);                                                            // 1
-
-    const listed = await connect.listTools();
-    const tools = hideLines ? judge.toolsForModel(listed) : listed;                           // 6
-    const out = await connect.chat({ system, messages: messagesFor(conversation), tools });
-    let toolCall, resubmitted = false;
-    if (!out?.toolCall || typeof out.toolCall.name !== "string") {
-      // 8. A call the gate is waiting on, and the user has answered: it goes to the gate again, whether
-      //   or not the model calls. A real model (Opus 5.5) took the user's yes as the end of it, did not
-      //   call, and told the user the pickup had been sent; nothing had run. Only the gate's verdict says
-      //   what happens next, so the model's words are not shown: the user sees what the gate decides
-      //   (it runs, it asks, or it tells why not). A user who asked something else in between gets the
-      //   gate's question again, not the model's answer: that is the cost of not showing words that
-      //   may say something ran. Change it here if your app shows both.
-      const pending = waitingCall(conversation);
-      if (!pending) {
-        const text = typeof out?.text === "string" ? out.text : "";
-        if (text) conversation.push({ trust: "assistant", text });
-        return { status: "replied", reply: text };
-      }
-      toolCall = pending;
-      resubmitted = true;
-    } else {
-      // The call's id ties the verdict to this call (tool_call.id in the record). A model that gave none
-      //   gets one here, once, and it stays with the call (afterCall, waitingCall).
-      toolCall = { name: out.toolCall.name, arguments: out.toolCall.arguments ?? null, id: out.toolCall.id ?? `call_${randomUUID()}` };
-    }
-
+  // One call, through the gate: judged, then asked about, or run from its record, or not run. Its result
+  //   goes into the conversation as the call's own (afterCall), and what it ended as is returned, with the
+  //   call's id. Each call the model makes goes through here on its own (spec 1.1).
+  async function runCall(threadId, conversation, toolCall, userChecklist) {
+    const own = { tool_call_id: toolCall.id, name: toolCall.name };
     const r = await judge.run({ unitKey: threadId, conversation, toolCall, userChecklist });   // 3
-    waitingQuestion.delete(threadId);
     if (r.questions.length > 0) {
       const question = await askUser(conversation, r);                                         // 2
-      waitingQuestion.set(threadId, question);
       conversation.push(afterCall(toolCall, "waiting", question.message, r.settled));
-      return { status: "waiting", question, notices: r.notices, ...(resubmitted ? { resubmitted } : {}) };
+      return { ...own, status: "waiting", question, notices: r.notices, toolCall };
     }
     // The gate could not tell what is wanted, or which tool it maps to. Its own words are shown as they
-    //   are; the user says it again, and the next turn judges again.
+    //   are, and answered in words.
     if (r.ask && r.message) {
       conversation.push(afterCall(toolCall, "waiting", r.message));
-      return { status: "waiting", question: { text: r.message, block: [], message: r.message, options: r.options }, notices: r.notices,
-               ...(resubmitted ? { resubmitted } : {}) };
+      return { ...own, status: "waiting", question: { text: r.message, block: [], message: r.message, options: r.options }, notices: r.notices, toolCall };
     }
 
     // 4. Nothing to ask. Read the record this round wrote, and decide from it: the latest verdict for this
@@ -176,8 +142,7 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
         : await writeStop({ ask: connect.ask, say: connect.say, model }, { record, conversation });
       if (record?.action_key) await judge.recordResult(record, { executed: false, why, ...extra });      // 5
       conversation.push(afterCall(toolCall, "not_executed", stop.message));
-      return { status: "not_executed", reason: record?.reason ?? r.reason, message: stop.message, stop: stop.facts, notices: r.notices,
-               ...(resubmitted ? { resubmitted } : {}) };
+      return { ...own, status: "not_executed", reason: record?.reason ?? r.reason, message: stop.message, stop: stop.facts, notices: r.notices };
     };
     const why = whyNotReady(record, toolCall.name);
     if (why !== null) return notRun(why);
@@ -200,36 +165,101 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
       const error = String(e?.message ?? e);
       await judge.recordResult(record, { ok: false, error, told });                            // 5
       conversation.push(afterCall(toolCall, "failed", error));
-      return { status: "call_failed", callError: error };
+      return { ...own, status: "call_failed", callError: error };
     }
     if (result && typeof result === "object" && (result.isError === true || result.inputRequired)) {
       const error = result.inputRequired ? "the tool asked for more input instead of completing"
         : ((result.content ?? []).map(c => c?.text ?? "").join(" ").trim() || "the tool reported an error");
       await judge.recordResult(record, { ok: false, error, told });
       conversation.push(afterCall(toolCall, "failed", error));
-      return { status: "tool_error", callError: error };
+      return { ...own, status: "tool_error", callError: error };
     }
     await judge.recordResult(record, { ok: true, told });                                      // 5
     conversation.push(afterCall(toolCall, "executed"));
-    return { status: "executed", executedWith: args, notices: r.notices, told, ...(resubmitted ? { resubmitted } : {}) };
+    return { ...own, status: "executed", executedWith: args, notices: r.notices, told };
+  }
+
+  // The answers for each waiting call (spec 6.3: an answer is for the question shown). From a form: with
+  //   one call waiting, its fields as they are; with several, { [tool_call_id]: fields }. A call given no
+  //   answer has none (declined).
+  function answersByCall(pending, answers) {
+    const ids = pending.map(p => p.toolCall.id);
+    const keyed = answers !== null && typeof answers === "object" && !Array.isArray(answers)
+      && Object.keys(answers).length > 0 && Object.keys(answers).every(k => ids.includes(k));
+    if (keyed) return answers;
+    if (pending.length > 1) throw new Error("several calls are waiting: give the answers by tool call id, { [tool_call_id]: answers }");
+    return { [ids[0]]: answers };
+  }
+
+  // One message from the user: the first of a conversation, or the answer to what waits. The same
+  //   threadId for every turn of one conversation.
+  //   answers: instead of a message, the answers to the questions asked, from a form built with
+  //   answerSchema (LangGraph: interrupt(payload, { responseSchema }), then Command({ resume }); MCP
+  //   elicitation's { action, content }). Each field becomes the user's segment (labelInput({ form })),
+  //   read by the gate itself.
+  async function turn({ threadId, message, answers, userChecklist = [] }) {
+    const conversation = conversations.get(threadId) ?? [];
+    conversations.set(threadId, conversation);
+    const pending = waiting.get(threadId) ?? [];
+    let results;
+    if (pending.length > 0) {
+      // 8. The answer to what waits. Each waiting call goes to the gate again with it, as it was made; the
+      //   model is not asked first (the call waits for its answer, as in middleware.js). Words typed are
+      //   one message, read by the gate question by question for each call (all were shown). A call whose
+      //   form was declined or cancelled ends: nothing runs, and the question stays open for a next call.
+      const byCall = answers !== undefined ? answersByCall(pending, answers) : null;
+      if (!byCall) conversation.push(...connect.labelInput(message));                          // 1
+      waiting.delete(threadId);
+      results = [];
+      for (const p of pending) {
+        if (byCall) {
+          const fields = connect.labelInput({ form: byCall[p.toolCall.id] ?? { action: "decline" } });
+          if (fields.length === 0) {
+            conversation.push(afterCall(p.toolCall, "not_answered", p.question.message));
+            results.push({ tool_call_id: p.toolCall.id, name: p.toolCall.name, status: "cancelled" });
+            continue;
+          }
+          conversation.push(...fields);
+        }
+        results.push(await runCall(threadId, conversation, p.toolCall, userChecklist));
+      }
+    } else {
+      if (answers !== undefined) throw new Error("nothing is waiting for answers in this conversation");
+      conversation.push(...connect.labelInput(message));                                        // 1
+      const listed = await connect.listTools();
+      const tools = hideLines ? judge.toolsForModel(listed) : listed;                         // 6
+      const out = await connect.chat({ system, messages: messagesFor(conversation), tools });
+      // Every call the model made, in order. A call without an id is given one, once: the verdict is tied
+      //   to the call by it (tool_call.id in the record), and it stays with the call while it waits.
+      const calls = (Array.isArray(out?.toolCalls) ? out.toolCalls : out?.toolCall ? [out.toolCall] : [])
+        .filter(c => c && typeof c.name === "string")
+        .map(c => ({ name: c.name, arguments: c.arguments ?? null, id: c.id ?? `call_${randomUUID()}` }));
+      if (calls.length === 0) {
+        const text = typeof out?.text === "string" ? out.text : "";
+        if (text) conversation.push({ trust: "assistant", text });
+        return { status: "replied", reply: text, results: [] };
+      }
+      results = [];
+      for (const c of calls) results.push(await runCall(threadId, conversation, c, userChecklist));
+    }
+
+    // What waits now, and how each call ended. With one call, its own result, as before; with several,
+    //   status "several" and each in results. Every waiting question is shown (r.question.message).
+    const waits = results.filter(x => x.status === "waiting");
+    const shown = results.map(({ toolCall, ...x }) => x);
+    if (waits.length > 0) {
+      waiting.set(threadId, waits.map(x => ({ toolCall: x.toolCall, question: x.question })));
+      const one = waits.length === 1 ? waits[0] : null;
+      return { status: "waiting",
+               question: one ? one.question : { message: waits.map(x => x.question.message).join("\n\n"), calls: waits.map(x => x.tool_call_id) },
+               waiting: waits.map(x => ({ tool_call_id: x.tool_call_id, name: x.name, question: x.question, notices: x.notices })),
+               notices: [...new Set(waits.flatMap(x => x.notices ?? []))], results: shown };
+    }
+    if (shown.length === 1) return { ...shown[0], results: shown };
+    return { status: "several", results: shown };
   }
 
   return { turn };
-}
-
-// The call the gate is waiting on (8): the latest call's result is "waiting", and only the user has
-//   written since. Its name, arguments and id are the model's call as it was made; nothing is added.
-function waitingCall(conversation) {
-  for (let i = (conversation ?? []).length - 1; i >= 0; i--) {
-    const s = conversation[i];
-    if (s?.after_call) {
-      const c = s.after_call;
-      return c.status === "waiting" && typeof c.name === "string" && i < conversation.length - 1
-        ? { name: c.name, arguments: c.arguments ?? null, id: c.id ?? null } : null;
-    }
-    if (s?.trust === "assistant") return null;
-  }
-  return null;
 }
 
 module.exports = { createMain, readyToExecute, whyNotReady, systemPrompt };

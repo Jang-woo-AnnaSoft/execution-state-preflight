@@ -605,10 +605,14 @@ async function writeQuestion({ ask, say, model = "model" }, { questions, convers
 //   real model, shown the gate's reason as something it had said itself, took it back on the next turn
 //   as made up ("I never called the scheduling tool"). A segment from afterCall carries the call.
 //   waiting: a real model (Opus 5.5), told only that the system was asking, took the user's yes as the end
-//   of it, did not call again, and told the user the pickup had been sent. Nothing had run.
+//   of it, did not call again, and told the user the pickup had been sent. Nothing had run. The call waits
+//   for the answer and is judged again with it (judge-only-example.js, 8): its result follows.
+//   not_answered: the user declined or cancelled the form; nothing ran, and the question stays open.
 const CALL_RESULT = {
-  waiting: "Not run yet, and nothing has been sent. The system is asking the user first. When the user answers, " +
-           "call the tool again with the same request: the system reads the answer then. The user was shown:",
+  waiting: "Not run yet, and nothing has been sent. The system asked the user first; the call waits for the " +
+           "answer and is judged again with it. The user was shown:",
+  not_answered: "Not run, and nothing has been sent: the user did not answer. The question stays open; " +
+                "if the user still wants this, call the tool again and the system asks again. The user was shown:",
   not_executed: "Not run. The user was told:",
   executed: "Run.",
   failed: "The call failed:",

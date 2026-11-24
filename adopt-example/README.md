@@ -264,9 +264,13 @@ breaking one leaves a record that is right about an execution that was not.
    a run asks nothing, `judge.notices(record)` gives the ones not yet shown: show them (`notify`), then
    call the tool, and `recordResult` records which were told. A run that has a notice to show and no
    way to show it does not execute.
-8. **Judge the waiting call again when the user answers** (`waitingCall`). A model may take the answer
-   as the end of it and not call again, and tell the user it was done. The call the gate is waiting on
-   goes to the gate again either way, and the user sees what the gate decides, not the model's words.
+8. **Put each call through the gate on its own, and judge the waiting calls again when the user
+   answers.** A model may make several calls in one message: each is judged, run and answered on its
+   own (spec 1.1), and every question that waits is shown. The user's answer goes to the calls that wait,
+   as they were made, without asking the model first: a model may take the answer as the end of it and
+   tell the user it was done. With several waiting, a form's answers go by call (`{ [tool_call_id]:
+   fields }`); a call whose form is declined ends without running. This is how the middleware does it
+   (section 5).
 
 **When nothing runs, tell the user why.** `writeStop` (in `judge-only.js`) hands your model the
 library's `stopFacts` for the record: the condition in its own words, whose it is, what was found.
@@ -348,7 +352,13 @@ r = await agent.reply({ threadId, message: { typed: "yes" } });
 Use one `threadId` per conversation, for every turn of it. The gate reads what it asked in that
 conversation from its records, and a reply counts only for a question asked there, in the user's
 words after it. If the model calls another tool, that is another unit: the first one's records stay
-as they are.
+as they are. One tool is one unit in a conversation: a second call of the same tool after it ran is a
+new request, and is asked again.
+
+**Several calls in one message.** Each is judged on its own. `r.waiting` has every call that waits,
+with its question, and `r.question.message` shows them all; a form's answers then go by call
+(`agent.reply({ threadId, answers: { [tool_call_id]: fields } })`). `r.results` has how each call
+ended; with several, `r.status` is `several`.
 
 **What a run can end as.** `executed` means the tool completed with the record's arguments. Anything
 else means it did not: the gate's own reasons (`hold`, `definition_repair`, `exhausted` …), the user's

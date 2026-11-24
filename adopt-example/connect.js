@@ -109,16 +109,16 @@ async function say(_model, system, user) {
 }
 
 // The agent's model, with the server's tools bound as they are listed: name, description, input
-//   schema. → { toolCall: { name, arguments, id } } or { text }. id is the model's id for the call: its
-//   result goes back under it (messagesFor).
+//   schema. → { toolCalls: [{ name, arguments, id }, …] }, every call the model made, or { text }. id is
+//   the model's id for the call: its result goes back under it (messagesFor).
 async function chat({ system, messages, tools }) {
   const m = await model();
   const bound = m.bindTools(tools.map(t => ({
     type: "function", function: { name: t.name, description: t.description ?? "", parameters: t.inputSchema ?? { type: "object" } },
   })));
   const res = await bound.invoke([...(system ? [{ role: "system", content: system }] : []), ...messages]);
-  const call = (res.tool_calls ?? [])[0];
-  return call ? { toolCall: { name: call.name, arguments: call.args ?? null, id: call.id ?? null } } : { text: textOf(res) };
+  const calls = (res.tool_calls ?? []).map(c => ({ name: c.name, arguments: c.args ?? null, id: c.id ?? null }));
+  return calls.length > 0 ? { toolCalls: calls } : { text: textOf(res) };
 }
 
 // ── the tools: your declaration, and your call ─────────────────────────────────────────────────
