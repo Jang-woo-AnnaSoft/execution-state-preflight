@@ -198,10 +198,10 @@ const SHAPES = {
   question: obj({ message: STR }),
   stop: obj({ message: STR }),
 };
-// Extraction: one entry for each of the tool's fields, found or not. Each entry has two optional keys,
-//   and Anthropic's structured outputs take at most 24 optional keys in a request: a tool with more than
-//   12 input fields is refused there, and the extraction fails (unconfirmed, so nothing runs on it).
-const extractionShape = names => obj(Object.fromEntries(names.map(n => [n, obj({ found: BOOL, value: STR, segment_index: INT }, ["found"])])));
+// Extraction: one entry for each of the tool's fields, found or not. Every key is required, null where
+//   there is nothing: Anthropic's structured outputs take at most 24 optional keys in a request, so a
+//   shape that grows with the tool's fields keeps none of its own optional.
+const extractionShape = names => obj(Object.fromEntries(names.map(n => [n, obj({ found: BOOL, value: nullable(STR), segment_index: nullable(INT) })])));
 // A form as the gate keeps it: the JSON Schema written as text read back. Text that is not a JSON
 //   object is no form. A form already in its kept shape (a stand-in, an adopter's own hook) is taken as
 //   it is.
@@ -251,7 +251,7 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
       `\n\nFields to locate:\n${fieldsOf(tool)}\n\n` +
       "For each field return either\n" +
       '  {"found": true, "value": "<the exact words, copied from one trust:user segment>", "segment_index": <int>}\n' +
-      'or {"found": false}\n\n' +
+      'or {"found": false, "value": null, "segment_index": null}\n\n' +
       "value must be copied character for character. Do not derive, infer, convert or reformat.\n" +
       // Report the words even when they are not in the field's form: a model that read the form as a
       //   requirement on the quote found no time in "2pm this Saturday", and the time was never settled.
@@ -260,7 +260,7 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
       // Words that point to a value kept elsewhere: a real model read "at my usual spot" as the place
       //   "my usual spot", and "same place as last time" as a place, and the pickup ran with them.
       "Words that point to a value given elsewhere are not the value: \"my usual spot\", \"same place as last " +
-      "time\", \"the usual\". For such a field report {\"found\": false}; the value is looked up where it is kept.\n\n" +
+      "time\", \"the usual\". For such a field report it as not found; the value is looked up where it is kept.\n\n" +
       `Reply as {${Object.keys(props).map(n => `"${n}": ...`).join(", ")}}`;
     return call(system, user, "extraction", extractionShape(Object.keys(props)));
   }
@@ -333,6 +333,8 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
       if (hit?.found === false) return { none: "absent" };
       if (!hit || hit.found !== true) return undefined;
       const { value, segment_index } = hit;
+      // Found, but no words or no place given: no claim to check.
+      if (typeof value !== "string" || !Number.isInteger(segment_index)) return undefined;
       const seg = (instruction ?? [])[segment_index];
       return { value, segment_index, span: locateQuote(seg?.text, value) };
     },
