@@ -194,6 +194,12 @@ function askAllGiven(id) {
        /such as the year, or the time zone the tool's description points to, may be taken from the other segments/.test(proposed?.system ?? ""),
        /If the user named a day of the week, the date you write falls on that day/.test(proposed?.system ?? "")],
       [true, true, true, true]);
+    // Real models asked the seller to name the place while the list showed one to approve (g6-02, g6-03).
+    const asking = g1.prompts.find(p => p.hook === "question");
+    check("  the question prompt: every item is still to be settled; a shown value is confirmed, a value asked only where none is shown",
+      [/Every item below is still to be settled: ask about each one/.test(asking?.system ?? ""),
+       /For an item that shows a value, ask the user to confirm it or to say another; for one that offers choices, ask which one; ask for a value only where none is shown\./.test(asking?.system ?? "")],
+      [true, true]);
     // A smaller model quoted the whole request as the action's name, and took the values for conditions.
     const named = g1.prompts.find(p => p.hook === "action_name"), conds = g1.prompts.find(p => p.hook === "user_conditions");
     check("  the action-name prompt: the few words that name the act, not the whole request",
