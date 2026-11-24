@@ -43,9 +43,9 @@ The same words mean different things. What is complete to a person has blanks to
 
 This repository can be read this way:
 
-- People's words need not be exact; a tool's must be. What the model used to fill in at will is checked against the declared forms and sources of the values.
+- People's words need not be exact; a tool's must be. What the model used to fill in at will is checked: the intent against the user's words, the values against their declared forms and sources.
 - Where the model routed around a block, the stop becomes a normal result that keeps its reason, and the blank goes back to whoever can fill it (the user, the system, or whoever declares it), so it returns to the form of a conversation.
-- The model translates: condition sentences into a form that can be compared, places in the user's words, the questions to ask. Code counts the unconfirmed items and records them. Whether it runs, the executing side decides by reading that record.
+- The model translates: condition sentences, written by their owners, into a form that can be compared, places in the user's words, the questions to ask. Code counts what is unconfirmed in the intent, values and conditions, and records it. Whether it runs, the executing side decides by reading that record.
 - The translations stay in the record for review. Blocked attempts and unconfirmed items are recorded too. After an incident the question changes from "why did the model put this value in?" to "which source settled this slot, and if it was empty, whose part was it?"
 
 ## What this is
