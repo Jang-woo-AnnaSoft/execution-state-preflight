@@ -975,6 +975,23 @@ function askAllGiven(id) {
       [["ask_user", "execute", "executed"], true, true, 1]);
   }
 
+  // Spec 4.5: a route at its limit is not tried again. The asks for what is wanted ran out; the model calls
+  //   again with nothing new from the user. Before, the count started again and the user was asked again.
+  console.log("\n--- the asks for what is wanted, once they run out ---");
+  {
+    const ctx = S.conditions.clean.context, date = S.date_modes.said;
+    const inner = makeAsk("g1-01");
+    const ask = async (m, s, u, hook, sh) => (hook === "action_name" ? { action_name: null } : inner(m, s, u, hook, sh));
+    const judge = createJudge({ ask, measure: measurePort(measuredFor(ctx, date)), readToolDefinition: async n => [TOOL].find(t => t.name === n), storage: createStorage() });
+    const conversation = buildUserTurn(ctx, "LST-2291, 2pm this Saturday, Hongdae station lockers.", date).segments;
+    const decision = async c => (await judge.run({ unitKey: "intent", conversation: c, toolCall: { name: TOOL.name, arguments: {}, id: "c" } })).reason.split(":")[0];
+    const same = [];
+    for (let i = 0; i < 5; i++) same.push(await decision(conversation));
+    check("the same words, called five times: asked twice, then it stays exhausted", same, ["ask_user", "ask_user", "exhausted", "exhausted", "exhausted"]);
+    const later = [...conversation, { trust: "assistant", text: "What would you like done?" }, { trust: "user", text: "the pickup, please" }];
+    check("  the user writes again: a new request, asked again", await decision(later), "ask_user");
+  }
+
   console.log("\n--- [ANSWER SHAPES] ---");
   shapes.report(check);
 
