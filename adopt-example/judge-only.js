@@ -756,8 +756,12 @@ function createJudge({ ask, measure, readToolDefinition, measurements = [], stor
     throw new Error("createJudge: storage with persist, load and list is required");
   }
   let round = 0;
-  // How often each conversation was asked to restate what it wants done (see judgeRound).
+  // How often each conversation was asked to restate what it wants done (see judgeRound): { attempt,
+  //   exhaustedAt }. Once the asks ran out (spec 4.5: a route at its limit is not tried again), the count
+  //   stays until the user writes again (the library's rule: re-entry only from a new utterance). A call
+  //   the model makes again without new words from the user ends as it did.
   const intentAttempts = new Map();
+  const userWords = conversation => (conversation ?? []).filter(s => s?.trust === "user").length;
 
   // unitKey: the same for every turn of one conversation. A reply counts only for a question asked in it.
   // conversation: every segment so far, each with who wrote it ("user" only for what the user typed).
@@ -766,13 +770,17 @@ function createJudge({ ask, measure, readToolDefinition, measurements = [], stor
     round += 1;
     const settings = preSetData !== undefined ? preSetData
       : typeof readPreSet === "function" ? ((await readPreSet(userId, toolCall?.name)) ?? {}) : {};
+    const kept = intentAttempts.get(unitKey), said = userWords(conversation);
+    const intentAttempt = !kept ? 0 : kept.exhaustedAt === undefined || kept.exhaustedAt === said ? kept.attempt : 0;
     const st = await judgeRound({ ask, model, runId: `${runId}-${round}`, unitKey, measure, readToolDefinition, measurements,
-                                  storage, userId, conversation, toolCall, userChecklist,
-                                  intentAttempt: intentAttempts.get(unitKey) ?? 0,
+                                  storage, userId, conversation, toolCall, userChecklist, intentAttempt,
                                   preSetData: settings, priorExecutionState });
-    // Raised only while the gate keeps asking for a restatement; anything else starts the count again.
+    // Raised while the gate keeps asking for a restatement; kept where it ran out; anything else starts
+    //   the count again.
     const next = st.gate?.next_intent_attempt;
-    if (Number.isInteger(next)) intentAttempts.set(unitKey, next); else intentAttempts.delete(unitKey);
+    if (Number.isInteger(next)) intentAttempts.set(unitKey, { attempt: next });
+    else if (st.gate?.kind === "intent_undetermined_exhausted") intentAttempts.set(unitKey, { attempt: intentAttempt, exhaustedAt: said });
+    else intentAttempts.delete(unitKey);
     const asking = st.execution_decision === "ask_user";
     return {
       key: st.action_key ?? null,
