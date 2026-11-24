@@ -42,6 +42,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { randomUUID } = require("crypto");
 const { createJudge, writeQuestion, writeStop, messagesFor, afterCall } = require("./judge-only");
 const defaultConnect = require("./connect");
 
@@ -142,7 +143,9 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
       toolCall = pending;
       resubmitted = true;
     } else {
-      toolCall = { name: out.toolCall.name, arguments: out.toolCall.arguments ?? null, id: out.toolCall.id ?? null };
+      // The call's id ties the verdict to this call (tool_call.id in the record). A model that gave none
+      //   gets one here, once, and it stays with the call (afterCall, waitingCall).
+      toolCall = { name: out.toolCall.name, arguments: out.toolCall.arguments ?? null, id: out.toolCall.id ?? `call_${randomUUID()}` };
     }
 
     const r = await judge.run({ unitKey: threadId, conversation, toolCall, userChecklist });   // 3
@@ -161,8 +164,10 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
                ...(resubmitted ? { resubmitted } : {}) };
     }
 
-    // 4. Nothing to ask. Read the record this round wrote, and decide from it.
-    const record = r.key ? (await connect.store.list(r.key)).filter(x => x && "execution_decision" in x).at(-1) : null;
+    // 4. Nothing to ask. Read the record this round wrote, and decide from it: the latest verdict for this
+    //   call (tool_call.id), not the latest under the key.
+    const record = r.key ? (await connect.store.list(r.key))
+      .filter(x => x && "execution_decision" in x && x.tool_call?.id === toolCall.id).at(-1) ?? null : null;
     // Not ready: the user is told why, from the record this round wrote (writeStop). The words go into the
     //   conversation as the call's result, so the next turn starts from what the user was told.
     //   The decision is the executing side's own, so it is recorded as its own (spec 6.4), executed or not.

@@ -22,6 +22,7 @@
 
 const { createMiddleware, ToolMessage, HumanMessage, AIMessage } = require("langchain");
 const { interrupt, Command } = require("@langchain/langgraph");
+const { withLangGraph } = require("@langchain/langgraph/zod");
 const { z } = require("zod");
 const { createJudge, writeQuestion, writeStop, answerSchema, afterCall, messagesFor } = require("./judge-only");
 const { whyNotReady } = require("./judge-only-example");   // the executing side's own reading of the record
@@ -113,8 +114,15 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
     name: "PreflightMiddleware",
     // preflightCalls: what the gate asked and was answered inside each call, by tool call id.
     // preflightLast: how the latest judged call ended, for the app (agent.js reports it). n counts them.
-    stateSchema: z.object({ preflightCalls: z.record(z.string(), z.array(z.any())).default({}),
-                            preflightLast: z.any().optional() }),
+    // Calls the model makes in one message run side by side, and each writes both in the same step: they
+    //   are merged, by call id, and the last one to end is kept. Without that, LangGraph refuses the
+    //   step after the tools have run, and their results never reach the conversation.
+    stateSchema: z.object({
+      preflightCalls: withLangGraph(z.record(z.string(), z.array(z.any())).default({}),
+                                    { reducer: { fn: (kept, update) => ({ ...(kept ?? {}), ...(update ?? {}) }) } }),
+      preflightLast: withLangGraph(z.any().optional(),
+                                   { reducer: { fn: (kept, update) => (update === undefined ? kept : update) } }),
+    }),
     wrapToolCall: async (request, handler) => {
       const { toolCall } = request;
       if (!gated(toolCall.name)) return handler(request);
@@ -163,8 +171,11 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
         mine.push(...segments);
       }
 
-      // Nothing to ask. The executing side decides from the record this step wrote (spec 3.5).
-      const record = r.key ? (await store.list(r.key)).filter(x => x && "execution_decision" in x).at(-1) : null;
+      // Nothing to ask. The executing side decides from the record this step wrote (spec 3.5): the latest
+      //   verdict for this call (tool_call.id). Another call of the same tool in this conversation shares
+      //   the key; its verdict is not this call's.
+      const record = r.key ? (await store.list(r.key))
+        .filter(x => x && "execution_decision" in x && x.tool_call?.id === toolCall.id).at(-1) ?? null : null;
       const notRun = async (why, extra = {}) => {
         const stop = r.message ? { message: r.message, facts: null }
           : await writeStop({ ask: connect.ask, say: connect.say, model }, { record, conversation: [...base, ...mine] });

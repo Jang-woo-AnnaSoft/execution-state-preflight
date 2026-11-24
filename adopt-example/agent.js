@@ -84,7 +84,8 @@ function createAgent({ connect = defaultConnect, userId = "user", system = syste
     const state = snapshot.values ?? {};
     if (waiting) {
       // What the gate decided, read from its record, as the app may read it.
-      const rec = waiting.record_key ? (await connect.store.list(waiting.record_key)).filter(x => x && "execution_decision" in x).at(-1) : null;
+      const rec = waiting.record_key ? (await connect.store.list(waiting.record_key))
+        .filter(x => x && "execution_decision" in x && x.tool_call?.id === waiting.tool_call_id).at(-1) ?? null : null;
       return { status: "waiting", verdict: { decision: rec?.execution_decision ?? null, reason: rec?.reason ?? null }, question: { text: waiting.text, block: waiting.block, message: waiting.message,
                                               questions: waiting.questions, ...(waiting.options ? { options: waiting.options } : {}) },
                disclosures: waiting.notices ?? [], reply: null, executedWith: null, stop: null };
