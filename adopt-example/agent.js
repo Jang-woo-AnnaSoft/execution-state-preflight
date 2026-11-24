@@ -91,7 +91,7 @@ function createAgent({ connect = defaultConnect, userId = "user", system = syste
       ? (last.decision && !["execute", "ask_user"].includes(last.decision) ? last.decision : "not_executed") : last.status,
     executedWith: last.executedWith ?? null, disclosures: (last.told ?? []).map(d => d.description),
     serverRequests: last.serverRequests ?? null, callError: last.callError ?? null, stop: last.stop ?? null,
-    verdict: { decision: last.decision ?? null, reason: last.reason ?? null },
+    why: last.why ?? null, verdict: { decision: last.decision ?? null, reason: last.reason ?? null },
   });
 
   async function report(a, config, before) {

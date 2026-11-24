@@ -112,6 +112,10 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
     return { text: words, block: r.block, questions: r.questions, message: [words, ...r.block.map(l => `- ${l}`)].join("\n") };
   }
 
+  // The latest verdict for one call under its key (tool_call.id), not the latest under the key.
+  const verdictFor = async (key, id) => (key ? (await connect.store.list(key))
+    .filter(x => x && "execution_decision" in x && x.tool_call?.id === id).at(-1) ?? null : null);
+
   // One call, through the gate: judged, then asked about, or run from its record, or not run. Its result
   //   goes into the conversation as the call's own (afterCall), and what it ended as is returned, with the
   //   call's id. Each call the model makes goes through here on its own (spec 1.1).
@@ -121,19 +125,18 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
     if (r.questions.length > 0) {
       const question = await askUser(conversation, r);                                         // 2
       conversation.push(afterCall(toolCall, "waiting", question.message, r.settled));
-      return { ...own, status: "waiting", question, notices: r.notices, toolCall };
+      return { ...own, status: "waiting", question, notices: r.notices, toolCall, key: r.key };
     }
     // The gate could not tell what is wanted, or which tool it maps to. Its own words are shown as they
     //   are, and answered in words.
     if (r.ask && r.message) {
       conversation.push(afterCall(toolCall, "waiting", r.message));
-      return { ...own, status: "waiting", question: { text: r.message, block: [], message: r.message, options: r.options }, notices: r.notices, toolCall };
+      return { ...own, status: "waiting", question: { text: r.message, block: [], message: r.message, options: r.options }, notices: r.notices, toolCall, key: r.key };
     }
 
     // 4. Nothing to ask. Read the record this round wrote, and decide from it: the latest verdict for this
     //   call (tool_call.id), not the latest under the key.
-    const record = r.key ? (await connect.store.list(r.key))
-      .filter(x => x && "execution_decision" in x && x.tool_call?.id === toolCall.id).at(-1) ?? null : null;
+    const record = await verdictFor(r.key, toolCall.id);
     // Not ready: the user is told why, from the record this round wrote (writeStop). The words go into the
     //   conversation as the call's result, so the next turn starts from what the user was told.
     //   The decision is the executing side's own, so it is recorded as its own (spec 6.4), executed or not.
@@ -213,10 +216,16 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
       results = [];
       for (const p of pending) {
         if (byCall) {
-          const fields = connect.labelInput({ form: byCall[p.toolCall.id] ?? { action: "decline" } });
+          const given = byCall[p.toolCall.id] ?? { action: "decline" };
+          const fields = connect.labelInput({ form: given });
           if (fields.length === 0) {
+            // Not answered: the call ends without running. That is the executing side's decision, recorded
+            //   as its own (spec 6.4), on the verdict that waited for the answer.
+            const waited = await verdictFor(p.key, p.toolCall.id);
+            const why = `the user did not answer the question (${typeof given?.action === "string" ? given.action : "no answer"})`;
+            if (waited?.action_key) await judge.recordResult(waited, { executed: false, why });          // 5
             conversation.push(afterCall(p.toolCall, "not_answered", p.question.message));
-            results.push({ tool_call_id: p.toolCall.id, name: p.toolCall.name, status: "cancelled" });
+            results.push({ tool_call_id: p.toolCall.id, name: p.toolCall.name, status: "cancelled", reason: waited?.reason ?? null, why });
             continue;
           }
           conversation.push(...fields);
@@ -246,9 +255,9 @@ function createMain({ connect = defaultConnect, userId = "user", system = system
     // What waits now, and how each call ended. With one call, its own result, as before; with several,
     //   status "several" and each in results. Every waiting question is shown (r.question.message).
     const waits = results.filter(x => x.status === "waiting");
-    const shown = results.map(({ toolCall, ...x }) => x);
+    const shown = results.map(({ toolCall, key, ...x }) => x);
     if (waits.length > 0) {
-      waiting.set(threadId, waits.map(x => ({ toolCall: x.toolCall, question: x.question })));
+      waiting.set(threadId, waits.map(x => ({ toolCall: x.toolCall, question: x.question, key: x.key })));
       const one = waits.length === 1 ? waits[0] : null;
       return { status: "waiting",
                question: one ? one.question : { message: waits.map(x => x.question.message).join("\n\n"), calls: waits.map(x => x.tool_call_id) },

@@ -172,7 +172,16 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
         }, r.questions.length > 0 ? { responseSchema: answerSchema(r.questions) } : undefined);
         const segments = answer && typeof answer === "object" && typeof answer.typed === "string"
           ? connect.labelInput({ typed: answer.typed }) : connect.labelInput({ form: answer });
-        if (segments.length === 0) return done(reply(`${NOT_ANSWERED}\n${q.message}`, "error"), { status: "cancelled" });
+        if (segments.length === 0) {
+          // Not answered: the call ends without running. That is the executing side's decision, recorded as
+          //   its own (spec 6.4), on the verdict that waited for the answer.
+          const waited = r.key ? (await store.list(r.key))
+            .filter(x => x && "execution_decision" in x && x.tool_call?.id === toolCall.id).at(-1) ?? null : null;
+          const why = `the user did not answer the question (${typeof answer?.action === "string" ? answer.action : "no answer"})`;
+          if (waited?.action_key) await judge.recordResult(waited, { executed: false, why });
+          return done(reply(`${NOT_ANSWERED}\n${q.message}`, "error"),
+            { status: "cancelled", decision: waited?.execution_decision ?? null, reason: waited?.reason ?? null, why });
+        }
         mine.push(...segments);
       }
 
