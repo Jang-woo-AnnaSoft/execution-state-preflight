@@ -5,9 +5,12 @@
  * tools (connect.js, tool.json), the gate as its middleware (middleware.js), and your principles
  * (principles-gated.md) as its system prompt. You should not need to edit this file.
  *
- * This departs from spec 3.5, as the flow before it did. The gate ends with the record and the executing
- * code reads it, but both run inside the agent's graph: the specification has the executing party outside
- * the gate. To use the gate in your own loop, start from judge-only-example.js instead.
+ * The gate and the executing side are apart, as spec 3.5 has them: the gate (judge-only.js) ends with the
+ * record, and the middleware's own code reads the record and decides from it alone, never from what
+ * judging returned. That code runs in the agent's graph, where an executing party usually is. Other code
+ * there (another middleware, the tool node) could still call a tool without reading the record; nothing
+ * but review keeps it from doing so (spec 8.6), here as in any loop. To use the gate in your own loop,
+ * start from judge-only-example.js instead.
  *
  *   const { createAgent } = require("./agent");
  *   const agent = createAgent();
