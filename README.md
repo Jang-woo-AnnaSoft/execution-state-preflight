@@ -1,3 +1,7 @@
+**Write conditions in your own words. Code checks them right before the AI executes.**\
+From tool usage requirements to company and team policies, and individual principles.
+
+
 # execution-state-preflight
 
 **When an agent causes an incident, whose judgment was it?**
