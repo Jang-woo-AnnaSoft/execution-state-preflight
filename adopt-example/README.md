@@ -18,7 +18,7 @@ both.
 | Start from | [`middleware.js`](./middleware.js), as `agent.js` uses it | [`judge-only-example.js`](./judge-only-example.js) |
 | Who runs the flow (ask, wait, call again) | `createAgent`; the call waits on `interrupt()` | Your agent's own loop |
 | Who executes the tool | The middleware, after reading the record | Your agent, after reading the record |
-| The gate and the executing side | **Departs from spec 3.5**: both run inside the agent's graph | Two parties: the gate ends with the record |
+| The gate and the executing side | Two parties: the gate ends with the record, and the middleware reads it | Two parties: the gate ends with the record, and your loop reads it |
 | What you must keep yourself | The labels on the user's messages, a checkpointer, `connect.notify` | Eight things, listed in [section 4](#4-use-it-your-agent-executes-judge-onlyjs) |
 
 `agent.js` is the first way as a whole agent to run and watch. Sections 1 to 3 are for both. Section 4
@@ -315,9 +315,11 @@ of section 4 itself: it shows the values unchanged, judges again with the answer
 record and writes the result back. The agent gives its model the tools without the labelled lines,
 and the user is told why when nothing runs.
 
-**This departs from spec 3.5.** The gate ends with the record and the executing code reads it, but both
-run inside the agent's graph; the specification has the executing party outside the gate. It shows
-the behaviour, end to end.
+**The gate and the executing side are apart, as spec 3.5 has them.** The gate ends with the record, and
+the middleware's own code reads the record and decides from it alone, never from what judging returned.
+That code runs in the agent's graph, where an executing party usually is. Other code there (another
+middleware, the tool node) could still call a tool without reading the record; nothing but review keeps
+it from doing so (spec 8.6), here as in any loop.
 
 ```
 MODEL=anthropic:<model-name> node agent.js "Set up the pickup for LST-2291, 2pm this Saturday, Hongdae station lockers."
