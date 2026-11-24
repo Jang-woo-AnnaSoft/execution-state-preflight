@@ -94,7 +94,7 @@ const EXPECT_TIME = "2026-10-31T14:00:00+09:00";
 //                        principles-gated.md)
 const SHOW_LINES = argv.includes("--show-lines"), LABEL_NOTE = !argv.includes("--no-label-note");
 const PRINCIPLES = opt("principles", "gated");
-const NOTE_LINE = /^The lines below are checked after this tool is called.*\n/m;
+const NOTE_LINE = /^This tool's labelled lines are checked after it is called.*\n/m;
 const withNote = t => (!LABEL_NOTE && t?.description ? { ...t, description: t.description.replace(NOTE_LINE, "") } : t);
 
 const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.stringify(v); return s.length > n ? s.slice(0, n) + " …" : s; };

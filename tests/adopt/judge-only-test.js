@@ -135,7 +135,7 @@ function askAllGiven(id) {
     check("what the model is given keeps the prose and the input schema", [forModel.description, forModel.inputSchema, forModel.name],
       [lines.filter(l => !/^\s*\[/.test(l)).join("\n").trim(), TOOL.inputSchema, TOOL.name]);
     check("  and no line that starts with a label; the prose line that says when they are checked stays",
-      [forModel.description.split("\n").filter(l => /^\s*\[/.test(l)), forModel.description.includes("The lines below are checked after this tool is called")], [[], true]);
+      [forModel.description.split("\n").filter(l => /^\s*\[/.test(l)), forModel.description.includes("This tool's labelled lines are checked after it is called")], [[], true]);
     check("a label the gate does not know is taken out too: the gate holds it, the model does not judge it",
       toolsForModel([{ name: "t", description: "Does a thing.\n[Requried] Must be agreed.\n  [Beta] Indented." }])[0].description, "Does a thing.");
     check("lines written as a list, or with the label in bold, are taken out the same way; a task-list box is prose and stays",
