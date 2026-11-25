@@ -147,9 +147,9 @@ const FORM_KINDS = [
   // A field that is also a measurement: given the list of measurements, a real model put "The location is
   //   the place the seller names" into user_approval in most runs, value_source in some, and once no form,
   //   while the same line for the item, which is not a measurement, was value_source every time.
-  '{"kind": "value_source", "slot": "<field>"}  who may give a field\'s value. With [Required]: only the system ' +
-    '(a measurement). With [Verify]: only the user; add "measured_within_user_range": true when a measurement may ' +
-    'also give it, inside a range the user sets. A line that says who gives a field\'s value is this kind, also ' +
+  '{"kind": "value_source", "slot": "<field>", "measured_within_user_range": null}  who may give a field\'s value. With [Required]: only the system ' +
+    '(a measurement). With [Verify]: only the user; "measured_within_user_range": true when a measurement may ' +
+    'also give it, inside a range the user sets, and null otherwise. A line that says who gives a field\'s value is this kind, also ' +
     'for a field that is also a measurement',
   '{"source": "measured_data", "measure": "<measurement>", "schema": <JSON Schema>}  a fact the system measures, ' +
     'and the JSON Schema it must satisfy. Only measurements in the list below can be named',
@@ -174,27 +174,32 @@ const FORM_KINDS = [
 // Each object is closed (additionalProperties: false), as Anthropic's structured outputs require. A JSON
 //   Schema inside an answer (a condition's form) cannot be closed: it is written as JSON text
 //   (schema_json), and the gate reads it back (openForm).
+// Every key is required, as OpenAI's strict structured outputs require: a key that may not apply is
+//   null (one that grows with the tool's fields uses "" and -1 instead: extractionShape). The hooks drop
+//   a null key before the library reads the answer (withoutNulls), so the library sees what it saw
+//   before. All four OpenAI models refused the shapes that left a key out ("'required' is required to
+//   be supplied and to be an array including every key in properties").
 const STR = { type: "string" }, INT = { type: "integer" }, BOOL = { type: "boolean" };
 const obj = (properties, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });
 const nullable = s => ({ anyOf: [s, { type: "null" }] });
+const withoutNulls = o => (o && typeof o === "object" && !Array.isArray(o) ? Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null)) : o);
 const SCHEMA_JSON = { type: "string", description: "the JSON Schema, written as JSON text" };
 const COMPARE = { anyOf: [
-  obj({ kind: STR, slot: STR, measured_within_user_range: BOOL }, ["kind", "slot"]),
+  obj({ kind: STR, slot: STR, measured_within_user_range: nullable(BOOL) }),
   obj({ kind: STR }),
   obj({ source: STR, measure: STR, schema_json: SCHEMA_JSON }),
   obj({ schema_json: SCHEMA_JSON }),
 ] };
 const SHAPES = {
   when_case: obj({ when_case: nullable(STR) }),
-  action_name: obj({ action_name: nullable(STR), segment_index: INT }, ["action_name"]),
+  action_name: obj({ action_name: nullable(STR), segment_index: nullable(INT) }),
   tool_match: obj({ approved: BOOL, reason: STR }),
   comparable_form: obj({ form: nullable(obj({ compare: COMPARE, constrains: { type: "array", items: STR } })) }),
   user_conditions: obj({ conditions: { type: "array", items: obj(
-    { quote: STR, segment_index: INT, constrains: { type: "array", items: STR }, withdrawn_by: obj({ quote: STR, segment_index: INT }) },
-    ["quote", "segment_index"]) } }),
+    { quote: STR, segment_index: INT, constrains: { type: "array", items: STR }, withdrawn_by: nullable(obj({ quote: STR, segment_index: INT })) }) } }),
   propose_value: obj({ value: { anyOf: [STR, { type: "number" }, BOOL, { type: "null" }] } }),
   replies: obj({ replies: { type: "array", items: obj(
-    { target: STR, answer: BOOL, none: STR, choice: INT, quote: STR, segment_index: INT }, ["target"]) } }),
+    { target: STR, answer: nullable(BOOL), none: nullable(STR), choice: nullable(INT), quote: nullable(STR), segment_index: nullable(INT) }) } }),
   question: obj({ message: STR }),
   stop: obj({ message: STR }),
 };
@@ -255,7 +260,7 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
       "Quote only the few words that name the act (\"Set up the pickup\"), not the whole request or the " +
       "details in it. Do not paraphrase or use tool names. Return JSON only.",
       "Segments:\n" + JSON.stringify(segments, null, 2) +
-      '\n\nReply as {"action_name": "<exact words>", "segment_index": <int>} or {"action_name": null}.', "action_name");
+      '\n\nReply as {"action_name": "<exact words>", "segment_index": <int>} or {"action_name": null, "segment_index": null}.', "action_name");
     if (out && "action_name" in out && out.action_name === null) return { none: "absent" };
     const quote = typeof out?.action_name === "string" ? out.action_name.trim() : "";
     if (!quote || quote.length > 60) throw new Error("action name unusable");
@@ -417,7 +422,7 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
         `Kinds:\n${FORM_KINDS.map(k => `  ${k}`).join("\n")}\n\n` +
         'Reply as {"form": {"compare": <one of the kinds>, "constrains": ["<field>", ...]}} or {"form": null}',
         "comparable_form");
-      const f = out?.form && typeof out.form === "object" ? { ...out.form, compare: openForm(out.form.compare) } : out?.form;
+      const f = out?.form && typeof out.form === "object" ? { ...out.form, compare: openForm(withoutNulls(out.form.compare)) } : out?.form;
       // The model looked and no form fits: said so, not left as no answer.
       if (out && typeof out === "object" && "form" in out && out.form === null) return null;
       if (!f || typeof f !== "object" || !f.compare || typeof f.compare !== "object") return undefined;
@@ -442,7 +447,7 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
         "out. For one taken back, also quote the user's words that take it back, in withdrawn_by. Return JSON only.",
         `Tool: ${mcpTool?.name}\nFields: ${Object.keys(props).join(", ")}\n\nSegments:\n${JSON.stringify(segmentsOf(instruction), null, 2)}\n\n` +
         'Reply as {"conditions": [{"quote": "<exact words>", "segment_index": <int>, "constrains": ["<field>"], ' +
-        '"withdrawn_by": {"quote": "<exact words>", "segment_index": <int>} (only when taken back)}]}, ' +
+        '"withdrawn_by": {"quote": "<exact words>", "segment_index": <int>} when taken back, else null}]}, ' +
         'or {"conditions": []} when the user set none.',
         "user_conditions");
       // [SIDE BY SIDE] The places of the values read the same words: started now, read where the library
@@ -498,12 +503,13 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
         'For each question answered, one of\n' +
         '  {"target": "<target>", "answer": true|false, "quote": "<exact words>", "segment_index": <int>}\n' +
         '  {"target": "<target>", "none": "absent", "quote": "<exact words>", "segment_index": <int>}  (a value question the user says has no value)\n' +
-        '  {"target": "<target>", "choice": <int>, "quote": "<exact words>", "segment_index": <int>}  (a question with choose_one: which one the user chose; a yes chooses none)\n\n' +
+        '  {"target": "<target>", "choice": <int>, "quote": "<exact words>", "segment_index": <int>}  (a question with choose_one: which one the user chose; a yes chooses none)\n' +
+        'Each reply has all six keys (target, answer, none, choice, quote, segment_index): a key the reply does not use is null.\n\n' +
         'Reply as {"replies": [...]}',
         "replies");
       if (!Array.isArray(out?.replies)) throw new Error("replies reply unusable");
       if (out.replies.length === 0) return { none: "absent" };
-      return out.replies.map(r => {
+      return out.replies.map(withoutNulls).map(r => {
         const seg = (instruction ?? [])[r?.segment_index];
         return { ...r, span: locateQuote(seg?.text, r?.quote) };
       });
