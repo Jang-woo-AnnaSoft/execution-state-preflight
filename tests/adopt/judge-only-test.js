@@ -1061,6 +1061,31 @@ function askAllGiven(id) {
     check("  the user writes again: a new request, asked again", await decision(later), "ask_user");
   }
 
+  // [SIDE BY SIDE] Two pairs of gate calls run together: when_case with action_name, and user_conditions
+  //   with extraction. Each still once, answered the same, and the record unchanged; the wait is shorter.
+  console.log("\n--- the gate's calls side by side ---");
+  {
+    const timed = (log, ms) => { const inner = makeAsk("g1-01"); return async (m, sys, u, hook, sh) => {
+      const t0 = Date.now(); log.push({ hook, at: "start", t: t0 });
+      await new Promise(r => setTimeout(r, ms));
+      const out = await inner(m, sys, u, hook, sh);
+      log.push({ hook, at: "end", t: Date.now() });
+      return out;
+    }; };
+    const log = [];
+    const judge = createJudge({ ask: timed(log, 60), measure: measurePort(measuredFor(S.conditions.clean.context, S.date_modes.said)),
+                                readToolDefinition: async n => [TOOL].find(t => t.name === n), measurements: MEASUREMENTS, storage: createStorage() });
+    const conversation = buildUserTurn(S.conditions.clean.context, S.instructions.find(i => i.id === "g1-01").text, S.date_modes.said).segments;
+    const r = await judge.run({ unitKey: "side", conversation, toolCall: { name: TOOL.name, arguments: {}, id: "c" } });
+    const at = (hook, when) => log.find(x => x.hook === hook && x.at === when)?.t;
+    const count = hook => log.filter(x => x.hook === hook && x.at === "start").length;
+    check("each pair starts together: action_name before when_case ends, extraction before user_conditions ends",
+      [at("action_name", "start") < at("when_case", "end"), at("extraction", "start") < at("user_conditions", "end")], [true, true]);
+    check("  each called once, in the order the library asks, and the verdict as before",
+      [["when_case", "action_name", "tool_match", "user_conditions", "extraction"].map(count), log.filter(x => x.at === "start").slice(0, 2).map(x => x.hook), r.questions.map(q => q.target)],
+      [[1, 1, 1, 1, 1], ["when_case", "action_name"], ["value:time"]]);
+  }
+
   // Anthropic's structured outputs take at most 24 optional keys (every key not in required) and 16 keys
   //   with a union type (anyOf, or a type list) in a request. The shape for reading a tool's fields grows
   //   with the tool: it has neither, so a tool with many fields still runs. The fixed shapes stay under both.
