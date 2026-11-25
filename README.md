@@ -1,5 +1,5 @@
 **Write conditions in your own words. Code checks them right before the AI acts, and records why.**\
-A tool's requirements; the rules of regulators, your company and your team; your own limits: each written by whoever holds it.
+From a tool's requirements to regulatory rules, company and team policies, and personal boundaries — each defined by the party responsible for it.
 
 
 # execution-state-preflight
