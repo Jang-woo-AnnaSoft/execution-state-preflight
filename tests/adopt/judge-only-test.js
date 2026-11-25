@@ -20,7 +20,7 @@ const realConnect = require(path.join(ADOPT, "connect"));
 const { runArm, measuredFor, measurePort, MEASUREMENTS } = require("./arm");
 const TOOL = require("./tool.json");
 const { buildUserTurn } = require("./prompts");
-const { makeAsk, makeChat, asAnswered } = require("./stub");
+const { makeAsk, makeChat, asAnswered, NO_REPLY } = require("./stub");
 const shapes = require("./shape-check");
 const { recordStore } = require(path.join(__dirname, "..", "..", "adopt-example", "records"));
 const { InMemoryStore } = require(path.join(__dirname, "..", "..", "adopt-example", "node_modules", "@langchain/langgraph"));
@@ -263,8 +263,8 @@ function askAllGiven(id) {
       if (h === "user_conditions") {
         round++;
         return round === 1
-          ? { conditions: [{ quote: "Nothing after 8pm", segment_index: 3, constrains: ["time"] }, { quote: "public places only", segment_index: 3, constrains: ["location"] }] }
-          : { conditions: [{ quote: "Nothing after 8pm, and public places only.", segment_index: 3, constrains: ["time", "location"] }] };
+          ? { conditions: [{ quote: "Nothing after 8pm", segment_index: 3, constrains: ["time"], withdrawn_by: null }, { quote: "public places only", segment_index: 3, constrains: ["location"], withdrawn_by: null }] }
+          : { conditions: [{ quote: "Nothing after 8pm, and public places only.", segment_index: 3, constrains: ["time", "location"], withdrawn_by: null }] };
       }
       if (h === "comparable_form" && /Declared by: user/.test(u)) {
         if (/Condition: Nothing after 8pm$/m.test(u)) return { form: asAnswered({ compare: GOOD, constrains: ["time"] }) };
@@ -283,7 +283,7 @@ function askAllGiven(id) {
         const targets = [...u.matchAll(/"target": "((?:value|approve|form):[^"]+)"/g)].map(x => x[1]);
         const segs = JSON.parse(u.slice(u.indexOf("Segments:\n") + 10, u.indexOf("\n\nFor each question")));
         const at = segs.length - 1;
-        return { replies: segs[at]?.text === "yes" ? targets.map(t => ({ target: t, answer: true, quote: "yes", segment_index: at })) : [] };
+        return { replies: segs[at]?.text === "yes" ? targets.map(t => ({ ...NO_REPLY, target: t, answer: true, quote: "yes", segment_index: at })) : [] };
       }
       return stub(m, sys, u, h);
     };
@@ -307,8 +307,8 @@ function askAllGiven(id) {
         const segs = segsOf(u, "\n\nReply as");
         const back = segs.findIndex(x => x.trust === "user" && x.text.includes("drop the 8pm limit"));
         return { conditions: [
-          { quote: "Nothing after 8pm", segment_index: 3, constrains: ["time"], ...(back >= 0 ? { withdrawn_by: { quote: "drop the 8pm limit", segment_index: back } } : {}) },
-          { quote: "public places only", segment_index: 3, constrains: ["location"] }] };
+          { quote: "Nothing after 8pm", segment_index: 3, constrains: ["time"], withdrawn_by: back >= 0 ? { quote: "drop the 8pm limit", segment_index: back } : null },
+          { quote: "public places only", segment_index: 3, constrains: ["location"], withdrawn_by: null }] };
       }
       if (h === "comparable_form" && /Declared by: user/.test(u)) return /Condition: Nothing after 8pm$/m.test(u) ? { form: asAnswered({ compare: GOOD, constrains: ["time"] }) } : { form: null };
       if (h === "extraction") {
@@ -323,7 +323,7 @@ function askAllGiven(id) {
         const targets = [...u.matchAll(/"target": "((?:value|approve|form|withdraw):[^"]+)"/g)].map(x => x[1]);
         const segs = segsOf(u, "\n\nFor each question");
         const at = segs.length - 1;
-        return { replies: segs[at]?.text === "yes" ? targets.map(t => ({ target: t, answer: true, quote: "yes", segment_index: at })) : [] };
+        return { replies: segs[at]?.text === "yes" ? targets.map(t => ({ ...NO_REPLY, target: t, answer: true, quote: "yes", segment_index: at })) : [] };
       }
       return stub(m, sys, u, h);
     };
@@ -351,7 +351,7 @@ function askAllGiven(id) {
     const segsOf = (u, until) => JSON.parse(u.slice(u.indexOf("Segments:\n") + 10, u.indexOf(until)));
     let formProposals = 0;
     const ask = (m, sys, u, h) => {
-      if (h === "user_conditions") return { conditions: [{ quote: "Nothing after 8pm", segment_index: 3, constrains: ["time"] }, { quote: "public places only", segment_index: 3, constrains: ["location"] }] };
+      if (h === "user_conditions") return { conditions: [{ quote: "Nothing after 8pm", segment_index: 3, constrains: ["time"], withdrawn_by: null }, { quote: "public places only", segment_index: 3, constrains: ["location"], withdrawn_by: null }] };
       if (h === "comparable_form" && /Declared by: user/.test(u)) {
         if (/Condition: Nothing after 8pm$/m.test(u)) { formProposals++; return { form: asAnswered({ compare: GOOD, constrains: ["time"] }) }; }
         return { form: null };
@@ -374,9 +374,9 @@ function askAllGiven(id) {
           if (at < 0) continue;
           const text = segs[at].text;
           if (/check is wrong/.test(text)) replies.push(q.target.startsWith("form:")
-            ? { target: q.target, answer: false, quote: "that 8pm check is wrong", segment_index: at }
-            : { target: q.target, answer: true, quote: "The time and place are fine", segment_index: at });
-          else if (text === "yes") replies.push({ target: q.target, answer: true, quote: "yes", segment_index: at });
+            ? { ...NO_REPLY, target: q.target, answer: false, quote: "that 8pm check is wrong", segment_index: at }
+            : { ...NO_REPLY, target: q.target, answer: true, quote: "The time and place are fine", segment_index: at });
+          else if (text === "yes") replies.push({ ...NO_REPLY, target: q.target, answer: true, quote: "yes", segment_index: at });
         }
         return { replies };
       }
@@ -467,7 +467,7 @@ function askAllGiven(id) {
     check("  never matched: it stops asking, nothing runs, and the gate's last words are passed on",
       [never.last.status, never.calls.length, never.last.message], ["not_executed", 0, "I still could not match this to an action I can perform. Let us sort it out in conversation."]);
     // What is wanted is never named: the caller carries that count (those records have no key).
-    const s = standIn("g1-01", "clean", { ask: (m, sy, u, h) => (h === "action_name" ? { action_name: null } : stub(m, sy, u, h)) });
+    const s = standIn("g1-01", "clean", { ask: (m, sy, u, h) => (h === "action_name" ? { action_name: null, segment_index: null } : stub(m, sy, u, h)) });
     const main = createMain({ connect: s.connect });
     const statuses = [];
     for (const typed of ["x", "again", "again", "again"]) statuses.push((await main.turn({ threadId: "intent-1", message: { typed } })).status);
@@ -559,7 +559,7 @@ function askAllGiven(id) {
         const out = await base(m, s, u, hook);
         if (hook !== "replies") return out;
         const seg = (out?.replies ?? [])[0]?.segment_index;
-        return { replies: [...(out?.replies ?? []), { target: "value:location", answer: true, quote: "yes", segment_index: seg }] };
+        return { replies: [...(out?.replies ?? []), { ...NO_REPLY, target: "value:location", answer: true, quote: "yes", segment_index: seg }] };
       };
       const yes = await run("g6-01", "clean", ["yes"], { ask: yesAsk });
       const second = verdicts(yes)[1];
@@ -1050,7 +1050,7 @@ function askAllGiven(id) {
   {
     const ctx = S.conditions.clean.context, date = S.date_modes.said;
     const inner = makeAsk("g1-01");
-    const ask = async (m, s, u, hook, sh) => (hook === "action_name" ? { action_name: null } : inner(m, s, u, hook, sh));
+    const ask = async (m, s, u, hook, sh) => (hook === "action_name" ? { action_name: null, segment_index: null } : inner(m, s, u, hook, sh));
     const judge = createJudge({ ask, measure: measurePort(measuredFor(ctx, date)), readToolDefinition: async n => [TOOL].find(t => t.name === n), storage: createStorage() });
     const conversation = buildUserTurn(ctx, "LST-2291, 2pm this Saturday, Hongdae station lockers.", date).segments;
     const decision = async c => (await judge.run({ unitKey: "intent", conversation: c, toolCall: { name: TOOL.name, arguments: {}, id: "c" } })).reason.split(":")[0];
@@ -1091,7 +1091,7 @@ function askAllGiven(id) {
   //   with the tool: it has neither, so a tool with many fields still runs. The fixed shapes stay under both.
   console.log("\n--- optional and union-typed keys in the answer shapes ---");
   {
-    const { extractionShape, SHAPES } = require(path.join(ADOPT, "judge-only"));
+    const { extractionShape, SHAPES, createHooks: createHooksN } = require(path.join(ADOPT, "judge-only"));
     const optional = s => {
       if (!s || typeof s !== "object") return 0;
       let n = 0;
@@ -1116,6 +1116,20 @@ function askAllGiven(id) {
       [optional(extractionShape(fields)), unions(extractionShape(fields)), optional(extractionShape(Object.keys(TOOL.inputSchema.properties)))], [0, 0, 0]);
     const most = Math.max(...Object.values(SHAPES).map(optional)), mostUnions = Math.max(...Object.values(SHAPES).map(unions));
     check("  every fixed shape stays under both limits", [most < 24, mostUnions < 16, most, mostUnions], [true, true, most, mostUnions]);
+    // OpenAI's strict structured outputs take a shape only when every key is required: a key that may not
+    //   apply is null. All four OpenAI models refused the shapes that left keys out.
+    check("  every fixed shape has every key required (OpenAI strict)",
+      Object.entries(SHAPES).filter(([, s]) => optional(s) > 0).map(([k]) => k), []);
+    {
+      const asks = { comparable_form: { form: { compare: { kind: "value_source", slot: "time", measured_within_user_range: null }, constrains: ["time"] } },
+                     replies: { replies: [{ target: "value:time", answer: true, none: null, choice: null, quote: "yes", segment_index: 0 }] } };
+      const hn = createHooksN({ ask: async (m, sy, u, hook) => asks[hook], readToolDefinition: async () => TOOL });
+      const form = await hn.proposeComparableForm({ declared_by: "user", label: "c", wording: "The time is the one", mcpTool: TOOL });
+      const read = await hn.readReplies([{ trust: "user", text: "yes" }], [{ target: "value:time", kind: "value", asked_after_segment: -1 }]);
+      check("  a null key is read as no key: the form's range and the reply's unused keys are dropped",
+        [form?.compare, Object.keys(read?.[0] ?? {}).sort()],
+        [{ kind: "value_source", slot: "time" }, ["answer", "quote", "segment_index", "span", "target"]]);
+    }
     // Found, with no words or no place: no claim to check. Not found: absent.
     const { createHooks } = require(path.join(ADOPT, "judge-only"));
     const h = createHooks({ ask: async () => ({ item_id: { found: true, value: "", segment_index: -1 }, time: { found: false, value: "", segment_index: -1 } }),

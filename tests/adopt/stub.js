@@ -142,6 +142,8 @@ const ISO_WORDS = Object.keys(READINGS);
 //   inside it is written as JSON text. The gate reads it back.
 function asAnswered(form) {
   const c = form?.compare;
+  // A strict model fills every key: a value_source form without a measurement range says null.
+  if (c && typeof c === "object" && c.kind === "value_source") return { ...form, compare: { measured_within_user_range: null, ...c } };
   if (!c || typeof c !== "object" || typeof c.kind === "string") return form;
   return { ...form, compare: c.source === "measured_data"
     ? { source: c.source, measure: c.measure, schema_json: JSON.stringify(c.schema) } : { schema_json: JSON.stringify(c) } };
@@ -149,6 +151,8 @@ function asAnswered(form) {
 
 // The model call. Each of the gate's hooks names itself (the fourth argument); v1's hooks do not, and
 //   are recognised by the reply shape their prompts ask for.
+// Every reply carries all six keys, as a strict model sends them; the keys it does not use are null.
+const NO_REPLY = { answer: null, none: null, choice: null, quote: null, segment_index: null };
 function makeAsk(instructionId, extractor = "faithful") {
   return async function ask(model, system, user, hook) {
     if (hook === "when_case" || user.includes('"when_case"')) return { when_case: "immediate" };
@@ -156,7 +160,7 @@ function makeAsk(instructionId, extractor = "faithful") {
       const segs = segmentsIn(user);
       const quote = ACTION[instructionId];
       const seg = segs.find(s => s.trust === "user" && s.text.includes(quote));
-      return seg ? { action_name: quote, segment_index: seg.index } : { action_name: null };
+      return seg ? { action_name: quote, segment_index: seg.index } : { action_name: null, segment_index: null };
     }
     if (hook === "tool_match") return { approved: true, reason: "stand-in: the act the seller named is this tool" };
     if (hook === "comparable_form" || user.includes('Reply as {"form"')) {
@@ -169,7 +173,7 @@ function makeAsk(instructionId, extractor = "faithful") {
       const items = S.instructions.find(i => i.id === instructionId)?.user_checklist ?? [];
       return { conditions: items.flatMap(it => {
         const seg = segs.find(sg => sg.trust === "user" && sg.text.includes(it.stated_as));
-        return seg ? [{ quote: it.stated_as, segment_index: seg.index, constrains: it.constrains ?? [] }] : [];
+        return seg ? [{ quote: it.stated_as, segment_index: seg.index, constrains: it.constrains ?? [], withdrawn_by: null }] : [];
       }) };
     }
     if (hook === "propose_value") {
@@ -197,7 +201,7 @@ function makeAsk(instructionId, extractor = "faithful") {
             const s = segs[i];
             if (s.trust !== "user") continue;
             const c = q.choose_one.find(x => s.text.includes(String(x.value).replace(/^"|"$/g, "")));
-            if (c) { replies.push({ target: q.target, choice: c.choice, quote: String(c.value).replace(/^"|"$/g, ""), segment_index: s.index }); break; }
+            if (c) { replies.push({ ...NO_REPLY, target: q.target, choice: c.choice, quote: String(c.value).replace(/^"|"$/g, ""), segment_index: s.index }); break; }
           }
           continue;
         }
@@ -208,7 +212,7 @@ function makeAsk(instructionId, extractor = "faithful") {
           if (!m) continue;
           const w = m[1].toLowerCase();
           if (w === "none" && q.kind !== "value") continue;
-          replies.push({ target: q.target, ...(w === "none" ? { none: "absent" } : { answer: w === "yes" }), quote: m[1], segment_index: s.index });
+          replies.push({ ...NO_REPLY, target: q.target, ...(w === "none" ? { none: "absent" } : { answer: w === "yes" }), quote: m[1], segment_index: s.index });
           break;
         }
       }
@@ -238,4 +242,4 @@ function makeChat({ tool = "schedule_pickup", text = null } = {}) {
   };
 }
 
-module.exports = { makeAsk, makeChat, extractionFor, ACTION, EXTRACTORS, PROVIDER_FORMS, providerFormFor, userFormFor, READINGS, asAnswered };
+module.exports = { makeAsk, makeChat, NO_REPLY, extractionFor, ACTION, EXTRACTORS, PROVIDER_FORMS, providerFormFor, userFormFor, READINGS, asAnswered };
