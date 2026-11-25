@@ -200,6 +200,23 @@ function askAllGiven(id) {
       [/Every item below is still to be settled: ask about each one/.test(asking?.system ?? ""),
        /For an item that shows a value, ask the user to confirm it or to say another; for one that offers choices, ask which one; ask for a value only where none is shown\./.test(asking?.system ?? "")],
       [true, true]);
+    // [LINES ON A VALUE] (1.46) gpt-6.2-sol put "The sale must be agreed" on every field, and the question
+    //   asked the seller whether the order status showed agreed. A line compared against a measurement is
+    //   not shown with a value question; the prompt says not to ask whether a line holds.
+    {
+      const inner = makeAsk("g1-01");
+      const wide = await run("g1-01", "clean", ["yes"], { ask: (m, sy, u, h, sc) =>
+        (h === "comparable_form" && /^Condition: The sale must be agreed/m.test(u)
+          ? { form: { compare: { source: "measured_data", measure: "order_status", schema_json: '{"const":"agreed"}' }, constrains: ["item_id", "time", "location", "buyer_contact"] } }
+          : inner(m, sy, u, h, sc)) });
+      const q = wide.prompts.find(p => p.hook === "question");
+      const items = JSON.parse(q.user.slice(q.user.indexOf("["), q.user.indexOf("\n\nConversation:")));
+      check("a line compared against a measurement is not shown with a value question; the run goes on",
+        [items.flatMap(i => i.lines).some(l => l.includes("The sale must be agreed")), items.find(i => i.field === "time")?.lines.length > 0, wide.last.status],
+        [false, true, "executed"]);
+      check("  the question prompt: ask for a value that meets the lines, not whether a line holds",
+        /The lines say who gives a value and what it must meet: ask for a value that meets them, and do not ask the user whether a line holds, which code checks\./.test(q.system), true);
+    }
     // A smaller model quoted the whole request as the action's name, and took the values for conditions.
     const named = g1.prompts.find(p => p.hook === "action_name"), conds = g1.prompts.find(p => p.hook === "user_conditions");
     check("  the action-name prompt: the few words that name the act, not the whole request",
