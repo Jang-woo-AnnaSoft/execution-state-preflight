@@ -3262,8 +3262,12 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
     const shownValues = {};
     for (const f of askFields) {
       const schema = ctx.fieldSchemas?.[f.name];
+      // [LINES ON A VALUE] The provider's lines shown with a value question: those on who gives the value and
+      //   what it must meet. A line compared against a measurement is not among them: what the system
+      //   measures, no answer of the user's settles. A real model's form put "The sale must be agreed" on the
+      //   time and the place, and the question asked the seller whether the order status showed agreed.
       const lines = providerConditions
-        .filter(c => c && typeof c === "object" &&
+        .filter(c => c && typeof c === "object" && c.compare?.source !== "measured_data" &&
           (valueSourceRule(c)?.slot === f.name || (Array.isArray(c.constrains) && c.constrains.includes(f.name))))
         .map(c => ({ id: c.id ?? null, label: c.label ?? null, text: c.description ?? null }));
       if (f.lower_differs) {
@@ -4356,7 +4360,9 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.45",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.46",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.46: [LINES ON A VALUE] a value question's lines leave out the provider's lines compared against a
+    //        measurement: the user's answer does not settle them.
     //   1.45: [WITHDRAW ALONE] a question that asks whether to remove a condition the user took back asks
     //        nothing else: gate.questions holds only withdraw questions then, while fields still to be
     //        asked keep route ask_user and are asked in the next question.
