@@ -275,8 +275,8 @@ function askAllGiven(id) {
         const at = segs.findIndex(x => x.trust === "user" && x.text.includes("This Saturday at 3pm"));
         return { item_id: { found: true, value: "LST-2291", segment_index: 3 },
           ...(at >= 0 ? { time: { found: true, value: "This Saturday at 3pm", segment_index: at }, location: { found: true, value: "Hongdae station lockers", segment_index: at } }
-                      : { time: { found: false, value: null, segment_index: null }, location: { found: false, value: null, segment_index: null } }),
-          buyer_contact: { found: false, value: null, segment_index: null } };
+                      : { time: { found: false, value: "", segment_index: -1 }, location: { found: false, value: "", segment_index: -1 } }),
+          buyer_contact: { found: false, value: "", segment_index: -1 } };
       }
       if (h === "propose_value") return { value: /^Field: time:/m.test(u) && /This Saturday at 3pm/.test(u) ? "2026-10-31T15:00:00+09:00" : null };
       if (h === "replies") {
@@ -316,7 +316,7 @@ function askAllGiven(id) {
         const at = segs.findIndex(x => x.trust === "user" && x.text.includes("This Saturday at 9pm"));
         return { item_id: { found: true, value: "LST-2291", segment_index: 3 },
           ...(at >= 0 ? { time: { found: true, value: "This Saturday at 9pm", segment_index: at }, location: { found: true, value: "Hongdae station lockers", segment_index: at } }
-                      : { time: { found: false, value: null, segment_index: null }, location: { found: false, value: null, segment_index: null } }), buyer_contact: { found: false, value: null, segment_index: null } };
+                      : { time: { found: false, value: "", segment_index: -1 }, location: { found: false, value: "", segment_index: -1 } }), buyer_contact: { found: false, value: "", segment_index: -1 } };
       }
       if (h === "propose_value") return { value: /^Field: time:/m.test(u) && /This Saturday at 9pm/.test(u) ? "2026-10-31T21:00:00+09:00" : null };
       if (h === "replies") {
@@ -361,7 +361,7 @@ function askAllGiven(id) {
         const at = segs.findIndex(x => x.trust === "user" && x.text.includes("This Saturday at 3pm"));
         return { item_id: { found: true, value: "LST-2291", segment_index: 3 },
           ...(at >= 0 ? { time: { found: true, value: "This Saturday at 3pm", segment_index: at }, location: { found: true, value: "Hongdae station lockers", segment_index: at } }
-                      : { time: { found: false, value: null, segment_index: null }, location: { found: false, value: null, segment_index: null } }), buyer_contact: { found: false, value: null, segment_index: null } };
+                      : { time: { found: false, value: "", segment_index: -1 }, location: { found: false, value: "", segment_index: -1 } }), buyer_contact: { found: false, value: "", segment_index: -1 } };
       }
       if (h === "propose_value") return { value: /^Field: time:/m.test(u) && /This Saturday at 3pm/.test(u) ? "2026-10-31T15:00:00+09:00" : null };
       if (h === "replies") {
@@ -793,7 +793,7 @@ function askAllGiven(id) {
       if (hook === "extraction") {
         const segs = JSON.parse(user.slice(user.indexOf("[", user.indexOf("Segments:")), user.indexOf("\n\nFields to locate")));
         const i = segs.findIndex(sg => sg.trust === "user" && sg.text.includes("noon Saturday"));
-        out.ready_by = i < 0 ? { found: false, value: null, segment_index: null } : { found: true, value: "noon Saturday", segment_index: i };
+        out.ready_by = i < 0 ? { found: false, value: "", segment_index: -1 } : { found: true, value: "noon Saturday", segment_index: i };
       }
       return out;
     };
@@ -1061,10 +1061,10 @@ function askAllGiven(id) {
     check("  the user writes again: a new request, asked again", await decision(later), "ask_user");
   }
 
-  // Anthropic's structured outputs take at most 24 optional keys in a request (every key not in required
-  //   counts). The shape for reading a tool's fields grows with the tool: it keeps none optional, so a tool
-  //   with many fields still runs. The fixed shapes stay well under the limit.
-  console.log("\n--- optional keys in the answer shapes ---");
+  // Anthropic's structured outputs take at most 24 optional keys (every key not in required) and 16 keys
+  //   with a union type (anyOf, or a type list) in a request. The shape for reading a tool's fields grows
+  //   with the tool: it has neither, so a tool with many fields still runs. The fixed shapes stay under both.
+  console.log("\n--- optional and union-typed keys in the answer shapes ---");
   {
     const { extractionShape, SHAPES } = require(path.join(ADOPT, "judge-only"));
     const optional = s => {
@@ -1078,18 +1078,26 @@ function askAllGiven(id) {
       for (const k of ["anyOf", "oneOf", "allOf"]) for (const b of s[k] ?? []) n += optional(b);
       return n;
     };
+    const unions = s => {
+      if (!s || typeof s !== "object") return 0;
+      let n = 0;
+      for (const v of Object.values(s.properties ?? {})) n += (Array.isArray(v?.anyOf) || Array.isArray(v?.type) ? 1 : 0) + unions(v);
+      for (const k of ["items", "additionalProperties"]) if (s[k] && typeof s[k] === "object") n += unions(s[k]);
+      for (const b of s.anyOf ?? []) n += unions(b);
+      return n;
+    };
     const fields = Array.from({ length: 30 }, (_, i) => `field_${i + 1}`);
-    check("a tool with 30 fields: the extraction shape has no optional key",
-      [optional(extractionShape(fields)), optional(extractionShape(Object.keys(TOOL.inputSchema.properties)))], [0, 0]);
-    const most = Math.max(...Object.values(SHAPES).map(optional));
-    check("  every fixed shape stays well under 24", [most < 24, most], [true, most]);
+    check("a tool with 30 fields: the extraction shape has no optional key and no union type",
+      [optional(extractionShape(fields)), unions(extractionShape(fields)), optional(extractionShape(Object.keys(TOOL.inputSchema.properties)))], [0, 0, 0]);
+    const most = Math.max(...Object.values(SHAPES).map(optional)), mostUnions = Math.max(...Object.values(SHAPES).map(unions));
+    check("  every fixed shape stays under both limits", [most < 24, mostUnions < 16, most, mostUnions], [true, true, most, mostUnions]);
     // Found, with no words or no place: no claim to check. Not found: absent.
     const { createHooks } = require(path.join(ADOPT, "judge-only"));
-    const h = createHooks({ ask: async () => ({ item_id: { found: true, value: null, segment_index: null }, time: { found: false, value: null, segment_index: null } }),
+    const h = createHooks({ ask: async () => ({ item_id: { found: true, value: "", segment_index: -1 }, time: { found: false, value: "", segment_index: -1 } }),
                             readToolDefinition: async () => TOOL });
     await h.readToolDefinition(TOOL.name);
     const said = [{ trust: "user", text: "Set up the pickup." }];
-    check("  read back: found with no words is no claim; not found is absent",
+    check("  read back: found with no words (\"\", -1) is no claim; not found is absent",
       [await h.extractFromInstruction("item_id", said), await h.extractFromInstruction("time", said)], [undefined, { none: "absent" }]);
   }
 

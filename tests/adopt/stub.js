@@ -90,7 +90,7 @@ function extractionFor(instructionId, segments, extractor = "faithful") {
   for (const f of ["item_id", "time", "location", "buyer_contact"]) {
     const q = said[f];
     const idx = q ? segmentOf(segments, q) : null;
-    out[f] = idx === null ? { found: false, value: null, segment_index: null } : { found: true, value: q, segment_index: idx };
+    out[f] = idx === null ? { found: false, value: "", segment_index: -1 } : { found: true, value: q, segment_index: idx };
   }
   return out;
 }
