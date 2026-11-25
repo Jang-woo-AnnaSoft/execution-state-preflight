@@ -229,6 +229,41 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
   //   the extraction hooks, so they read the tool from here: the same definition, never a copy.
   let tool = null;
 
+  // [SIDE BY SIDE] Two pairs of calls do not wait for each other. What is wanted and when it is to be
+  //   done both read the user's words alone; the user's conditions and the places of the values both
+  //   read the same words once the tool is known (the code compares the two afterwards). The second of
+  //   each pair is started with the first and kept here; the library still asks in its own order and
+  //   reads the same answer, so nothing judged changes. Only the waiting does: five model calls in a row
+  //   become three steps. A failure of one started early shows where its answer is read, as before.
+  const started = new Map();
+  const startOnce = (name, instruction, run) => {
+    const key = `${name}:${JSON.stringify(instruction)}`;
+    if (!started.has(key)) {
+      const p = run();
+      p.catch(() => {});   // read later, where the library asks for it; not left unhandled meanwhile
+      started.set(key, p);
+    }
+    return started.get(key);
+  };
+
+  // What the user calls the act, from the user's segments: one model call (extractUserActionName).
+  async function actionNameOnce(instruction) {
+    const segments = segmentsOf(instruction).filter(s => s.trust === "user");
+    const out = await call(
+      // A few words: a smaller model quoted the whole request once, and the name was refused as too long.
+      "You report what the speaker calls the action they are asking for, quoting their own words exactly. " +
+      "Quote only the few words that name the act (\"Set up the pickup\"), not the whole request or the " +
+      "details in it. Do not paraphrase or use tool names. Return JSON only.",
+      "Segments:\n" + JSON.stringify(segments, null, 2) +
+      '\n\nReply as {"action_name": "<exact words>", "segment_index": <int>} or {"action_name": null}.', "action_name");
+    if (out && "action_name" in out && out.action_name === null) return { none: "absent" };
+    const quote = typeof out?.action_name === "string" ? out.action_name.trim() : "";
+    if (!quote || quote.length > 60) throw new Error("action name unusable");
+    const idx = out?.segment_index;
+    const text = Number.isInteger(idx) ? (instruction ?? [])[idx]?.text : undefined;
+    return { value: quote, segment_index: idx ?? null, span: locateQuote(text, quote) };
+  }
+
   // One extraction per run, shared by every field, failure included.
   const extractionCache = new Map();
   function extractAll(instruction) {
@@ -288,28 +323,17 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
         `Answer with exactly one of: ${WHEN_CASES.join(", ")}.\n` +
         "A time or date INSIDE what is being arranged is an argument to the call, not a delay before it.\n" +
         'If the instruction does not settle this, answer {"when_case": null}.\nReturn JSON only.';
-      const out = await call(system, `Instruction:\n${trustedText(instruction)}\n\nReply as {"when_case": "..."}`, "when_case");
+      const asking = call(system, `Instruction:\n${trustedText(instruction)}\n\nReply as {"when_case": "..."}`, "when_case");
+      startOnce("action_name", instruction, () => actionNameOnce(instruction));   // [SIDE BY SIDE]
+      const out = await asking;
       if (out && "when_case" in out && out.when_case === null) return null;
       if (!WHEN_CASES.includes(out?.when_case)) throw new Error(`when_case reply unusable: ${JSON.stringify(out).slice(0, 120)}`);
       return out.when_case;
     },
 
-    // A located claim; the gate checks it (spec 4.1).
-    async extractUserActionName(instruction) {
-      const segments = segmentsOf(instruction).filter(s => s.trust === "user");
-      const out = await call(
-        // A few words: a smaller model quoted the whole request once, and the name was refused as too long.
-        "You report what the speaker calls the action they are asking for, quoting their own words exactly. " +
-        "Quote only the few words that name the act (\"Set up the pickup\"), not the whole request or the " +
-        "details in it. Do not paraphrase or use tool names. Return JSON only.",
-        "Segments:\n" + JSON.stringify(segments, null, 2) +
-        '\n\nReply as {"action_name": "<exact words>", "segment_index": <int>} or {"action_name": null}.', "action_name");
-      if (out && "action_name" in out && out.action_name === null) return { none: "absent" };
-      const quote = typeof out?.action_name === "string" ? out.action_name.trim() : "";
-      if (!quote || quote.length > 60) throw new Error("action name unusable");
-      const idx = out?.segment_index;
-      const text = Number.isInteger(idx) ? (instruction ?? [])[idx]?.text : undefined;
-      return { value: quote, segment_index: idx ?? null, span: locateQuote(text, quote) };
+    // A located claim; the gate checks it (spec 4.1). Started with classifyWhenCase ([SIDE BY SIDE]).
+    extractUserActionName(instruction) {
+      return startOnce("action_name", instruction, () => actionNameOnce(instruction));
     },
 
     // Whether the act the user named is what the called tool does. A judgment (spec 8.1: tool selection
@@ -406,7 +430,7 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
     //   Only the user's segments; a limit, a range, a "never" or "only" is a condition, a value is not.
     async extractUserConditions(instruction, mcpTool) {
       const props = mcpTool?.inputSchema?.properties ?? {};
-      const out = await call(
+      const asking = call(
         // Values are not conditions: a smaller model reported "at 2pm this Saturday", "at the Hongdae
         //   station lockers" and "Use the buyer's in-app chat" as conditions, each then asked about.
         "You find the conditions the USER set on a task: limits, ranges, things they never or only accept. " +
@@ -421,6 +445,10 @@ function createHooks({ model = "model", ask, runId = "run", unitKey = null, mete
         '"withdrawn_by": {"quote": "<exact words>", "segment_index": <int>} (only when taken back)}]}, ' +
         'or {"conditions": []} when the user set none.',
         "user_conditions");
+      // [SIDE BY SIDE] The places of the values read the same words: started now, read where the library
+      //   asks for them (extractAll keeps one per run). Only once the tool is known.
+      if (tool) extractAll(instruction).catch(() => {});
+      const out = await asking;
       if (!Array.isArray(out?.conditions)) throw new Error("user conditions reply unusable");
       if (out.conditions.length === 0) return { none: "absent" };
       return out.conditions.map(c => {
