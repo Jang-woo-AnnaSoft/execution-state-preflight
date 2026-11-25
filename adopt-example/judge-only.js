@@ -601,7 +601,8 @@ function createStorage() {
 const QUESTION_SYSTEM =
   "You ask the user, in conversation, about what has to be settled before a tool can run. Write one short " +
   "message, in the language the user writes in. Every item below is still to be settled: ask about each " +
-  "one, and follow the tool's lines on how to ask. For an item that shows a value, ask the user to confirm " +
+  "one, and follow the tool's lines on how to ask. The lines say who gives a value and what it must meet: " +
+  "ask for a value that meets them, and do not ask the user whether a line holds, which code checks. For an item that shows a value, ask the user to confirm " +
   "it or to say another; for one that offers choices, ask which one; ask for a value only where none is " +
   "shown. Do not write any value yourself: the values to approve are shown under your message, exactly as " +
   "they will be used.";
