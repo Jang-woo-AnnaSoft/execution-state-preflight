@@ -178,6 +178,16 @@ files. The provider's package reads its own key: `ANTHROPIC_API_KEY` for `@langc
 **Model settings.** `MODEL_OPTIONS` takes a JSON object and gives it to the provider's package as it
 is. Some OpenAI models call tools only through the Responses API: `MODEL_OPTIONS='{"useResponsesApi":true}'`.
 
+**A faster model for the gate.** As shipped, one model serves the agent and the gate. On every judgment
+the gate asks the model five things (when to act, what act the user named, whether the tool does it,
+the user's conditions, where the values are), in three steps, and more when it asks the user. A smaller,
+faster model for the gate shortens that wait: split the model in `connect.js` as its comment says
+(`GATE_MODEL` for `ask` and `say`, `MODEL` for `chat`). What counts as checked does not change with the
+model. How well words are located, conditions put into a form and questions written does: a smaller
+model may ask more often, or put a condition into a form that holds back a request it should let
+through. The record keeps each translation and which model made it (`translated_by`): read them before
+you settle on one.
+
 **Fail-closed.** As shipped, the tool is declared but nothing is connected: no measurement, so the
 `[Required]` lines are unverified, and no tool to call. Nothing runs: the example asks nothing and ends
 by saying it did not run and which lines could not be checked. That is the expected first result.
@@ -286,6 +296,13 @@ executes, `recordResult` keeps the record for this user and tool, and the next r
 when nothing else gives them ("same place as last time"), again only once approved. When the user's
 words give a field one value and a stored setting holds another, both are shown and the user chooses.
 How settings come to be stored is yours.
+
+**Most runs can be settled by settings.** A value the user saved and approved as a setting is not asked
+again. A condition the user saved as a standing setting goes in `userChecklist`, already confirmed by the
+user, and is compared as one stated now (spec 4.4). Where the same tool runs again and again, keep what
+the user approves as settings: the gate then asks only for what neither the user's words nor the
+settings settle, or where the two differ, and the record still says which setting settled each field.
+A value a model remembered is not a setting until the user approves it.
 
 **With LangChain's `createAgent`.** [`middleware.js`](./middleware.js) does the agent's side for you,
 in the shape of LangChain's own human-in-the-loop middleware (`per_call`):
