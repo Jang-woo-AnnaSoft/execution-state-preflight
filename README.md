@@ -1,4 +1,4 @@
-**Write conditions in your own words. Code checks and records them right before the AI executes.**\
+**Write conditions in your own words. Code checks them right before the AI acts, and records why.**\
 From tool usage requirements to company and team policies, and individual principles.
 
 
