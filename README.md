@@ -130,10 +130,7 @@ One thing changes. In a prompt, a vague line still runs: the AI fills in the res
 
 - **It needs a label.** A line without one is a sentence the model reads; the gate does not check it.
 - **For a `[Required]` line, the system must be able to measure what it names.** Until that measurement is connected, the line stays unverified and **nothing runs.** This is intended: what cannot be checked does not pass.
-- **The line must be translated into a form that can be compared.** A new or changed line is translated once, by the model, into a form code can compare, and code compares only in that form. A line that cannot be translated stays unconfirmed, and the run stops.
-- **A line translated wrongly is checked as translated.** A kept translation is used as it is until someone reads it.
 - **A changed line is translated again, and approvals given before the change are not used in the next verdict.**
-- **What is checked is what is declared.** A condition written on no line is not checked. Writing that line is someone's part.
 
 ## Limits every agent shares
 
