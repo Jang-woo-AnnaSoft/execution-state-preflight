@@ -135,12 +135,14 @@ One thing changes. In a prompt, a vague line still runs: the AI fills in the res
 - **A changed line is translated again, and approvals given before the change are not used in the next verdict.**
 - **What is checked is what is declared.** A condition written on no line is not checked. Writing that line is someone's part.
 
-## What it does not promise
+## Limits every agent shares
 
-- It does not claim to prevent every incident. What it stops is limited to what is declared.
-- A condition not declared, declared wrongly or translated wrongly passes. What becomes clear instead is *who did not declare what*.
-- Choosing the wrong tool is a risk for every agent. This narrows it, by comparing the tool with what the user called the action and when they asked, but code cannot prove the choice (spec 8.1).
-- It does not replace access control, injection defense, or a person's final confirmation.
+No agent can promise these, with a prompt or with code. What changes here is that each one is narrowed or made visible.
+
+- **No system prevents every incident.** Here, what is stopped is what is declared, and the record shows what was checked and what was not.
+- **A rule nobody wrote is not followed.** Here, it becomes clear *who did not declare what*. A line declared or translated wrongly is checked as it stands, and its translation is kept where someone can read it and revoke it.
+- **Choosing the wrong tool is a risk for every agent.** This narrows it by comparing the tool with what the user called the action and when they asked; code alone cannot prove the choice (spec 8.1).
+- **Access control, injection defense and a person's final confirmation are other layers.** This works beside them, not in their place.
 
 It puts what the model was doing back under people's responsibility. Whether someone will actually hold that responsibility is for the adopting organization to decide.
 
