@@ -854,6 +854,35 @@ function askAllGiven(id) {
     check("a storage without list is refused: the record could not be read back", typeof refused, "string");
   }
 
+  console.log("\n--- 2-a. what your system already settles: when, and what the user calls a tool (spec 1.2, 4.1.1) ---");
+  {
+    const s = standIn("g1-01", "clean");
+    const seen = [];
+    const ask = (m, sy, u, h, sc) => { seen.push(h); return s.connect.ask(m, sy, u, h, sc); };
+    const base = { ask, measure: s.connect.measure, readToolDefinition: s.connect.readToolDefinition, measurements: MEASUREMENTS, storage: s.store };
+    const conversation = s.connect.labelInput({ typed: "x" });
+    const toolCall = (await s.connect.chat()).toolCall;
+    const once = async (opts, runOpts = {}) => {
+      seen.length = 0;
+      const r = await createJudge({ ...base, ...opts }).run({ unitKey: `w${Math.random()}`, conversation, toolCall, ...runOpts });
+      return { hooks: [...seen], fixed: (await s.store.list(r.key)).at(-1)?.fixed };
+    };
+    const asked = await once({});
+    const product = await once({ whenCase: "immediate" });
+    const perRun = await once({ whenCase: "scheduled" }, { whenCase: "immediate" });
+    check("left out, the model is asked when; given, it is not, and the record has what was given",
+      [asked.hooks.includes("when_case"), product.hooks.includes("when_case"), product.fixed?.c1_when_case, perRun.hooks.includes("when_case"), perRun.fixed?.c1_when_case],
+      [true, false, "immediate", false, "immediate"]);
+    let bad = null;
+    try { await once({ whenCase: "soon" }); } catch (e) { bad = e.message; }
+    check("  a run's own whenCase wins over the product's; a value that is not a when case is refused", /whenCase must be one of/.test(bad ?? ""), true);
+    const c2 = asked.fixed?.c2_user_action_name;
+    const named = await once({ readActionNames: async () => ({ [c2]: { tool: toolCall.name, trust: "user" } }) });
+    check("a name the user approved for this tool is matched by lookup: the model is not asked",
+      [typeof c2, asked.hooks.includes("tool_match"), asked.fixed?.c3_match?.matched_by, named.hooks.includes("tool_match"), named.fixed?.c3_match?.matched_by, named.fixed?.c3_match?.approved],
+      ["string", true, "judgment", false, "record", true]);
+  }
+
   console.log("\n--- 3. a record that is not ready is not executed ---");
   const held = await run("g5-01", "offer_out_of_range");
   check("a condition prohibits it: not executed, with the reason", [held.first.status, held.calls.length, typeof held.first.reason], ["not_executed", 0, "string"]);
