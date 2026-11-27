@@ -137,7 +137,7 @@ One thing changes. In a prompt, a vague line still runs: the AI fills in the res
 No agent can promise these, with a prompt or with code. What changes here is that each one is narrowed or made visible.
 
 - **No system prevents every incident.** Here, what is stopped is what is declared, and the record shows what was checked and what was not.
-- **A rule nobody wrote is not followed.** Here, it becomes clear *who did not declare what*. A line declared or translated wrongly is checked as it stands, and its translation is kept where someone can read it and revoke it.
+- **A rule nobody wrote is not followed.** Here, it becomes clear *who did not declare what*. A line declared wrongly is checked as it stands, and the record shows which line it was and who declared it.
 - **Choosing the wrong tool is a risk for every agent.** This narrows it by comparing the tool with what the user called the action and when they asked; code alone cannot prove the choice (spec 8.1).
 - **Access control, injection defense and a person's final confirmation are other layers.** This works beside them, not in their place.
 
