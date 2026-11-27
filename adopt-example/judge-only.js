@@ -732,15 +732,25 @@ async function writeStop({ ask, say, model = "model" }, { record, conversation }
 //   (a model's memory) is shown to the user as a candidate, never used as a setting.
 //   priorExecutionState: the last execution to carry values over from. Left out, it is the last one kept
 //   for this user and tool (loadPrior); pass null to carry nothing.
+//   whenCase: when this call is to run, where your system already knows it (spec 1.2): "immediate" for a
+//   product that only runs what is asked now, or for a run your scheduler started at its trigger. Given,
+//   the model is not asked. Left out, the model reads it from the conversation.
+//   userActionName: what this user calls your tools, as the user approved it (spec 4.1.1):
+//   { "<their words>": { tool, trust: "user" } }. A name in it is matched by lookup, not by the model.
 async function judgeRound({ ask, model = "model", runId = "run", unitKey = null, measure, readToolDefinition, measurements = [],
                             storage, userId = "user", conversation, toolCall, userChecklist, intentAttempt = 0,
-                            preSetData = {}, priorExecutionState }) {
+                            preSetData = {}, priorExecutionState, whenCase, userActionName }) {
   const hooks = createHooks({ ask, model, runId, unitKey, measure, readToolDefinition, measurements });
+  if (whenCase !== undefined && whenCase !== null) {
+    if (!WHEN_CASES.includes(whenCase)) throw new Error(`judgeRound: whenCase must be one of ${WHEN_CASES.join(", ")}`);
+    hooks.classifyWhenCase = async () => whenCase;
+  }
   const preflight = createPreflight({ hooks, storage });
   const prior = priorExecutionState === undefined ? await loadPrior(storage, { userId, tool: toolCall?.name }) : priorExecutionState;
   const st = await preflight.runPreflight({
     userId, instruction: conversation, toolCall, preSetData: preSetData ?? {}, priorExecutionState: prior,
     userChecklist, intent_attempt: intentAttempt, tool_attempt: 0,
+    ...(userActionName && typeof userActionName === "object" ? { user_action_name: userActionName } : {}),
   });
   await preflight.recordExecutionState(st);
   return st;
@@ -797,7 +807,10 @@ async function noticesFor(storage, record) {
 // readPreSet: (userId, toolName) → the user's settings for the tool (preSetData, see judgeRound), from
 //   your store. Optional: without it there are none. How a setting comes to be stored, and the user's
 //   consent to it, is yours (README, "For safety, consider these").
-function createJudge({ ask, measure, readToolDefinition, measurements = [], storage, userId = "user", model = "model", runId = "judge", readPreSet }) {
+// whenCase: for every run, where your product settles it (see judgeRound); a run's own whenCase wins.
+// readActionNames: (userId) → what the user calls your tools (userActionName, see judgeRound).
+function createJudge({ ask, measure, readToolDefinition, measurements = [], storage, userId = "user", model = "model", runId = "judge",
+                       readPreSet, whenCase: productWhenCase, readActionNames }) {
   for (const [n, f] of Object.entries({ ask, readToolDefinition })) {
     if (typeof f !== "function") throw new Error(`createJudge: ${n} is required`);
   }
@@ -815,15 +828,18 @@ function createJudge({ ask, measure, readToolDefinition, measurements = [], stor
   // unitKey: the same for every turn of one conversation. A reply counts only for a question asked in it.
   // conversation: every segment so far, each with who wrote it ("user" only for what the user typed).
   // preSetData, priorExecutionState: as judgeRound takes them; left out, read through readPreSet and loadPrior.
-  async function run({ unitKey, conversation, toolCall, userChecklist = [], preSetData, priorExecutionState }) {
+  // whenCase: this run's, where your scheduler started it (see judgeRound).
+  async function run({ unitKey, conversation, toolCall, userChecklist = [], preSetData, priorExecutionState, whenCase }) {
     round += 1;
     const settings = preSetData !== undefined ? preSetData
       : typeof readPreSet === "function" ? ((await readPreSet(userId, toolCall?.name)) ?? {}) : {};
+    const names = typeof readActionNames === "function" ? ((await readActionNames(userId)) ?? undefined) : undefined;
     const kept = intentAttempts.get(unitKey), said = userWords(conversation);
     const intentAttempt = !kept ? 0 : kept.exhaustedAt === undefined || kept.exhaustedAt === said ? kept.attempt : 0;
     const st = await judgeRound({ ask, model, runId: `${runId}-${round}`, unitKey, measure, readToolDefinition, measurements,
                                   storage, userId, conversation, toolCall, userChecklist, intentAttempt,
-                                  preSetData: settings, priorExecutionState });
+                                  preSetData: settings, priorExecutionState,
+                                  whenCase: whenCase ?? productWhenCase, userActionName: names });
     // Raised while the gate keeps asking for a restatement; kept where it ran out; anything else starts
     //   the count again.
     const next = st.gate?.next_intent_attempt;

@@ -190,6 +190,21 @@ labelled line has its own entry in `provider_checklist`, and each condition the 
 `user_checklist`, with its verdict (`status`: `checked`, `unmet`, `unverified` …) and the source that
 settled it. A line with no entry, or an entry with no verdict, was not checked.
 
+**What your system already settles.** Some of the five things the gate asks, your system may already
+know (spec 1.2). Hand them over, and the model is not asked:
+
+- **When.** If your product only runs what is asked now, set `WHEN_CASE = "immediate"` in `connect.js`.
+  Only there: a "tomorrow" would otherwise run now. If your agent's own scheduler runs deferred work,
+  the call that creates the schedule goes through the gate like any other, so its time is a value
+  checked against the user's words; when the schedule fires, the run says so in its context
+  (`context: { whenCase: "immediate" }`, or `judge.run({ …, whenCase })` in your own loop).
+- **Which tool.** Fixing the tools is the harness's: give the agent only the tools you chose. Whether the
+  act asked for is that tool's act still needs the user's words, but a name the user approved for a tool
+  (`readActionNames` in `connect.js`, spec 4.1.1) is matched by lookup, and the record says so
+  (`matched_by: "record"`).
+
+Each saves one model call per judgment. For "when", the record shows the case, not who settled it.
+
 **Fail-closed.** As shipped, the tool is declared but nothing is connected: no measurement, so the
 `[Required]` lines are unverified, and no tool to call. Nothing runs: the example asks nothing and ends
 by saying it did not run and which lines could not be checked. That is the expected first result.

@@ -94,6 +94,7 @@ function withExchange(message, mine) {
 // gated(name): which tools are judged. All of them, unless you say otherwise.
 // userChecklist: the user's standing settings, already confirmed by them (spec 4.4). Or per run, in the
 //   run's context: invoke(input, { configurable, context: { userChecklist } }).
+// whenCase: a run your scheduler starts at its trigger says so in its context: context: { whenCase: "immediate" }.
 function preflightMiddleware({ connect = defaultConnect, userId = "user", gated = () => true, userChecklist = [],
                                labelMessage = userSegments } = {}) {
   const model = connect.MODEL_NAME ?? "model";
@@ -102,6 +103,7 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
   const judge = createJudge({
     ask: connect.ask, measure: connect.measure, readToolDefinition: connect.readToolDefinition,
     measurements: Object.keys(connect.MEASUREMENTS ?? {}), storage: store, userId, model, readPreSet: connect.readPreSet,
+    whenCase: connect.WHEN_CASE, readActionNames: connect.readActionNames,
   });
 
   async function askUser(conversation, r) {
@@ -153,7 +155,8 @@ function preflightMiddleware({ connect = defaultConnect, userId = "user", gated 
         if (!step) {
           const conversation = [...base, ...mine];
           const judged = await judge.run({ unitKey, conversation, toolCall: call,
-                                           userChecklist: request.runtime?.context?.userChecklist ?? userChecklist });
+                                           userChecklist: request.runtime?.context?.userChecklist ?? userChecklist,
+                                           whenCase: request.runtime?.context?.whenCase });
           const question = judged.questions.length > 0 ? await askUser(conversation, judged)
             // The gate could not tell what is wanted, or which tool: its own words, to be answered in words.
             : judged.ask && judged.message ? { text: judged.message, block: [], message: judged.message, options: judged.options ?? null }

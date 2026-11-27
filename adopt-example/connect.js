@@ -290,6 +290,16 @@ async function readPreSet(userId, toolName) {
   return {};
 }
 
+// ── WHEN_CASE, readActionNames: what your system already settles (spec 1.2, 4.1.1) ─────────────
+// WHEN_CASE: "immediate" if your product only runs what is asked now; the gate then does not ask the
+//   model when to run. Left null, the model reads it. A run your scheduler starts says so per run instead.
+// readActionNames: (userId) → { "<their words>": { tool, trust: "user" } }, what the user calls your tools,
+//   as the user approved it. A name in it is matched by lookup. This starting point has none.
+const WHEN_CASE = null;
+async function readActionNames(userId) {
+  return {};
+}
+
 // ── checkpointer: where a conversation waits ───────────────────────────────────────────────────
 // MemorySaver loses waiting conversations on restart. For a real system use a persistent one, for
 //   example PostgresSaver from @langchain/langgraph-checkpoint-postgres.
@@ -297,7 +307,7 @@ const checkpointer = new MemorySaver();
 
 // chatModel: the agent's model itself, for LangChain's createAgent (agent.js); chat is the same model,
 //   called one turn at a time (judge-only-example.js).
-module.exports = { ask, say, chat, chatModel: model, listTools, readToolDefinition, measure, labelInput, notify, callTool, store, steps, readPreSet, checkpointer,
+module.exports = { ask, say, chat, chatModel: model, listTools, readToolDefinition, measure, labelInput, notify, callTool, store, steps, readPreSet, readActionNames, WHEN_CASE, checkpointer,
                    MEASUREMENTS, TOOLS, MODEL_NAME, readToolFile, askWith, structuredMethod, modelOptions };
 // With the MCP connection above uncommented:
 //   listTools: mcpListTools, readToolDefinition: mcpReadToolDefinition, callTool: mcpCallTool
