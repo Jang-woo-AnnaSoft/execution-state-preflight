@@ -54,13 +54,17 @@ This repository can be read this way:
 
 ## What this is
 
-A part of the harness, the code around the model that limits what an agent executes. What it proposes is a different scope, different owners of the rules, and a different way to write them.
+A part of the harness, the code around the model that limits what an agent executes. Today a rule sits in one of two places: in the harness as code, or in the prompt as a sentence.
 
-| | A harness today (usually) | This repository |
-|---|---|---|
-| What is checked | What the agent can do: tools, data access, formats; lately also conditions written as code (approval steps, policy hooks) | This call's intent, each value (per slot) and each condition (per line) |
-| Who writes the rules | Usually the developers or the platform team building the agent | Split and declared: the tool provider (the tool's conditions), the user (limits, preferences), the adopting system (common rules) |
-| How the rules are written | Code, configuration, policy files | Sentences: the provider's labelled lines in the tool's description, the user's own words, the adopting system's principles |
+**Written like a prompt. Enforced like a harness.**
+
+| | Harness code today (usually) | A prompt | This repository |
+|---|---|---|---|
+| What is checked | What the agent can do: tools, data access, formats; lately also conditions written as code (approval steps, policy hooks) | Nothing: the model reads it | This call's intent, each value (per slot) and each condition (per line) |
+| Who writes the rules | Usually the developers or the platform team building the agent | Whoever writes the prompt | Split and declared: the tool provider (the tool's conditions), the user (limits, preferences), the adopting system (common rules) |
+| How the rules are written | Code, configuration, policy files | Sentences | Sentences: the provider's labelled lines in the tool's description, the user's own words, the adopting system's principles |
+| Who holds the run to them | Code | The model, which decides whether to follow | Code, before the tool runs |
+| When a rule is vague or missing | Nothing, until someone writes the code | The model fills in the rest and runs | The run stops, and the rule goes back to whoever wrote it |
 
 What is checked widens from the form of values and conditions to where each value came from, the conditions and the intent. Each part of the responsibility gets a name, and rules are no longer written as code one by one.
 
@@ -120,7 +124,9 @@ After an incident the question changes. Not "why did it put in this value?" but 
 
 ### Before you write one
 
-For "write it, and it is checked" to hold:
+You already know how. It is the advice you have heard for prompts: be clear, and say how to judge it. Not "no evenings," but "no pickups starting after 6pm."
+
+One thing changes. In a prompt, a vague line still runs: the AI fills in the rest. Here, a line that cannot be judged stops the run and goes back to whoever wrote it. What follows from that:
 
 - **It needs a label.** A line without one is a sentence the model reads; the gate does not check it.
 - **For a `[Required]` line, the system must be able to measure what it names.** Until that measurement is connected, the line stays unverified and **nothing runs.** This is intended: what cannot be checked does not pass.
