@@ -90,7 +90,7 @@ Which state changes count as execution units is declared by the party that built
 ### 1.2 Slot reduction rules
 
 - Domains with immediate execution only: no trigger slot.
-- Systems with a single tool: no tool-matching item in the intent slot.
+- Systems where the adopting system fixes the tool for each act: in tool matching, choosing among tools is replaced by that fixing. Whether the act asked for is that tool's act still remains (4.1, 8.1).
 - When the same party owns the agent and the tools: the agent's own checklist is still needed, and the per-tool checklist goes in the tool's definition (4.2.1).
 
 There is no reduction rule for the user checklist. The fixed checklist settles the execution unit, and provider conditions only add reasons not to execute; this is the only place where the user sets the ranges of values and state. That question is present in every deployment that executes.
