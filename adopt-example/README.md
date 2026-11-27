@@ -185,8 +185,10 @@ faster model for the gate shortens that wait: split the model in `connect.js` as
 (`GATE_MODEL` for `ask` and `say`, `MODEL` for `chat`). What counts as checked does not change with the
 model. How well words are located, conditions put into a form and questions written does: a smaller
 model may ask more often, or put a condition into a form that holds back a request it should let
-through. The record keeps each translation and which model made it (`translated_by`): read them before
-you settle on one.
+through. Before you settle on one, check the records it writes rather than the translations: each
+labelled line has its own entry in `provider_checklist`, and each condition the user stated one in
+`user_checklist`, with its verdict (`status`: `checked`, `unmet`, `unverified` …) and the source that
+settled it. A line with no entry, or an entry with no verdict, was not checked.
 
 **Fail-closed.** As shipped, the tool is declared but nothing is connected: no measurement, so the
 `[Required]` lines are unverified, and no tool to call. Nothing runs: the example asks nothing and ends
