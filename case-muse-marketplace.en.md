@@ -103,7 +103,7 @@ The chat-only proposal is words a model read, not a measurement, so it does not 
 
 **What the check can establish.** Every value in a sent commitment has a source that the gate looked up itself, not one the model labeled. A value with no source does not go out.
 
-**What it would not have caught:**
+**What no check could have caught here, and who would have had to declare it:**
 
 - The address. It had a legitimate source and an approved template. Holding it until a pickup is confirmed is a condition someone has to declare: Meta as the tool provider, or Robb as the user. The spec does not invent conditions that nobody declared.
 - Robb's expectation that he would be asked before any offer was accepted. He never declared it. After the incident he told Muse, "don't agree to pickup unless you check with me." That is exactly a user checklist item, but it came after the fact.
