@@ -496,7 +496,9 @@ With authority outside the model, decisions and accountability stay with the par
 
 ---
 
-## 8. Residual risks and limits
+## 8. Residual risks
+
+These risks remain for every way of checking before execution: approvals, policy hooks, and this specification. Each section says how this specification narrows or exposes the risk, and what is left to the adopting system.
 
 ### 8.1 Tool selection errors
 
@@ -506,13 +508,13 @@ With authority outside the model, decisions and accountability stay with the par
 
 ### 8.2 Forged records and hook implementation
 
-- Separating the verdict from execution exposes an execution without a verdict as an execution without grounds. It does not expose an execution grounded on a forged decision record.
+- Any execution grounded on a record cannot expose one grounded on a forged record. Separating the verdict from execution here exposes an execution without a verdict as one without grounds.
 - What a hook points to, the gate compares with what is at that place (6.3): a quoted answer must be in the user's words, and a value must have its declared form and source. What a hook reports without pointing anywhere, such as a measurement, the gate takes as reported. How hooks are implemented is not defined by this specification; if a hook calls a model to make such a report, that report is probabilistic.
 - Mitigation — keep the decision record append-only, somewhere the agent process cannot rewrite. The store's integrity belongs to the adopting system; this specification does not enforce it.
 
 ### 8.3 The gap between check and execution
 
-- A gap remains between the measurement at trigger time and the actual execution. The gate does not execute, so it cannot close this gap.
+- Every check made before execution leaves a gap between the check and the actual execution. The gate does not execute either, so it cannot close this gap.
 - The gap has to be closed at execution: the tool enforces the condition together with the effect, at the moment it executes (conditional execution: checking the condition and producing the effect happen as one step, e.g. compare-and-swap, a lock, a transaction). An idempotency key and a measurement afterwards do not close this gap. The key prevents a duplicate effect, and the measurement establishes what happened; neither prevents the first effect after the condition has changed.
 - If a tool cannot guarantee the condition at execution time, the provider declares that. The user is informed in advance through [Notice], and whether to accept the risk is the adopting system's policy.
 - What the system cannot guarantee is not replaced with user confirmation. The user cannot validate the state at that moment, so the confirmation becomes a click-through (2.2).
@@ -524,7 +526,7 @@ With authority outside the model, decisions and accountability stay with the par
 
 ### 8.5 Sub-executions inside a tool
 
-- A tool may call another tool while it runs and produce a further state change. The gate does not see inside a tool, so it cannot detect this.
+- A tool may call another tool while it runs and produce a further state change. No check outside the tool sees inside it, and the gate does not either.
 - A tool's implementation detail (a lookup, a computation) and a new independent execution (producing a different state change) have to be told apart, and only the party that built the tool knows which is which.
 - Mitigation — requiring that an independently executable sub-execution pass the same boundary is a contract between the adopting system and the provider. This specification does not enforce it.
 
