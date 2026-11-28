@@ -183,6 +183,24 @@ The validator and LangGraph are installed in `adopt-example/` (pinned: ajv 8.20.
 ajv-formats 3.0.1, @langchain/langgraph 1.5.2, @langchain/core 1.2.20, zod 4.6.7, langchain 1.5.19,
 @langchain/mcp-adapters 2.0.3). The library still has none.
 
+## What a plain agent would have done
+
+A plain agent runs the model's first tool call as it is. The decision records keep that call
+(`tool_call.arguments` in the first record) and what each value was settled to, and from where.
+[`plain-agent.js`](./plain-agent.js) reads them and says what that call would have been:
+
+- **invalid**: the tool would have refused it (a required value missing or empty, or not in the declared form);
+- **wrong**: the tool would have run it, and a condition did not hold, or a value differs from what the gate
+  knew or settled (a value read from the user's words, to be confirmed, is not held against it);
+- **right**: the tool would have run it, and it is what the gate settled.
+
+Beside it, what the gate did in the same run: ran after asking, ran with no question, or did not run.
+So a call a plain agent would have run wrongly, or the tool would have refused, and that the gate ran
+after asking is counted too. `trial-real-model.js` prints both as `a plain agent:` and keeps them in the
+log (`plain_agent`); `node plain-agent.js <log folder>…` counts a folder of logs, one against the other. The scenarios hold traps on purpose (a
+cancelled sale, "the usual spot"), so the counts say what models do when a trap comes, not how often.
+`plain-agent-test.js` checks it.
+
 ## What this folder does not do yet
 
 - **No API calls in the tests or the table.** The model there is the stub, so they show what the

@@ -40,6 +40,7 @@ const ADOPT = path.join(__dirname, "..", "..", "adopt-example");
 const { createMain, systemPrompt } = require(path.join(ADOPT, "judge-only-example"));
 const { createAgent } = require(path.join(ADOPT, "agent"));
 const { StubChatModel } = require("./stub-chat-model");
+const { plainAgent } = require("./plain-agent");
 const { BaseCallbackHandler } = require(path.join(ADOPT, "node_modules", "@langchain/core/callbacks/base"));
 const { recordStore } = require(path.join(__dirname, "..", "..", "adopt-example", "records"));
 const { InMemoryStore } = require(path.join(__dirname, "..", "..", "adopt-example", "node_modules", "@langchain/langgraph"));
@@ -243,6 +244,11 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
   const rec = records.filter(x => x && "execution_decision" in x && x.actor !== "executor").at(-1) ?? null;
   log.records = records;
   log.tool_calls = calls;
+  // What a plain agent would have done with the model's first call (plain-agent.js).
+  const firstCall = records.find(x => x && "execution_decision" in x && x.actor !== "executor")?.tool_call?.name;
+  const firstTool = listedTools.find(t => t.name === firstCall) ?? tool;
+  log.plain_agent = plainAgent(records.filter(x => x?.tool_call?.name === (firstCall ?? x?.tool_call?.name)),
+                               firstTool?.inputSchema ?? firstTool?.input_schema);
 
   console.log("\n─── result ───");
   console.log(`status:            ${r.status}${r.reason ? `   (${short(r.reason, 300)})` : ""}`);
@@ -260,6 +266,7 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
       for (const c of rec.user_checklist) console.log(`    ${String(c.status).padEnd(22)} ${short(c.stated_as ?? c.description ?? "", 70)}`);
     }
   }
+  console.log(`a plain agent:     ${log.plain_agent.verdict}${log.plain_agent.reasons.length ? `   (${short(log.plain_agent.reasons.join("; "), 300)})` : ""}; the gate: ${log.plain_agent.gate}`);
   console.log(`tool called:       ${calls.length === 0 ? "no" : calls.length === 1 ? short(calls[0].args, 300)
     : `${calls.length} calls: ${calls.map(c => `${c.name} ${short(c.args, 200)}`).join(" | ")}`}`);
   if (id === "g1-01" && condition === "clean") {
