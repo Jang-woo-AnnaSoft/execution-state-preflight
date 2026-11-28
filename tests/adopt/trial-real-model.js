@@ -26,6 +26,8 @@
  *     stays), and "*" for every other yes-or-no field, a form to confirm included.
  *     A choice is the value of its slot, matched to a choice shown. When the gate asked nothing (the
  *     assistant asked or answered itself), the reply goes in as words.
+ *   WHEN_CASE=immediate (in the environment) settles when to run, as a product that only runs what is
+ *     asked now would (connect.js, WHEN_CASE); the model is then not asked
  *   add --show-lines, --no-label-note and --principles spec to change what the agent's model is shown
  *     (see below), and compare how it calls
  *   node trial-real-model.js --stub          # the stand-in model, to check this script itself
@@ -151,6 +153,10 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
     // The seller's settings, when the scenario has them (pre_set): a setting the seller approved, or a
     //   value a model remembered on its own (spec 5.2).
     readPreSet: async () => instruction.pre_set ?? {},
+    // What the system already settles (connect.js): WHEN_CASE there, or WHEN_CASE in the environment
+    //   for one run (WHEN_CASE=immediate); the user's names for tools.
+    WHEN_CASE: process.env.WHEN_CASE || real.WHEN_CASE,
+    readActionNames: real.readActionNames,
     MEASUREMENTS: Object.fromEntries(MEASUREMENTS.map(n => [n, async () => undefined])),
     MODEL_NAME: log.model,
   };
@@ -266,6 +272,7 @@ const short = (v, n = 400) => { const s = typeof v === "string" ? v : JSON.strin
       for (const c of rec.user_checklist) console.log(`    ${String(c.status).padEnd(22)} ${short(c.stated_as ?? c.description ?? "", 70)}`);
     }
   }
+  if (connect.WHEN_CASE) console.log(`when:              settled by the system ("${connect.WHEN_CASE}"); the model is not asked`);
   console.log(`a plain agent:     ${log.plain_agent.verdict}${log.plain_agent.reasons.length ? `   (${short(log.plain_agent.reasons.join("; "), 300)})` : ""}; the gate: ${log.plain_agent.gate}`);
   console.log(`tool called:       ${calls.length === 0 ? "no" : calls.length === 1 ? short(calls[0].args, 300)
     : `${calls.length} calls: ${calls.map(c => `${c.name} ${short(c.args, 200)}`).join(" | ")}`}`);
