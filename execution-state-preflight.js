@@ -931,6 +931,32 @@ function getProviderConditions(mcpTool) {
   }));
 }
 
+// [UNFIT MEASUREMENT] A form that names a measurement and a schema whose type the measured value can
+//   never have ({"type": "string"} against true) is not a comparison of that measurement: the form was
+//   written for another value. Its "unmet" says nothing about the line, so the line is unverified and
+//   goes where its label sends what was not checked (3.3, 4.5): [Verify] to the user, [Required] to
+//   definition_repair. With a real model, "The item is the listing the seller names" was put into
+//   listing_owned_by_seller (true or false) against a pattern for listing ids, and a pickup the seller
+//   asked for stopped as "the listing data wasn't a string". Only the schema's own top-level type is
+//   read, so nothing here is a judgment: a value of the right type that fails is unmet as before.
+//   BREAKS: leave it unmet and a kept translation that does not fit blocks every request, under a
+//     reason nobody it is told to can act on.
+function jsonTypeOf(v) {
+  if (v === null) return "null";
+  if (Array.isArray(v)) return "array";
+  if (typeof v === "number") return Number.isInteger(v) ? "integer" : "number";
+  return typeof v;
+}
+function unfitMeasurement(schema, m) {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema) || m?.valid !== true) return null;
+  const types = Array.isArray(schema.type) ? schema.type : typeof schema.type === "string" ? [schema.type] : [];
+  if (types.length === 0) return null;
+  const got = jsonTypeOf(m.value);
+  if (types.includes(got) || (got === "integer" && types.includes("number"))) return null;
+  return { schema_type: types, measured_type: got,
+           why: `the schema takes ${types.join(" or ")}, and the measurement is ${got}` };
+}
+
 // [VALUE SOURCE] A condition on WHO may give a slot's value (3.3: "who may give a value is marked
 //   with a label"). The form is
 //     compare: { kind: "value_source", slot: "<field>", measured_within_user_range?: true }
@@ -3964,6 +3990,10 @@ async function runPreflightInner(h, { userId, instruction, toolCall, mcpTool: mc
           : { ...checklistCtx, measurements: {} };
         out = await safeHook(h.verifyProviderCondition, [cond, condCtx],
           e => ({ status: "unverified", source: null, note: `provider condition hook failed: ${e?.message ?? String(e)}` }));
+        const unfit = out?.status === "unmet" && measureName
+          ? unfitMeasurement(cond.compare.schema, condCtx.measurements[measureName]) : null;
+        if (unfit) out = { status: "unverified", source: null, unfit_measurement: unfit,
+          note: `the form does not fit what was measured, so it was not compared (${unfit.why})` };
         if (approval && !approval.ok) out = { ...(out ?? {}), approval_voided: approval.why };
       }
     }
@@ -4360,7 +4390,9 @@ async function recordExecutionState(h, executionState) {
   // Records with a null action_key (failed before fixed was settled) have no lineage. Collect them under a reserved key.
   const action_key = executionState.action_key ?? null;
   const record = {
-    schema_version: "1.46",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    schema_version: "1.47",   // 1.5: fixed slots may be null (unsettled). 1.6: fixed.c2_source added
+    //   1.47: [UNFIT MEASUREMENT] a provider line whose schema's type the measured value can never have is
+    //   unverified, routed by its label, rather than unmet.
     //   1.46: [LINES ON A VALUE] a value question's lines leave out the provider's lines compared against a
     //        measurement: the user's answer does not settle them.
     //   1.45: [WITHDRAW ALONE] a question that asks whether to remove a condition the user took back asks
