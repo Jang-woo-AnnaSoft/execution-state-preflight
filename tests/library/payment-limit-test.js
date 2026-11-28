@@ -327,6 +327,29 @@ async function main() {
     console.log(`      note: ${itemOf(s).note}`);
   }
 
+  console.log("\n--- case 9: [UNFIT MEASUREMENT] a form whose schema the measured value can never fit ---");
+  {
+    // With a real model, a line about the listing id was put into a measurement of true or false
+    //   against a pattern for strings, and the hook's "unmet" stopped a request nobody had to stop.
+    //   Here the form takes a string and the approval record is an object: not compared, so not unmet.
+    const unfitCond = label => ({ ...COND_APPROVER_LIMIT, label,
+      compare: { ...COND_APPROVER_LIMIT.compare, schema: { type: "string", pattern: "^APR-" } } });
+    const unmet = { status: "unmet", source: "measured_data", note: "data must be string" };
+    const erp = erpInvoice({ id: "INV-1009", amount: 3200, approverRole: "AP Clerk" });
+    const r = await runCase("p9r", { instruction: PAY_INSTRUCTION, erp, conditions: [unfitCond("Required")], override: unmet });
+    check("[Required]: not unmet", itemOf(r).status, "unverified");
+    check("[Required]: to definition_repair", itemOf(r).route, "definition_repair");
+    check("[Required]: decision", r.execution_decision, "definition_repair");
+    check("the record says why", itemOf(r).unfit_measurement?.measured_type, "object");
+    const v = await runCase("p9v", { instruction: PAY_INSTRUCTION, erp, conditions: [unfitCond("Verify")], override: unmet });
+    check("[Verify]: not unmet", itemOf(v).status, "unverified");
+    check("[Verify]: to the user", itemOf(v).route, "ask_user");
+    // A schema the value can fit is compared as before: the hook's unmet stands.
+    const fit = await runCase("p9f", { instruction: PAY_INSTRUCTION, erp, override: unmet,
+      conditions: [{ ...COND_APPROVER_LIMIT, compare: { ...COND_APPROVER_LIMIT.compare, schema: { type: "object" } } }] });
+    check("a schema of the right type: unmet stands", itemOf(fit).status, "unmet");
+  }
+
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILED`}`);
   process.exit(failures === 0 ? 0 : 1);
 }
