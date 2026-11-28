@@ -211,7 +211,7 @@ Two gates. Neither produces a value or a justification, and neither executes —
 
 A search order, not a ranking by trustworthiness. Text the user did not write cannot settle a value on its own; how the user's words are labelled is in [adopt example, section 3](./adopt-example/README.md#3-connect-your-system-connectjs).
 
-**You do not have to run all of it. Apply it only to irreversible executions, and only the parts that fit (spec 1.2).** Where everything runs at once, there is no "when" to check; with one tool, no tool to match. What your product already decides can be decided in code. What stays is the frame: the run follows the record, every value has a source, what cannot be confirmed does not run, and the gate is on every path to the tool.
+**You do not have to run all of it. Apply it only to irreversible executions, and only the parts that fit (spec 1.2).** Where everything runs at once, there is no "when" to check; where your product fixes the tool for each act, there is no choosing among tools. What your product already decides can be decided in code. What stays is the frame: the run follows the record, every value has a source, what cannot be confirmed does not run, and the gate is on every path to the tool.
 
 ---
 
